@@ -90,3 +90,7 @@ def test_stage0_rank_local_keeps_outputs_in_rank_groups() -> None:
     assert (
         rank_local["operation_counts"]["rotations"] < rank_reduce["operation_counts"]["rotations"]
     )
+    assert (
+        rank_local["operation_counts"]["ct_pt_mul"] < rank_reduce["operation_counts"]["ct_pt_mul"]
+    )
+    assert rank_local["operation_counts"]["encrypt"] < rank_reduce["operation_counts"]["encrypt"]

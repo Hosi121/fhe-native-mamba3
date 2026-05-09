@@ -157,6 +157,7 @@ auto rank_reduce_readout(
     std::vector<Plaintext>& scatter_masks,
     int d_state,
     int mimo_rank,
+    bool dense_output,
     int& readout_ct_pt_multiplies,
     int& readout_adds,
     int& readout_rotations) -> Ciphertext<DCRTPoly> {
@@ -171,6 +172,10 @@ auto rank_reduce_readout(
     ++readout_ct_pt_multiplies;
     reduced = cc->EvalAdd(reduced, masked);
     ++readout_adds;
+  }
+
+  if (!dense_output) {
+    return reduced;
   }
 
   Ciphertext<DCRTPoly> output;
@@ -251,13 +256,14 @@ auto main(int argc, char* argv[]) -> int {
         mask_plain->SetLength(static_cast<size_t>(state_slots));
         readout_reduce_masks.push_back(mask_plain);
       }
-      readout_scatter_shifts =
-          stage0::make_scatter_shifts(config.d_state, config.mimo_rank, dense_readout);
-      for (int rank = 0; rank < config.mimo_rank; ++rank) {
-        auto mask_plain = cc->MakeCKKSPackedPlaintext(
-            stage0::make_scatter_mask(config.d_state, config.mimo_rank, rank));
-        mask_plain->SetLength(static_cast<size_t>(state_slots));
-        readout_scatter_masks.push_back(mask_plain);
+      if (dense_readout) {
+        readout_scatter_shifts = stage0::make_scatter_shifts(config.d_state, config.mimo_rank);
+        for (int rank = 0; rank < config.mimo_rank; ++rank) {
+          auto mask_plain = cc->MakeCKKSPackedPlaintext(
+              stage0::make_scatter_mask(config.d_state, config.mimo_rank, rank));
+          mask_plain->SetLength(static_cast<size_t>(state_slots));
+          readout_scatter_masks.push_back(mask_plain);
+        }
       }
     }
     std::vector<double> expected_output(static_cast<size_t>(config.mimo_rank), 0.0);
@@ -338,6 +344,7 @@ auto main(int argc, char* argv[]) -> int {
             readout_scatter_masks,
             config.d_state,
             config.mimo_rank,
+            dense_readout,
             readout_ct_pt_multiplies,
             readout_adds,
             readout_rotation_count);

@@ -244,6 +244,9 @@ def _readout_rank_reduce(
         stage += 1
         step = 2**stage
 
+    if not dense_output:
+        return reduced
+
     output_ct = backend.encrypt([0.0] * backend.batch_size)
     for r in range(rank):
         source = r * d_state
