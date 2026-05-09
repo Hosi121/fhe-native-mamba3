@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from fhe_native_mamba3.backends.openfhe import ckks_batch_size_for_slots
+from fhe_native_mamba3.backends.openfhe import (
+    ckks_batch_size_for_slots,
+    ckks_ring_dimension_for_batch_size,
+)
 from fhe_native_mamba3.openfhe_backend import (
     make_demo_problem,
     readout_output_slots,
@@ -17,6 +20,14 @@ def test_ckks_batch_size_rounds_to_power_of_two() -> None:
     assert ckks_batch_size_for_slots(18) == 32
     with pytest.raises(ValueError, match="positive"):
         ckks_batch_size_for_slots(0)
+
+
+def test_ckks_ring_dimension_scales_with_batch_size() -> None:
+    assert ckks_ring_dimension_for_batch_size(1) == 32768
+    assert ckks_ring_dimension_for_batch_size(16384) == 32768
+    assert ckks_ring_dimension_for_batch_size(32768) == 65536
+    with pytest.raises(ValueError, match="positive"):
+        ckks_ring_dimension_for_batch_size(0)
 
 
 def test_openfhe_static_recurrence_matches_plaintext() -> None:

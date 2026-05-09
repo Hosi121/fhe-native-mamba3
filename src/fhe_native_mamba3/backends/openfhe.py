@@ -17,6 +17,19 @@ def ckks_batch_size_for_slots(slot_count: int) -> int:
     return 1 << (slot_count - 1).bit_length()
 
 
+def ckks_ring_dimension_for_batch_size(batch_size: int, *, minimum: int = 32768) -> int:
+    """Return a ring dimension that can host the requested CKKS batch size."""
+
+    if batch_size <= 0:
+        msg = "batch_size must be positive"
+        raise ValueError(msg)
+    if minimum <= 0:
+        msg = "minimum must be positive"
+        raise ValueError(msg)
+    required = max(minimum, 2 * batch_size)
+    return 1 << (required - 1).bit_length()
+
+
 class OpenFheCkksBackend:
     """Thin OpenFHE CKKS wrapper with operation counters."""
 
@@ -53,7 +66,9 @@ class OpenFheCkksBackend:
         params.SetMultiplicativeDepth(multiplicative_depth)
         params.SetScalingModSize(scaling_mod_size)
         ckks_batch_size = ckks_batch_size_for_slots(batch_size)
+        ring_dimension = ckks_ring_dimension_for_batch_size(ckks_batch_size)
         params.SetBatchSize(ckks_batch_size)
+        params.SetRingDim(ring_dimension)
         self.cc = GenCryptoContext(params)
         self.cc.Enable(PKESchemeFeature.PKE)
         self.cc.Enable(PKESchemeFeature.KEYSWITCH)

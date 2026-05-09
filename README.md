@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.30`. Future changes should bump
+The project is currently at SemVer `0.2.31`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -109,7 +109,8 @@ recurrence and C readout with OpenFHE `EvalMult`, `EvalAdd`, and `EvalRotate`,
 then decrypts only the final outputs for error checking.
 When the logical state slot count is not a power of two, the OpenFHE backend
 rounds the CKKS batch size up to the next power of two and leaves extra slots
-zero-padded.
+zero-padded. If the rounded batch size exceeds the default capacity, the ring
+dimension is also raised so that `batch_size <= ringDim / 2`.
 
 Run the Stage 0 benchmark harness:
 
