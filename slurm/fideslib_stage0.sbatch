@@ -62,4 +62,5 @@ section "Run"
   --first-mod-size "${FIRST_MOD_SIZE:-60}" \
   --ring-dim "${RING_DIM:-4096}" \
   --input-mode "${INPUT_MODE:-client-update}" \
-  --update-level-offset "${UPDATE_LEVEL_OFFSET:-0}"
+  --update-level-offset "${UPDATE_LEVEL_OFFSET:-0}" \
+  --readout-mode "${READOUT_MODE:-rank-reduce}"
