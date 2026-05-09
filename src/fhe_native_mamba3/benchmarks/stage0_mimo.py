@@ -14,6 +14,7 @@ from fhe_native_mamba3.openfhe_backend import (
 )
 
 Stage0Backend = Literal["openfhe", "tracking"]
+Stage0Readout = Literal["slotwise", "rank-reduce"]
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class Stage0MimoConfig:
     seed: int = 7
     multiplicative_depth: int = 8
     scaling_mod_size: int = 50
+    readout_strategy: Stage0Readout = "slotwise"
 
     @property
     def state_slots(self) -> int:
@@ -45,6 +47,7 @@ def run_stage0_mimo(config: Stage0MimoConfig) -> dict[str, Any]:
     rotations = required_readout_rotations(
         d_state=config.d_state,
         mimo_rank=config.mimo_rank,
+        readout_strategy=config.readout_strategy,
     )
 
     if config.backend == "openfhe":
@@ -64,6 +67,7 @@ def run_stage0_mimo(config: Stage0MimoConfig) -> dict[str, Any]:
         problem,
         backend=backend,
         multiplicative_depth=config.multiplicative_depth,
+        readout_strategy=config.readout_strategy,
     )
     stats = result.backend_stats
     next_bottleneck = _next_bottleneck(stats)
@@ -79,6 +83,7 @@ def run_stage0_mimo(config: Stage0MimoConfig) -> dict[str, Any]:
             "mimo_rank": config.mimo_rank,
             "state_slots": config.state_slots,
             "parameter_count": config.mimo_rank + 2 * config.d_state * config.mimo_rank,
+            "readout_strategy": config.readout_strategy,
         },
         "ckks": {
             "multiplicative_depth": config.multiplicative_depth,

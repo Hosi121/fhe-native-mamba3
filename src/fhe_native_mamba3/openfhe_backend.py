@@ -10,6 +10,8 @@ from typing import Any
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
 
+ReadoutStrategy = str
+
 
 @dataclass(frozen=True)
 class OpenFheRecurrenceProblem:
@@ -47,6 +49,7 @@ class OpenFheRecurrenceResult:
     rotations: tuple[int, ...]
     backend_stats: dict[str, Any]
     latency_sec_per_token: float
+    readout_strategy: str
 
     def to_json_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -111,8 +114,21 @@ def _expanded_rank_input(rank_input: tuple[float, ...], d_state: int, rank: int)
     return [rank_input[r] for r in range(rank) for _ in range(d_state)]
 
 
-def required_readout_rotations(*, d_state: int, mimo_rank: int) -> tuple[int, ...]:
+def required_readout_rotations(
+    *,
+    d_state: int,
+    mimo_rank: int,
+    readout_strategy: ReadoutStrategy = "slotwise",
+) -> tuple[int, ...]:
     """Rotations needed to reduce state slots into per-rank output slots."""
+
+    if readout_strategy == "rank-reduce":
+        reduce_steps = {2**stage for stage in range(max(0, (d_state - 1).bit_length()))}
+        scatter_steps = {r * d_state - r for r in range(mimo_rank) if r * d_state - r != 0}
+        return tuple(sorted(reduce_steps | scatter_steps))
+    if readout_strategy != "slotwise":
+        msg = f"unsupported readout_strategy: {readout_strategy}"
+        raise ValueError(msg)
 
     return tuple(
         sorted(
@@ -127,6 +143,32 @@ def required_readout_rotations(*, d_state: int, mimo_rank: int) -> tuple[int, ..
 
 
 def _readout_ciphertext(
+    *,
+    backend: FHEBackend,
+    contrib_ct: Any,
+    d_state: int,
+    rank: int,
+    readout_strategy: ReadoutStrategy,
+) -> Any:
+    if readout_strategy == "rank-reduce":
+        return _readout_rank_reduce(
+            backend=backend,
+            contrib_ct=contrib_ct,
+            d_state=d_state,
+            rank=rank,
+        )
+    if readout_strategy != "slotwise":
+        msg = f"unsupported readout_strategy: {readout_strategy}"
+        raise ValueError(msg)
+    return _readout_slotwise(
+        backend=backend,
+        contrib_ct=contrib_ct,
+        d_state=d_state,
+        rank=rank,
+    )
+
+
+def _readout_slotwise(
     *,
     backend: FHEBackend,
     contrib_ct: Any,
@@ -148,11 +190,46 @@ def _readout_ciphertext(
     return output_ct
 
 
+def _readout_rank_reduce(
+    *,
+    backend: FHEBackend,
+    contrib_ct: Any,
+    d_state: int,
+    rank: int,
+) -> Any:
+    reduced = contrib_ct
+    stage = 0
+    step = 1
+    while step < d_state:
+        mask = []
+        for _r in range(rank):
+            for n in range(d_state):
+                mask.append(1.0 if n + step < d_state and n % (2 * step) == 0 else 0.0)
+        rotated = backend.rotate(reduced, step)
+        reduced = backend.add(reduced, backend.mul_plain(rotated, backend.encode(mask)))
+        stage += 1
+        step = 2**stage
+
+    output_ct = backend.encrypt([0.0] * backend.batch_size)
+    for r in range(rank):
+        source = r * d_state
+        target = r
+        mask = [0.0] * backend.batch_size
+        mask[source] = 1.0
+        term = backend.mul_plain(reduced, backend.encode(mask))
+        shift = source - target
+        if shift:
+            term = backend.rotate(term, shift)
+        output_ct = backend.add(output_ct, term)
+    return output_ct
+
+
 def run_static_mimo_recurrence_with_backend(
     problem: OpenFheRecurrenceProblem,
     *,
     backend: FHEBackend,
     multiplicative_depth: int,
+    readout_strategy: ReadoutStrategy = "slotwise",
 ) -> OpenFheRecurrenceResult:
     """Evaluate the encrypted static MIMO recurrence with a backend."""
 
@@ -182,6 +259,7 @@ def run_static_mimo_recurrence_with_backend(
             contrib_ct=contrib_ct,
             d_state=d_state,
             rank=rank,
+            readout_strategy=readout_strategy,
         )
         decrypted_outputs.append(backend.decrypt(output_ct, length=rank))
     eval_seconds = time.perf_counter() - started
@@ -202,9 +280,14 @@ def run_static_mimo_recurrence_with_backend(
         ring_dimension=backend.ring_dimension,
         batch_size=backend.batch_size,
         multiplicative_depth=multiplicative_depth,
-        rotations=required_readout_rotations(d_state=d_state, mimo_rank=rank),
+        rotations=required_readout_rotations(
+            d_state=d_state,
+            mimo_rank=rank,
+            readout_strategy=readout_strategy,
+        ),
         backend_stats=backend.stats().to_json_dict(),
         latency_sec_per_token=eval_seconds / problem.seq_len,
+        readout_strategy=readout_strategy,
     )
 
 
@@ -213,6 +296,7 @@ def run_openfhe_static_recurrence(
     *,
     multiplicative_depth: int | None = None,
     scaling_mod_size: int = 50,
+    readout_strategy: ReadoutStrategy = "slotwise",
 ) -> OpenFheRecurrenceResult:
     """Encrypt inputs and evaluate the static MIMO recurrence with OpenFHE CKKS."""
 
@@ -224,10 +308,12 @@ def run_openfhe_static_recurrence(
         rotations=required_readout_rotations(
             d_state=problem.d_state,
             mimo_rank=problem.mimo_rank,
+            readout_strategy=readout_strategy,
         ),
     )
     return run_static_mimo_recurrence_with_backend(
         problem,
         backend=backend,
         multiplicative_depth=depth,
+        readout_strategy=readout_strategy,
     )

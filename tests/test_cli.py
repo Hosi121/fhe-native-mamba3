@@ -121,3 +121,29 @@ def test_stage0_tracking_cli_outputs_benchmark_json() -> None:
     assert payload["encrypted"] is False
     assert payload["max_abs_error"] == 0
     assert payload["operation_counts"]["rotations"] == 9
+
+
+def test_stage0_sweep_cli_outputs_summary() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fhe_native_mamba3.cli",
+            "stage0-sweep",
+            "--backend",
+            "tracking",
+            "--seq-lens",
+            "2",
+            "--d-states",
+            "2,4",
+            "--mimo-ranks",
+            "2",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    assert payload["version"] == "0.2.0"
+    assert payload["result_count"] == 4
+    assert payload["summary"]["max_abs_error_max"] < 1e-12

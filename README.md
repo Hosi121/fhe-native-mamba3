@@ -118,6 +118,17 @@ The same harness can run without encryption for operation-count checks:
 python3 -m fhe_native_mamba3.cli stage0-mimo --backend tracking
 ```
 
+Run a sweep and persist JSONL:
+
+```bash
+python3 -m fhe_native_mamba3.cli stage0-sweep \
+  --backend tracking \
+  --seq-lens 2,4 \
+  --d-states 2,4,8 \
+  --mimo-ranks 2,4 \
+  --output-jsonl runs/stage0_tracking.jsonl
+```
+
 ## Sync to `high`
 
 The sync script uses `rsync` and includes `.git`, so the remote copy remains

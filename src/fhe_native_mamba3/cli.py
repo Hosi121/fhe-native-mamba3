@@ -149,7 +149,48 @@ def stage0_mimo_cmd(args: argparse.Namespace) -> int:
             seed=args.seed,
             multiplicative_depth=args.multiplicative_depth,
             scaling_mod_size=args.scaling_mod_size,
+            readout_strategy=args.readout_strategy,
         )
+    )
+    payload = {
+        "version": __version__,
+        **result,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def _parse_int_list(value: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in value.split(",") if part)
+
+
+def _parse_readout_list(value: str) -> tuple[str, ...]:
+    strategies = tuple(part for part in value.split(",") if part)
+    unsupported = sorted(set(strategies) - {"slotwise", "rank-reduce"})
+    if unsupported:
+        msg = f"unsupported readout strategies: {unsupported}"
+        raise argparse.ArgumentTypeError(msg)
+    return strategies
+
+
+def stage0_sweep_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.benchmarks.stage0_sweep import Stage0SweepConfig, run_stage0_sweep
+
+    output = Path(args.output_jsonl) if args.output_jsonl else None
+    if output is not None and output.exists():
+        output.unlink()
+    result = run_stage0_sweep(
+        Stage0SweepConfig(
+            backend=args.backend,
+            seq_lens=args.seq_lens,
+            d_states=args.d_states,
+            mimo_ranks=args.mimo_ranks,
+            readout_strategies=args.readout_strategies,
+            seed=args.seed,
+            multiplicative_depth=args.multiplicative_depth,
+            scaling_mod_size=args.scaling_mod_size,
+        ),
+        output_jsonl=output,
     )
     payload = {
         "version": __version__,
@@ -305,7 +346,31 @@ def build_parser() -> argparse.ArgumentParser:
     stage0_parser.add_argument("--seed", type=int, default=7)
     stage0_parser.add_argument("--multiplicative-depth", type=int, default=8)
     stage0_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    stage0_parser.add_argument(
+        "--readout-strategy",
+        choices=["slotwise", "rank-reduce"],
+        default="slotwise",
+    )
     stage0_parser.set_defaults(func=stage0_mimo_cmd)
+
+    sweep_parser = subparsers.add_parser(
+        "stage0-sweep",
+        help="run a Stage 0 benchmark grid and optionally write JSONL",
+    )
+    sweep_parser.add_argument("--backend", choices=["openfhe", "tracking"], default="tracking")
+    sweep_parser.add_argument("--seq-lens", type=_parse_int_list, default=(3,))
+    sweep_parser.add_argument("--d-states", type=_parse_int_list, default=(2,))
+    sweep_parser.add_argument("--mimo-ranks", type=_parse_int_list, default=(2,))
+    sweep_parser.add_argument(
+        "--readout-strategies",
+        type=_parse_readout_list,
+        default=("slotwise", "rank-reduce"),
+    )
+    sweep_parser.add_argument("--seed", type=int, default=7)
+    sweep_parser.add_argument("--multiplicative-depth", type=int, default=8)
+    sweep_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    sweep_parser.add_argument("--output-jsonl", default="")
+    sweep_parser.set_defaults(func=stage0_sweep_cmd)
 
     train_parser = subparsers.add_parser("train-synthetic", help="train on a tiny synthetic task")
     _add_model_args(train_parser)

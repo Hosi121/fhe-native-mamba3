@@ -24,6 +24,7 @@ _LAZY_IMPORTS = {
     "OpenFheCkksBackend": ("fhe_native_mamba3.backends.openfhe", "OpenFheCkksBackend"),
     "PackingPlan": ("fhe_native_mamba3.ckks", "PackingPlan"),
     "Stage0MimoConfig": ("fhe_native_mamba3.benchmarks.stage0_mimo", "Stage0MimoConfig"),
+    "Stage0SweepConfig": ("fhe_native_mamba3.benchmarks.stage0_sweep", "Stage0SweepConfig"),
     "TrackingBackend": ("fhe_native_mamba3.backends.tracking", "TrackingBackend"),
     "estimate_block_cost": ("fhe_native_mamba3.cost", "estimate_block_cost"),
     "estimate_integrated_cost": ("fhe_native_mamba3.cost", "estimate_integrated_cost"),
@@ -38,6 +39,7 @@ _LAZY_IMPORTS = {
         "run_openfhe_static_recurrence",
     ),
     "run_stage0_mimo": ("fhe_native_mamba3.benchmarks.stage0_mimo", "run_stage0_mimo"),
+    "run_stage0_sweep": ("fhe_native_mamba3.benchmarks.stage0_sweep", "run_stage0_sweep"),
 }
 
 __all__ = [
@@ -56,6 +58,7 @@ __all__ = [
     "OpenFheRecurrenceResult",
     "PackingPlan",
     "Stage0MimoConfig",
+    "Stage0SweepConfig",
     "TrackingBackend",
     "__version__",
     "estimate_block_cost",
@@ -65,6 +68,7 @@ __all__ = [
     "plaintext_static_recurrence",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
+    "run_stage0_sweep",
 ]
 
 
