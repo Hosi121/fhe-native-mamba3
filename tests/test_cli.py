@@ -26,7 +26,7 @@ def test_inspect_cli_outputs_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.0"
+    assert payload["version"] == "0.3.0"
     assert payload["cost_per_block"]["seq_len"] == 8
 
 
@@ -57,6 +57,38 @@ def test_cost_model_cli_outputs_ckks_payload() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.0"
+    assert payload["version"] == "0.3.0"
     assert payload["integrated_cost"]["effective_window"] == 4
     assert payload["integrated_cost"]["head_packing"]["heads_per_ciphertext"] >= 1
+
+
+def test_openfhe_recurrence_cli_encrypts_inputs() -> None:
+    try:
+        __import__("openfhe")
+    except ImportError:
+        return
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fhe_native_mamba3.cli",
+            "openfhe-recurrence",
+            "--seq-len",
+            "2",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "2",
+            "--seed",
+            "11",
+            "--multiplicative-depth",
+            "8",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    assert payload["backend"] == "openfhe-ckks"
+    assert payload["max_abs_error"] < 1e-6

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fhe-native-mamba3"
-version = "0.2.0"
+version = "0.3.0"
 description = "FHE-oriented Mamba-3 MIMO research prototype for encrypted LLM inference."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,10 @@ dev = [
   "pre-commit>=3.7",
   "pytest>=8.0",
   "ruff>=0.6",
+]
+fhe = [
+  "openfhe==1.5.1.0.24.4; python_version >= '3.12'",
+  "openfhe==1.5.1.0.22.4; python_version < '3.12'",
 ]
 
 [project.scripts]

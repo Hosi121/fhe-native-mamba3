@@ -10,16 +10,13 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import torch
-
 from fhe_native_mamba3 import __version__
-from fhe_native_mamba3.ckks import CkksConfig
-from fhe_native_mamba3.cost import estimate_block_cost, estimate_integrated_cost
-from fhe_native_mamba3.data import generate_modular_stream
-from fhe_native_mamba3.model import FheMamba3Config, FheMamba3ForCausalLM
+from fhe_native_mamba3.openfhe_backend import make_demo_problem, run_openfhe_static_recurrence
 
 
-def _config_from_args(args: argparse.Namespace) -> FheMamba3Config:
+def _config_from_args(args: argparse.Namespace) -> Any:
+    from fhe_native_mamba3.model import FheMamba3Config
+
     return FheMamba3Config(
         vocab_size=args.vocab_size,
         d_model=args.d_model,
@@ -64,6 +61,8 @@ def _add_ckks_args(parser: argparse.ArgumentParser) -> None:
 
 
 def inspect_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.cost import estimate_block_cost
+
     config = _config_from_args(args)
     estimate = estimate_block_cost(config, seq_len=args.seq_len)
     payload = {
@@ -76,6 +75,9 @@ def inspect_cmd(args: argparse.Namespace) -> int:
 
 
 def cost_model_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.ckks import CkksConfig
+    from fhe_native_mamba3.cost import estimate_integrated_cost
+
     config = _config_from_args(args)
     ckks = CkksConfig(
         max_level=args.ckks_max_level,
@@ -113,7 +115,34 @@ def cost_model_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def openfhe_recurrence_cmd(args: argparse.Namespace) -> int:
+    problem = make_demo_problem(
+        seq_len=args.seq_len,
+        d_state=args.d_state,
+        mimo_rank=args.mimo_rank,
+        seed=args.seed,
+    )
+    result = run_openfhe_static_recurrence(
+        problem,
+        multiplicative_depth=args.multiplicative_depth,
+        scaling_mod_size=args.scaling_mod_size,
+    )
+    payload = {
+        "version": __version__,
+        "backend": "openfhe-ckks",
+        "operation": "encrypted static scalar MIMO recurrence",
+        **result.to_json_dict(),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def train_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.data import generate_modular_stream
+    from fhe_native_mamba3.model import FheMamba3ForCausalLM
+
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     device = torch.device(
@@ -169,6 +198,11 @@ def train_cmd(args: argparse.Namespace) -> int:
 
 
 def benchmark_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.data import generate_modular_stream
+    from fhe_native_mamba3.model import FheMamba3ForCausalLM
+
     torch.manual_seed(args.seed)
     device = torch.device(
         args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -225,6 +259,18 @@ def build_parser() -> argparse.ArgumentParser:
     _add_ckks_args(cost_parser)
     cost_parser.add_argument("--seq-len", type=int, default=128)
     cost_parser.set_defaults(func=cost_model_cmd)
+
+    openfhe_parser = subparsers.add_parser(
+        "openfhe-recurrence",
+        help="encrypt and evaluate a static MIMO recurrence with OpenFHE CKKS",
+    )
+    openfhe_parser.add_argument("--seq-len", type=int, default=3)
+    openfhe_parser.add_argument("--d-state", type=int, default=2)
+    openfhe_parser.add_argument("--mimo-rank", type=int, default=2)
+    openfhe_parser.add_argument("--seed", type=int, default=7)
+    openfhe_parser.add_argument("--multiplicative-depth", type=int, default=0)
+    openfhe_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    openfhe_parser.set_defaults(func=openfhe_recurrence_cmd)
 
     train_parser = subparsers.add_parser("train-synthetic", help="train on a tiny synthetic task")
     _add_model_args(train_parser)

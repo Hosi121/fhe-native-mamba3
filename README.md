@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.0`. Future changes should bump
+The project is currently at SemVer `0.3.0`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 ## Design
@@ -77,6 +77,21 @@ python3 -m fhe_native_mamba3.cli cost-model \
   --bootstrap-sec 2.0 \
   --scan-step-ms 1.0
 ```
+
+Run an actual encrypted CKKS recurrence with OpenFHE:
+
+```bash
+python3 -m pip install -e '.[fhe]'
+python3 -m fhe_native_mamba3.cli openfhe-recurrence \
+  --seq-len 3 \
+  --d-state 2 \
+  --mimo-rank 2 \
+  --seed 7
+```
+
+This encrypts the per-token MIMO rank inputs, evaluates the static scalar
+recurrence and C readout with OpenFHE `EvalMult`, `EvalAdd`, and `EvalRotate`,
+then decrypts only the final outputs for error checking.
 
 ## Sync to `high`
 

@@ -8,6 +8,7 @@ ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}"
 
 rsync -az --delete \
   --exclude '.venv/' \
+  --exclude '.venv-openfhe/' \
   --exclude '__pycache__/' \
   --exclude '.pytest_cache/' \
   --exclude '.ruff_cache/' \
