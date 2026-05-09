@@ -145,7 +145,12 @@ void print_vector(std::ostream& out, const std::vector<double>& values, int leng
     if (i > 0) {
       out << ",";
     }
-    out << values.at(static_cast<size_t>(i));
+    const auto value = values.at(static_cast<size_t>(i));
+    if (std::isfinite(value)) {
+      out << value;
+    } else {
+      out << "null";
+    }
   }
   out << "]";
 }
@@ -398,6 +403,7 @@ auto main(int argc, char* argv[]) -> int {
 
     std::vector<double> output_decrypted(static_cast<size_t>(config.mimo_rank), 0.0);
     double output_max_abs_error = 0.0;
+    bool output_has_nonfinite = false;
     if (has_output_cipher) {
       Plaintext output_plain;
       cc->Decrypt(keys.secretKey, output_cipher, &output_plain);
@@ -411,17 +417,28 @@ auto main(int argc, char* argv[]) -> int {
         }
         expected_output[static_cast<size_t>(rank)] = expected;
         output_decrypted[static_cast<size_t>(rank)] = output_slots[static_cast<size_t>(rank)];
-        output_max_abs_error = std::max(
-            output_max_abs_error,
-            std::abs(output_decrypted[static_cast<size_t>(rank)] - expected));
+        if (!std::isfinite(output_decrypted[static_cast<size_t>(rank)])) {
+          output_has_nonfinite = true;
+          output_max_abs_error = 1e300;
+        } else {
+          output_max_abs_error = std::max(
+              output_max_abs_error,
+              std::abs(output_decrypted[static_cast<size_t>(rank)] - expected));
+        }
       }
     }
 
     double state_max_abs_error = 0.0;
+    bool state_has_nonfinite = false;
     for (int i = 0; i < state_slots; ++i) {
-      state_max_abs_error = std::max(
-          state_max_abs_error,
-          std::abs(h_decrypted[static_cast<size_t>(i)] - h_expected[static_cast<size_t>(i)]));
+      if (!std::isfinite(h_decrypted[static_cast<size_t>(i)])) {
+        state_has_nonfinite = true;
+        state_max_abs_error = 1e300;
+      } else {
+        state_max_abs_error = std::max(
+            state_max_abs_error,
+            std::abs(h_decrypted[static_cast<size_t>(i)] - h_expected[static_cast<size_t>(i)]));
+      }
     }
     const double max_abs_error = std::max(state_max_abs_error, output_max_abs_error);
 
@@ -473,6 +490,8 @@ auto main(int argc, char* argv[]) -> int {
     std::cout << "\"max_abs_error\":" << max_abs_error << ",";
     std::cout << "\"state_max_abs_error\":" << state_max_abs_error << ",";
     std::cout << "\"output_max_abs_error\":" << output_max_abs_error << ",";
+    std::cout << "\"state_has_nonfinite\":" << (state_has_nonfinite ? "true" : "false") << ",";
+    std::cout << "\"output_has_nonfinite\":" << (output_has_nonfinite ? "true" : "false") << ",";
     std::cout << "\"expected_final_state\":";
     print_vector(std::cout, h_expected, state_slots);
     std::cout << ",\"decrypted_final_state\":";

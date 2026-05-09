@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.6`. Future changes should bump
+The project is currently at SemVer `0.2.7`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -174,6 +174,18 @@ final readout for error checking. Set `INPUT_MODE=server-bx` to keep the older
 server-side plaintext-weight multiply path, or `READOUT_MODE=none` for a
 recurrence-only probe. The default run is a toy correctness probe, not the
 final `ringDim=2^16` Stage 0 model benchmark.
+
+Run a build-once native sweep for packing/readout comparisons:
+
+```bash
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch slurm/fideslib_stage0_sweep.sbatch'
+```
+
+Override the sweep grid with space-separated values:
+
+```bash
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,MIMO_RANKS="1 2 4 8",D_STATES="4",SEQ_LENS="8" slurm/fideslib_stage0_sweep.sbatch'
+```
 
 ## Sync to `high`
 
