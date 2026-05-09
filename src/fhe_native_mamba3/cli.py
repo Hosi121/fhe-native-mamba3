@@ -525,6 +525,57 @@ def weight_bundle_eval_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def weight_bundle_generate_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.decoding import client_side_argmax
+    from fhe_native_mamba3.weight_bundle import load_weight_bundle_model
+
+    prompt = list(_parse_int_list(args.prompt))
+    if not prompt:
+        msg = "--prompt must contain at least one token id"
+        raise ValueError(msg)
+    if args.steps < 0:
+        msg = "--steps must be non-negative"
+        raise ValueError(msg)
+    device = torch.device(
+        args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
+    model, manifest = load_weight_bundle_model(args.bundle_dir, map_location="cpu")
+    model.to(device).eval()
+    max_token = model.config.vocab_size - 1
+    invalid_tokens = [token for token in prompt if token < 0 or token > max_token]
+    if invalid_tokens:
+        msg = f"prompt token ids out of range [0, {max_token}]: {invalid_tokens}"
+        raise ValueError(msg)
+    if len(prompt) + args.steps > model.config.max_seq_len:
+        msg = "prompt length plus generation steps exceeds bundle max_seq_len"
+        raise ValueError(msg)
+
+    generated = list(prompt)
+    started = time.perf_counter()
+    with torch.inference_mode():
+        for _ in range(args.steps):
+            input_ids = torch.tensor([generated], dtype=torch.long, device=device)
+            logits = model(input_ids)["logits"][0, -1].detach().cpu().tolist()
+            generated.append(client_side_argmax(logits))
+    elapsed = time.perf_counter() - started
+    payload = {
+        "version": __version__,
+        "bundle_dir": args.bundle_dir,
+        "device": str(device),
+        "decoding_mode": "client-side-argmax",
+        "weight_bundle": manifest.to_json_dict(),
+        "prompt_token_ids": prompt,
+        "new_token_ids": generated[len(prompt) :],
+        "generated_token_ids": generated,
+        "elapsed_sec": round(elapsed, 6),
+        "tokens_per_sec": round(args.steps / elapsed, 3) if elapsed > 0 else 0.0,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def weight_bundle_from_checkpoint_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.weight_bundle import save_weight_bundle_from_checkpoint
     from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
@@ -883,6 +934,16 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_eval_parser.add_argument("--seed", type=int, default=7)
     bundle_eval_parser.add_argument("--device", default="")
     bundle_eval_parser.set_defaults(func=weight_bundle_eval_cmd)
+
+    bundle_generate_parser = subparsers.add_parser(
+        "weight-bundle-generate",
+        help="load a fp32 weight bundle and run greedy token-id generation",
+    )
+    bundle_generate_parser.add_argument("bundle_dir")
+    bundle_generate_parser.add_argument("--prompt", default="1,2")
+    bundle_generate_parser.add_argument("--steps", type=int, default=4)
+    bundle_generate_parser.add_argument("--device", default="")
+    bundle_generate_parser.set_defaults(func=weight_bundle_generate_cmd)
 
     bundle_checkpoint_parser = subparsers.add_parser(
         "weight-bundle-from-checkpoint",
