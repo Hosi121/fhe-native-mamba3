@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fhe-native-mamba3"
+version = "0.1.0"
+description = "FHE-oriented Mamba-3 MIMO research prototype for encrypted LLM inference."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "cipher research" }]
+dependencies = [
+  "torch>=2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pre-commit>=3.7",
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+fhe-mamba3 = "fhe_native_mamba3.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+  "A",
+  "B",
+  "C4",
+  "E",
+  "F",
+  "I",
+  "N",
+  "PT",
+  "RUF",
+  "SIM",
+  "UP",
+  "W",
+]
+ignore = [
+  "B008",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

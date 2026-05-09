@@ -1,0 +1,18 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: bash -c '"${PYTHON:-.venv/bin/python}" -m ruff format --check .'
+        language: system
+        pass_filenames: false
+      - id: ruff-check
+        name: ruff check
+        entry: bash -c '"${PYTHON:-.venv/bin/python}" -m ruff check .'
+        language: system
+        pass_filenames: false
+      - id: pytest
+        name: pytest
+        entry: bash -c '"${PYTHON:-.venv/bin/python}" -m pytest'
+        language: system
+        pass_filenames: false
