@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -91,17 +92,70 @@ def load_checkpoint_state_dict(
 
 
 def _load_checkpoint(path: Path, map_location: str | torch.device) -> Any:
+    if path.is_dir():
+        return _load_checkpoint_dir(path, map_location)
     if path.suffix == ".safetensors":
-        try:
-            from safetensors.torch import load_file
-        except ImportError as exc:  # pragma: no cover - optional dependency guard.
-            msg = "loading .safetensors checkpoints requires the safetensors package"
-            raise ValueError(msg) from exc
-        return load_file(path, device=str(map_location))
+        return _load_safetensors_file(path, map_location)
     try:
         return torch.load(path, map_location=map_location, weights_only=True)
     except TypeError:  # pragma: no cover - compatibility with older torch.
         return torch.load(path, map_location=map_location)
+
+
+def _load_checkpoint_dir(path: Path, map_location: str | torch.device) -> dict[str, torch.Tensor]:
+    for index_name in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+        index_path = path / index_name
+        if index_path.exists():
+            return _load_checkpoint_index(path, index_path, map_location)
+
+    for filename in (
+        "model.safetensors",
+        "pytorch_model.bin",
+        "pytorch_model.pt",
+        "model.pt",
+        "checkpoint.pt",
+    ):
+        candidate = path / filename
+        if candidate.exists():
+            checkpoint = _load_checkpoint(candidate, map_location)
+            state_dict, _resolved = _extract_state_dict(checkpoint, None)
+            return state_dict
+
+    msg = f"could not find a supported checkpoint file in directory: {path}"
+    raise ValueError(msg)
+
+
+def _load_checkpoint_index(
+    root: Path,
+    index_path: Path,
+    map_location: str | torch.device,
+) -> dict[str, torch.Tensor]:
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, dict) or not weight_map:
+        msg = f"checkpoint index has no non-empty weight_map: {index_path}"
+        raise ValueError(msg)
+
+    state_dict: dict[str, torch.Tensor] = {}
+    for shard_name in sorted({str(name) for name in weight_map.values()}):
+        shard_path = root / shard_name
+        shard = _load_checkpoint(shard_path, map_location)
+        shard_state_dict, _resolved = _extract_state_dict(shard, None)
+        overlap = set(state_dict) & set(shard_state_dict)
+        if overlap:
+            msg = f"duplicate tensor keys across checkpoint shards: {sorted(overlap)}"
+            raise ValueError(msg)
+        state_dict.update(shard_state_dict)
+    return state_dict
+
+
+def _load_safetensors_file(path: Path, map_location: str | torch.device) -> dict[str, torch.Tensor]:
+    try:
+        from safetensors.torch import load_file
+    except ImportError as exc:  # pragma: no cover - optional dependency guard.
+        msg = "loading .safetensors checkpoints requires the safetensors package"
+        raise ValueError(msg) from exc
+    return load_file(path, device=str(map_location))
 
 
 def _extract_state_dict(
