@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import random
+import time
 from dataclasses import asdict, dataclass
 from typing import Any
+
+from fhe_native_mamba3.backends.base import FHEBackend
+from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,8 @@ class OpenFheRecurrenceResult:
     batch_size: int
     multiplicative_depth: int
     rotations: tuple[int, ...]
+    backend_stats: dict[str, Any]
+    latency_sec_per_token: float
 
     def to_json_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -105,104 +111,81 @@ def _expanded_rank_input(rank_input: tuple[float, ...], d_state: int, rank: int)
     return [rank_input[r] for r in range(rank) for _ in range(d_state)]
 
 
-def _readout_ciphertext(
-    *,
-    cc: Any,
-    public_key: Any,
-    contrib_ct: Any,
-    d_state: int,
-    rank: int,
-) -> Any:
-    slots = d_state * rank
-    output_ct = cc.Encrypt(public_key, cc.MakeCKKSPackedPlaintext([0.0] * slots))
-    for r in range(rank):
-        for n in range(d_state):
-            source = r * d_state + n
-            target = r
-            mask = [0.0] * slots
-            mask[source] = 1.0
-            term = cc.EvalMult(contrib_ct, cc.MakeCKKSPackedPlaintext(mask))
-            shift = source - target
-            if shift:
-                term = cc.EvalRotate(term, shift)
-            output_ct = cc.EvalAdd(output_ct, term)
-    return output_ct
+def required_readout_rotations(*, d_state: int, mimo_rank: int) -> tuple[int, ...]:
+    """Rotations needed to reduce state slots into per-rank output slots."""
 
-
-def run_openfhe_static_recurrence(
-    problem: OpenFheRecurrenceProblem,
-    *,
-    multiplicative_depth: int | None = None,
-    scaling_mod_size: int = 50,
-) -> OpenFheRecurrenceResult:
-    """Encrypt inputs and evaluate the static MIMO recurrence with OpenFHE CKKS."""
-
-    try:
-        from openfhe import (  # type: ignore[import-not-found]
-            CCParamsCKKSRNS,
-            GenCryptoContext,
-            PKESchemeFeature,
-        )
-    except ImportError as exc:
-        msg = "OpenFHE Python bindings are required. Install with: pip install '.[fhe]'"
-        raise RuntimeError(msg) from exc
-
-    d_state = problem.d_state
-    rank = problem.mimo_rank
-    slots = d_state * rank
-    depth = multiplicative_depth or max(8, problem.seq_len + 5)
-
-    params = CCParamsCKKSRNS()
-    params.SetMultiplicativeDepth(depth)
-    params.SetScalingModSize(scaling_mod_size)
-    params.SetBatchSize(slots)
-    cc = GenCryptoContext(params)
-    cc.Enable(PKESchemeFeature.PKE)
-    cc.Enable(PKESchemeFeature.KEYSWITCH)
-    cc.Enable(PKESchemeFeature.LEVELEDSHE)
-
-    keys = cc.KeyGen()
-    cc.EvalMultKeyGen(keys.secretKey)
-    rotations = tuple(
+    return tuple(
         sorted(
             {
                 r * d_state + n - r
-                for r in range(rank)
+                for r in range(mimo_rank)
                 for n in range(d_state)
                 if r * d_state + n - r != 0
             }
         )
     )
-    if rotations:
-        cc.EvalRotateKeyGen(keys.secretKey, list(rotations))
 
-    zero_pt = cc.MakeCKKSPackedPlaintext([0.0] * slots)
-    state_ct = cc.Encrypt(keys.publicKey, zero_pt)
-    decay_pt = cc.MakeCKKSPackedPlaintext(
-        [problem.decay[r] for r in range(rank) for _ in range(d_state)]
-    )
-    b_pt = cc.MakeCKKSPackedPlaintext(_flat_state_by_rank(problem.b, d_state, rank))
-    c_pt = cc.MakeCKKSPackedPlaintext(_flat_state_by_rank(problem.c, d_state, rank))
+
+def _readout_ciphertext(
+    *,
+    backend: FHEBackend,
+    contrib_ct: Any,
+    d_state: int,
+    rank: int,
+) -> Any:
+    output_ct = backend.encrypt([0.0] * backend.batch_size)
+    for r in range(rank):
+        for n in range(d_state):
+            source = r * d_state + n
+            target = r
+            mask = [0.0] * backend.batch_size
+            mask[source] = 1.0
+            term = backend.mul_plain(contrib_ct, backend.encode(mask))
+            shift = source - target
+            if shift:
+                term = backend.rotate(term, shift)
+            output_ct = backend.add(output_ct, term)
+    return output_ct
+
+
+def run_static_mimo_recurrence_with_backend(
+    problem: OpenFheRecurrenceProblem,
+    *,
+    backend: FHEBackend,
+    multiplicative_depth: int,
+) -> OpenFheRecurrenceResult:
+    """Evaluate the encrypted static MIMO recurrence with a backend."""
+
+    d_state = problem.d_state
+    rank = problem.mimo_rank
+    slots = d_state * rank
+    if backend.batch_size < slots:
+        msg = f"backend batch_size={backend.batch_size} is smaller than required slots={slots}"
+        raise ValueError(msg)
+
+    started = time.perf_counter()
+    state_ct = backend.encrypt([0.0] * backend.batch_size)
+    decay_pt = backend.encode([problem.decay[r] for r in range(rank) for _ in range(d_state)])
+    b_pt = backend.encode(_flat_state_by_rank(problem.b, d_state, rank))
+    c_pt = backend.encode(_flat_state_by_rank(problem.c, d_state, rank))
 
     decrypted_outputs: list[tuple[float, ...]] = []
     for rank_input in problem.rank_inputs:
-        input_ct = cc.Encrypt(
-            keys.publicKey,
-            cc.MakeCKKSPackedPlaintext(_expanded_rank_input(rank_input, d_state, rank)),
+        input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
+        state_ct = backend.add(
+            backend.mul_plain(state_ct, decay_pt),
+            backend.mul_plain(input_ct, b_pt),
         )
-        state_ct = cc.EvalAdd(cc.EvalMult(state_ct, decay_pt), cc.EvalMult(input_ct, b_pt))
-        contrib_ct = cc.EvalMult(state_ct, c_pt)
+        contrib_ct = backend.mul_plain(state_ct, c_pt)
         output_ct = _readout_ciphertext(
-            cc=cc,
-            public_key=keys.publicKey,
+            backend=backend,
             contrib_ct=contrib_ct,
             d_state=d_state,
             rank=rank,
         )
-        decrypted = cc.Decrypt(output_ct, keys.secretKey)
-        decrypted.SetLength(slots)
-        values = decrypted.GetCKKSPackedValue()
-        decrypted_outputs.append(tuple(float(values[r].real) for r in range(rank)))
+        decrypted_outputs.append(backend.decrypt(output_ct, length=rank))
+    eval_seconds = time.perf_counter() - started
+    backend.stats().eval_seconds += eval_seconds
 
     expected_outputs = plaintext_static_recurrence(problem)
     max_abs_error = max(
@@ -216,8 +199,35 @@ def run_openfhe_static_recurrence(
         decrypted_outputs=tuple(decrypted_outputs),
         expected_outputs=expected_outputs,
         max_abs_error=max_abs_error,
-        ring_dimension=cc.GetRingDimension(),
-        batch_size=slots,
+        ring_dimension=backend.ring_dimension,
+        batch_size=backend.batch_size,
+        multiplicative_depth=multiplicative_depth,
+        rotations=required_readout_rotations(d_state=d_state, mimo_rank=rank),
+        backend_stats=backend.stats().to_json_dict(),
+        latency_sec_per_token=eval_seconds / problem.seq_len,
+    )
+
+
+def run_openfhe_static_recurrence(
+    problem: OpenFheRecurrenceProblem,
+    *,
+    multiplicative_depth: int | None = None,
+    scaling_mod_size: int = 50,
+) -> OpenFheRecurrenceResult:
+    """Encrypt inputs and evaluate the static MIMO recurrence with OpenFHE CKKS."""
+
+    depth = multiplicative_depth or max(8, problem.seq_len + 5)
+    backend = OpenFheCkksBackend(
+        batch_size=problem.d_state * problem.mimo_rank,
         multiplicative_depth=depth,
-        rotations=rotations,
+        scaling_mod_size=scaling_mod_size,
+        rotations=required_readout_rotations(
+            d_state=problem.d_state,
+            mimo_rank=problem.mimo_rank,
+        ),
+    )
+    return run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=backend,
+        multiplicative_depth=depth,
     )

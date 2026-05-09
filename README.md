@@ -6,8 +6,17 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.3.0`. Future changes should bump
+The project is currently at SemVer `0.2.0`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
+
+Versioning policy:
+
+- `0.1.x`: initial encrypted kernels and correctness checks.
+- `0.2.x`: backend abstraction and Stage 0 benchmark harnesses.
+- `0.3.x`: tiny encrypted MIMO blocks and small synthetic models.
+- `0.4.x`: OSS weight import scaffolding.
+- `1.0.0`: existing OSS weights can be loaded and an end-to-end encrypted
+  inference path runs with benchmark output.
 
 ## Design
 
@@ -92,6 +101,22 @@ python3 -m fhe_native_mamba3.cli openfhe-recurrence \
 This encrypts the per-token MIMO rank inputs, evaluates the static scalar
 recurrence and C readout with OpenFHE `EvalMult`, `EvalAdd`, and `EvalRotate`,
 then decrypts only the final outputs for error checking.
+
+Run the Stage 0 benchmark harness:
+
+```bash
+python3 -m fhe_native_mamba3.cli stage0-mimo \
+  --backend openfhe \
+  --seq-len 3 \
+  --d-state 2 \
+  --mimo-rank 2
+```
+
+The same harness can run without encryption for operation-count checks:
+
+```bash
+python3 -m fhe_native_mamba3.cli stage0-mimo --backend tracking
+```
 
 ## Sync to `high`
 

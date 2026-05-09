@@ -137,6 +137,28 @@ def openfhe_recurrence_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def stage0_mimo_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.benchmarks.stage0_mimo import Stage0MimoConfig, run_stage0_mimo
+
+    result = run_stage0_mimo(
+        Stage0MimoConfig(
+            backend=args.backend,
+            seq_len=args.seq_len,
+            d_state=args.d_state,
+            mimo_rank=args.mimo_rank,
+            seed=args.seed,
+            multiplicative_depth=args.multiplicative_depth,
+            scaling_mod_size=args.scaling_mod_size,
+        )
+    )
+    payload = {
+        "version": __version__,
+        **result,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def train_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -271,6 +293,19 @@ def build_parser() -> argparse.ArgumentParser:
     openfhe_parser.add_argument("--multiplicative-depth", type=int, default=0)
     openfhe_parser.add_argument("--scaling-mod-size", type=int, default=50)
     openfhe_parser.set_defaults(func=openfhe_recurrence_cmd)
+
+    stage0_parser = subparsers.add_parser(
+        "stage0-mimo",
+        help="run Stage 0 tiny FHE-native MIMO benchmark",
+    )
+    stage0_parser.add_argument("--backend", choices=["openfhe", "tracking"], default="openfhe")
+    stage0_parser.add_argument("--seq-len", type=int, default=3)
+    stage0_parser.add_argument("--d-state", type=int, default=2)
+    stage0_parser.add_argument("--mimo-rank", type=int, default=2)
+    stage0_parser.add_argument("--seed", type=int, default=7)
+    stage0_parser.add_argument("--multiplicative-depth", type=int, default=8)
+    stage0_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    stage0_parser.set_defaults(func=stage0_mimo_cmd)
 
     train_parser = subparsers.add_parser("train-synthetic", help="train on a tiny synthetic task")
     _add_model_args(train_parser)

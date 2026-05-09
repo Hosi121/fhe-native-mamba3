@@ -1,11 +1,13 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.3.0"
+__version__ = "0.2.0"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
     "CkksConfig": ("fhe_native_mamba3.ckks", "CkksConfig"),
     "CkksTrace": ("fhe_native_mamba3.ckks", "CkksTrace"),
+    "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
+    "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
     "FheCostEstimate": ("fhe_native_mamba3.cost", "FheCostEstimate"),
     "FheMamba3Block": ("fhe_native_mamba3.model", "FheMamba3Block"),
     "FheMamba3Config": ("fhe_native_mamba3.model", "FheMamba3Config"),
@@ -19,7 +21,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "OpenFheRecurrenceResult",
     ),
+    "OpenFheCkksBackend": ("fhe_native_mamba3.backends.openfhe", "OpenFheCkksBackend"),
     "PackingPlan": ("fhe_native_mamba3.ckks", "PackingPlan"),
+    "Stage0MimoConfig": ("fhe_native_mamba3.benchmarks.stage0_mimo", "Stage0MimoConfig"),
+    "TrackingBackend": ("fhe_native_mamba3.backends.tracking", "TrackingBackend"),
     "estimate_block_cost": ("fhe_native_mamba3.cost", "estimate_block_cost"),
     "estimate_integrated_cost": ("fhe_native_mamba3.cost", "estimate_integrated_cost"),
     "greedy_bootstrap_schedule": ("fhe_native_mamba3.cost", "greedy_bootstrap_schedule"),
@@ -32,20 +37,26 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "run_openfhe_static_recurrence",
     ),
+    "run_stage0_mimo": ("fhe_native_mamba3.benchmarks.stage0_mimo", "run_stage0_mimo"),
 }
 
 __all__ = [
+    "BackendStats",
     "BootstrapSchedule",
     "CkksConfig",
     "CkksTrace",
+    "FHEBackend",
     "FheCostEstimate",
     "FheMamba3Block",
     "FheMamba3Config",
     "FheMamba3ForCausalLM",
     "IntegratedCostEstimate",
+    "OpenFheCkksBackend",
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
     "PackingPlan",
+    "Stage0MimoConfig",
+    "TrackingBackend",
     "__version__",
     "estimate_block_cost",
     "estimate_integrated_cost",
@@ -53,6 +64,7 @@ __all__ = [
     "make_demo_problem",
     "plaintext_static_recurrence",
     "run_openfhe_static_recurrence",
+    "run_stage0_mimo",
 ]
 
 
