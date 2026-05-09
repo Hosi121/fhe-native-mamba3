@@ -46,6 +46,17 @@ test -d "${FIDESLIB_DIR}/.git"
 cd "${FIDESLIB_DIR}"
 git rev-parse --short HEAD
 
+section "Patched OpenFHE"
+if [[ ! -f "${OPENFHE_PREFIX}/lib/OpenFHE/OpenFHEConfig.cmake" ]] \
+  && [[ ! -f "${OPENFHE_PREFIX}/lib/cmake/OpenFHE/OpenFHEConfig.cmake" ]]; then
+  (
+    cd "${FIDESLIB_DIR}/deps"
+    ./build.sh "${OPENFHE_PREFIX}"
+  )
+else
+  echo "using_existing_openfhe=${OPENFHE_PREFIX}"
+fi
+
 section "Configure"
 rm -rf "${BUILD_DIR}"
 cmake \
@@ -56,7 +67,7 @@ cmake \
   -DFIDESLIB_ARCH="${FIDESLIB_ARCH}" \
   -DOPENFHE_INSTALL_PREFIX="${OPENFHE_PREFIX}" \
   -DFIDESLIB_INSTALL_PREFIX="${FIDESLIB_PREFIX}" \
-  -DFIDESLIB_INSTALL_OPENFHE=ON \
+  -DFIDESLIB_INSTALL_OPENFHE=OFF \
   -DFIDESLIB_COMPILE_TESTS=OFF \
   -DFIDESLIB_COMPILE_BENCHMARKS=OFF
 
