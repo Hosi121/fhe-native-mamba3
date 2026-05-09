@@ -31,7 +31,7 @@ def test_inspect_cli_outputs_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.14"
+    assert payload["version"] == "0.2.15"
     assert payload["cost_per_block"]["seq_len"] == 8
 
 
@@ -62,7 +62,7 @@ def test_cost_model_cli_outputs_ckks_payload() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.14"
+    assert payload["version"] == "0.2.15"
     assert payload["integrated_cost"]["effective_window"] == 4
     assert payload["integrated_cost"]["head_packing"]["heads_per_ciphertext"] >= 1
     assert payload["integrated_cost"]["block_cost"]["rotations"] == 2
@@ -121,7 +121,7 @@ def test_stage0_tracking_cli_outputs_benchmark_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.14"
+    assert payload["version"] == "0.2.15"
     assert payload["stage"] == "0"
     assert payload["backend"] == "tracking"
     assert payload["encrypted"] is False
@@ -152,7 +152,7 @@ def test_stage0_sweep_cli_outputs_summary() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.14"
+    assert payload["version"] == "0.2.15"
     assert payload["result_count"] == 4
     assert payload["summary"]["max_abs_error_max"] < 1e-12
 
@@ -214,7 +214,7 @@ def test_profile_synthetic_cli_outputs_profile() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.14"
+    assert payload["version"] == "0.2.15"
     assert payload["profile"]["seq_len"] == 8
     assert payload["profile"]["blocks"][0]["lambda_by_beta"]["0.5"] >= 0.0
 
@@ -242,7 +242,7 @@ def test_planning_cli_commands_output_json() -> None:
             text=True,
         )
         payload = json.loads(completed.stdout)
-        assert payload["version"] == "0.2.14"
+        assert payload["version"] == "0.2.15"
 
 
 def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
@@ -279,7 +279,7 @@ def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
         text=True,
     )
     export_payload = json.loads(export_completed.stdout)
-    assert export_payload["version"] == "0.2.14"
+    assert export_payload["version"] == "0.2.15"
     assert export_payload["summary"]["tensor_count"] > 0
     assert export_payload["summary"]["parameter_count"] > 0
     assert (bundle_dir / "manifest.json").exists()
@@ -298,7 +298,7 @@ def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
         text=True,
     )
     inspect_payload = json.loads(inspect_completed.stdout)
-    assert inspect_payload["version"] == "0.2.14"
+    assert inspect_payload["version"] == "0.2.15"
     assert inspect_payload["summary"] == export_payload["summary"]
     assert inspect_payload["weight_bundle"]["model_config"]["scan_mode"] == "ssd"
 
@@ -333,6 +333,34 @@ def test_weight_bundle_cli_converts_checkpoint(tmp_path) -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.14"
+    assert payload["version"] == "0.2.15"
     assert payload["summary"]["tensor_count"] == len(model.state_dict())
     assert payload["weight_bundle"]["model_config"]["vocab_size"] == 16
+
+
+def test_checkpoint_inspect_cli_outputs_tensor_shapes(tmp_path) -> None:
+    checkpoint_path = tmp_path / "checkpoint.pt"
+    torch.save({"model": {"b.weight": torch.zeros(2, 3), "a.bias": torch.ones(4)}}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fhe_native_mamba3.cli",
+            "checkpoint-inspect",
+            str(checkpoint_path),
+            "--max-tensors",
+            "1",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    inspection = payload["checkpoint_inspection"]
+    assert payload["version"] == "0.2.15"
+    assert inspection["state_dict_key"] == "model"
+    assert inspection["tensor_count"] == 2
+    assert inspection["parameter_count"] == 10
+    assert len(inspection["tensors"]) == 1
+    assert inspection["tensors"][0]["name"] == "a.bias"

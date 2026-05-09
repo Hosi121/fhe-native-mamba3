@@ -1,11 +1,13 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.14"
+__version__ = "0.2.15"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
     "CkksConfig": ("fhe_native_mamba3.ckks", "CkksConfig"),
     "CkksTrace": ("fhe_native_mamba3.ckks", "CkksTrace"),
+    "CheckpointInspection": ("fhe_native_mamba3.checkpoint", "CheckpointInspection"),
+    "CheckpointTensorSpec": ("fhe_native_mamba3.checkpoint", "CheckpointTensorSpec"),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
     "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
@@ -55,6 +57,7 @@ _LAZY_IMPORTS = {
     "estimate_block_cost": ("fhe_native_mamba3.cost", "estimate_block_cost"),
     "estimate_integrated_cost": ("fhe_native_mamba3.cost", "estimate_integrated_cost"),
     "greedy_bootstrap_schedule": ("fhe_native_mamba3.cost", "greedy_bootstrap_schedule"),
+    "inspect_checkpoint": ("fhe_native_mamba3.checkpoint", "inspect_checkpoint"),
     "make_demo_problem": ("fhe_native_mamba3.openfhe_backend", "make_demo_problem"),
     "plaintext_static_recurrence": (
         "fhe_native_mamba3.openfhe_backend",
@@ -78,6 +81,8 @@ __all__ = [
     "BackendCapability",
     "BackendStats",
     "BootstrapSchedule",
+    "CheckpointInspection",
+    "CheckpointTensorSpec",
     "CkksConfig",
     "CkksTrace",
     "FHEBackend",
@@ -107,6 +112,7 @@ __all__ = [
     "estimate_block_cost",
     "estimate_integrated_cost",
     "greedy_bootstrap_schedule",
+    "inspect_checkpoint",
     "load_weight_bundle_model",
     "make_demo_problem",
     "plaintext_static_recurrence",

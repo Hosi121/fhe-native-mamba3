@@ -231,6 +231,22 @@ def backend_capabilities_cmd(_args: argparse.Namespace) -> int:
     return 0
 
 
+def checkpoint_inspect_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.checkpoint import inspect_checkpoint
+
+    inspection = inspect_checkpoint(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    payload = {
+        "version": __version__,
+        "checkpoint_inspection": inspection.to_json_dict(max_tensors=args.max_tensors),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def profile_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -610,6 +626,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="print backend capability matrix",
     )
     capabilities_parser.set_defaults(func=backend_capabilities_cmd)
+
+    checkpoint_parser = subparsers.add_parser(
+        "checkpoint-inspect",
+        help="inspect tensor keys and shapes in a PyTorch checkpoint",
+    )
+    checkpoint_parser.add_argument("checkpoint")
+    checkpoint_parser.add_argument("--state-dict-key", default="")
+    checkpoint_parser.add_argument("--map-location", default="cpu")
+    checkpoint_parser.add_argument("--max-tensors", type=int, default=50)
+    checkpoint_parser.set_defaults(func=checkpoint_inspect_cmd)
 
     rotation_parser = subparsers.add_parser(
         "rotation-inventory",
