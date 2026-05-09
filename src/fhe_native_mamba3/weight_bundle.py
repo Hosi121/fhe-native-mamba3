@@ -156,6 +156,26 @@ def load_weight_bundle_model(
     return model, manifest
 
 
+def save_weight_bundle_from_checkpoint(
+    checkpoint_path: str | Path,
+    output_dir: str | Path,
+    encoding_config: WeightEncodingConfig = WeightEncodingConfig(),
+    *,
+    map_location: str | torch.device = "cpu",
+) -> WeightBundleManifest:
+    """Convert a training checkpoint into a fp32 weight bundle."""
+
+    checkpoint = _load_training_checkpoint(Path(checkpoint_path), map_location)
+    config = FheMamba3Config(**checkpoint["config"])
+    model = FheMamba3ForCausalLM(config)
+    state_dict = checkpoint["model"]
+    if not isinstance(state_dict, dict):
+        msg = "checkpoint['model'] must be a state_dict"
+        raise ValueError(msg)
+    model.load_state_dict(state_dict)
+    return save_weight_bundle(model, output_dir, encoding_config)
+
+
 def _master_weight_tensor(tensor: torch.Tensor) -> torch.Tensor:
     detached = tensor.detach().cpu()
     if detached.is_floating_point():
@@ -172,3 +192,18 @@ def _load_state_dict(path: Path, map_location: str | torch.device) -> dict[str, 
         msg = "weight bundle must contain a state_dict"
         raise ValueError(msg)
     return state_dict
+
+
+def _load_training_checkpoint(path: Path, map_location: str | torch.device) -> dict[str, Any]:
+    try:
+        checkpoint = torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:  # pragma: no cover - compatibility with older torch.
+        checkpoint = torch.load(path, map_location=map_location)
+    if not isinstance(checkpoint, dict):
+        msg = "checkpoint must be a dictionary"
+        raise ValueError(msg)
+    missing = {"config", "model"} - set(checkpoint)
+    if missing:
+        msg = f"checkpoint is missing required keys: {sorted(missing)}"
+        raise ValueError(msg)
+    return checkpoint

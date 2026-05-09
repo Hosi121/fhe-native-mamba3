@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+
 import torch
 
 from fhe_native_mamba3.model import FheMamba3Config, FheMamba3ForCausalLM
@@ -8,6 +10,7 @@ from fhe_native_mamba3.weight_bundle import (
     load_weight_bundle_manifest,
     load_weight_bundle_model,
     save_weight_bundle,
+    save_weight_bundle_from_checkpoint,
 )
 
 
@@ -49,3 +52,26 @@ def test_weight_bundle_manifest_can_be_loaded_without_weights(tmp_path) -> None:
     assert manifest.tensor_count == len(model.state_dict())
     assert manifest.parameter_count == sum(tensor.numel() for tensor in model.state_dict().values())
     assert min(tensor.calibration.encode_scale_bits for tensor in manifest.tensors) >= 20
+
+
+def test_weight_bundle_from_checkpoint_round_trips(tmp_path) -> None:
+    config = FheMamba3Config(vocab_size=16, d_model=8, n_layers=1, d_state=2, mimo_rank=2)
+    model = FheMamba3ForCausalLM(config)
+    checkpoint_path = tmp_path / "checkpoint.pt"
+    bundle_dir = tmp_path / "bundle"
+    torch.save(
+        {
+            "version": "test",
+            "config": asdict(config),
+            "model": model.state_dict(),
+            "last_loss": 0.0,
+        },
+        checkpoint_path,
+    )
+
+    manifest = save_weight_bundle_from_checkpoint(checkpoint_path, bundle_dir)
+    restored, _ = load_weight_bundle_model(bundle_dir)
+
+    assert manifest.model_config["vocab_size"] == 16
+    for name, tensor in model.state_dict().items():
+        assert torch.equal(restored.state_dict()[name], tensor)

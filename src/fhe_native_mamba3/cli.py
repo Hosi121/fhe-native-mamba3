@@ -367,6 +367,31 @@ def weight_bundle_inspect_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def weight_bundle_from_checkpoint_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.weight_bundle import save_weight_bundle_from_checkpoint
+    from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
+
+    manifest = save_weight_bundle_from_checkpoint(
+        args.checkpoint,
+        args.output_dir,
+        WeightEncodingConfig(
+            scale_bits=args.scale_bits,
+            target_max_abs=args.target_max_abs,
+            source_dtype=args.source_dtype,
+        ),
+        map_location=args.map_location,
+    )
+    payload = {
+        "version": __version__,
+        "checkpoint": args.checkpoint,
+        "output_dir": args.output_dir,
+        "weight_bundle": manifest.to_json_dict(),
+        "summary": _weight_bundle_summary(manifest),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def _weight_bundle_summary(manifest: Any) -> dict[str, Any]:
     scale_bits = tuple(tensor.calibration.encode_scale_bits for tensor in manifest.tensors)
     max_abs = tuple(tensor.calibration.max_abs for tensor in manifest.tensors)
@@ -638,6 +663,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bundle_inspect_parser.add_argument("bundle_dir")
     bundle_inspect_parser.set_defaults(func=weight_bundle_inspect_cmd)
+
+    bundle_checkpoint_parser = subparsers.add_parser(
+        "weight-bundle-from-checkpoint",
+        help="convert a prototype training checkpoint into a fp32 weight bundle",
+    )
+    bundle_checkpoint_parser.add_argument("checkpoint")
+    bundle_checkpoint_parser.add_argument("--output-dir", required=True)
+    bundle_checkpoint_parser.add_argument("--map-location", default="cpu")
+    bundle_checkpoint_parser.add_argument("--scale-bits", type=int, default=40)
+    bundle_checkpoint_parser.add_argument("--target-max-abs", type=float, default=1.0)
+    bundle_checkpoint_parser.add_argument("--source-dtype", default="fp32")
+    bundle_checkpoint_parser.set_defaults(func=weight_bundle_from_checkpoint_cmd)
 
     train_parser = subparsers.add_parser("train-synthetic", help="train on a tiny synthetic task")
     _add_model_args(train_parser)

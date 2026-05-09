@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.13"
+__version__ = "0.2.14"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -68,6 +68,10 @@ _LAZY_IMPORTS = {
     "run_stage0_sweep": ("fhe_native_mamba3.benchmarks.stage0_sweep", "run_stage0_sweep"),
     "load_weight_bundle_model": ("fhe_native_mamba3.weight_bundle", "load_weight_bundle_model"),
     "save_weight_bundle": ("fhe_native_mamba3.weight_bundle", "save_weight_bundle"),
+    "save_weight_bundle_from_checkpoint": (
+        "fhe_native_mamba3.weight_bundle",
+        "save_weight_bundle_from_checkpoint",
+    ),
 }
 
 __all__ = [
@@ -110,6 +114,7 @@ __all__ = [
     "run_stage0_mimo",
     "run_stage0_sweep",
     "save_weight_bundle",
+    "save_weight_bundle_from_checkpoint",
 ]
 
 
