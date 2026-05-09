@@ -126,6 +126,7 @@ def openfhe_recurrence_cmd(args: argparse.Namespace) -> int:
         problem,
         multiplicative_depth=args.multiplicative_depth,
         scaling_mod_size=args.scaling_mod_size,
+        input_mode=args.input_mode,
     )
     payload = {
         "version": __version__,
@@ -150,6 +151,7 @@ def stage0_mimo_cmd(args: argparse.Namespace) -> int:
             multiplicative_depth=args.multiplicative_depth,
             scaling_mod_size=args.scaling_mod_size,
             readout_strategy=args.readout_strategy,
+            input_mode=args.input_mode,
         )
     )
     payload = {
@@ -173,6 +175,15 @@ def _parse_readout_list(value: str) -> tuple[str, ...]:
     return strategies
 
 
+def _parse_input_mode_list(value: str) -> tuple[str, ...]:
+    modes = tuple(part for part in value.split(",") if part)
+    unsupported = sorted(set(modes) - {"server-bx", "client-update"})
+    if unsupported:
+        msg = f"unsupported input modes: {unsupported}"
+        raise argparse.ArgumentTypeError(msg)
+    return modes
+
+
 def stage0_sweep_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.benchmarks.stage0_sweep import Stage0SweepConfig, run_stage0_sweep
 
@@ -186,6 +197,7 @@ def stage0_sweep_cmd(args: argparse.Namespace) -> int:
             d_states=args.d_states,
             mimo_ranks=args.mimo_ranks,
             readout_strategies=args.readout_strategies,
+            input_modes=args.input_modes,
             seed=args.seed,
             multiplicative_depth=args.multiplicative_depth,
             scaling_mod_size=args.scaling_mod_size,
@@ -401,6 +413,11 @@ def build_parser() -> argparse.ArgumentParser:
     openfhe_parser.add_argument("--seed", type=int, default=7)
     openfhe_parser.add_argument("--multiplicative-depth", type=int, default=0)
     openfhe_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    openfhe_parser.add_argument(
+        "--input-mode",
+        choices=["server-bx", "client-update"],
+        default="client-update",
+    )
     openfhe_parser.set_defaults(func=openfhe_recurrence_cmd)
 
     stage0_parser = subparsers.add_parser(
@@ -419,6 +436,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["slotwise", "rank-reduce"],
         default="slotwise",
     )
+    stage0_parser.add_argument(
+        "--input-mode",
+        choices=["server-bx", "client-update"],
+        default="client-update",
+    )
     stage0_parser.set_defaults(func=stage0_mimo_cmd)
 
     sweep_parser = subparsers.add_parser(
@@ -433,6 +455,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--readout-strategies",
         type=_parse_readout_list,
         default=("slotwise", "rank-reduce"),
+    )
+    sweep_parser.add_argument(
+        "--input-modes",
+        type=_parse_input_mode_list,
+        default=("client-update",),
     )
     sweep_parser.add_argument("--seed", type=int, default=7)
     sweep_parser.add_argument("--multiplicative-depth", type=int, default=8)

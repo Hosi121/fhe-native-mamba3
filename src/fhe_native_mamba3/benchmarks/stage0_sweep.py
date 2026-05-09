@@ -13,6 +13,7 @@ from fhe_native_mamba3.benchmarks.stage0_mimo import (
     Stage0Readout,
     run_stage0_mimo,
 )
+from fhe_native_mamba3.openfhe_backend import InputMode
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class Stage0SweepConfig:
     d_states: tuple[int, ...] = (2,)
     mimo_ranks: tuple[int, ...] = (2,)
     readout_strategies: tuple[Stage0Readout, ...] = ("slotwise", "rank-reduce")
+    input_modes: tuple[InputMode, ...] = ("client-update",)
     seed: int = 7
     multiplicative_depth: int = 8
     scaling_mod_size: int = 50
@@ -44,22 +46,24 @@ def run_stage0_sweep(
         for d_state in config.d_states:
             for mimo_rank in config.mimo_ranks:
                 for readout_strategy in config.readout_strategies:
-                    result = run_stage0_mimo(
-                        Stage0MimoConfig(
-                            backend=config.backend,
-                            seq_len=seq_len,
-                            d_state=d_state,
-                            mimo_rank=mimo_rank,
-                            seed=config.seed,
-                            multiplicative_depth=config.multiplicative_depth,
-                            scaling_mod_size=config.scaling_mod_size,
-                            readout_strategy=readout_strategy,
+                    for input_mode in config.input_modes:
+                        result = run_stage0_mimo(
+                            Stage0MimoConfig(
+                                backend=config.backend,
+                                seq_len=seq_len,
+                                d_state=d_state,
+                                mimo_rank=mimo_rank,
+                                seed=config.seed,
+                                multiplicative_depth=config.multiplicative_depth,
+                                scaling_mod_size=config.scaling_mod_size,
+                                readout_strategy=readout_strategy,
+                                input_mode=input_mode,
+                            )
                         )
-                    )
-                    results.append(result)
-                    if output_jsonl is not None:
-                        with output_jsonl.open("a", encoding="utf-8") as handle:
-                            handle.write(json.dumps(result, sort_keys=True) + "\n")
+                        results.append(result)
+                        if output_jsonl is not None:
+                            with output_jsonl.open("a", encoding="utf-8") as handle:
+                                handle.write(json.dumps(result, sort_keys=True) + "\n")
 
     return {
         "stage": "0",
@@ -92,6 +96,7 @@ def _result_key(result: dict[str, Any]) -> dict[str, Any]:
         "d_state": result["model"]["d_state"],
         "mimo_rank": result["model"]["mimo_rank"],
         "readout_strategy": result["model"]["readout_strategy"],
+        "input_mode": result["model"]["input_mode"],
         "latency_sec_per_token": result["latency_sec_per_token"],
         "ct_pt_mul": result["operation_counts"]["ct_pt_mul"],
         "rotations": result["operation_counts"]["rotations"],

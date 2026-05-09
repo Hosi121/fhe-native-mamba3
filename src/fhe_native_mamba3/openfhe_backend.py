@@ -5,12 +5,13 @@ from __future__ import annotations
 import random
 import time
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Literal
 
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
 
 ReadoutStrategy = str
+InputMode = Literal["server-bx", "client-update"]
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,8 @@ class OpenFheRecurrenceResult:
     backend_stats: dict[str, Any]
     latency_sec_per_token: float
     readout_strategy: str
+    input_mode: str
+    client_plaintext_public_weight_multiplies: int
 
     def to_json_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -112,6 +115,15 @@ def _flat_state_by_rank(
 
 def _expanded_rank_input(rank_input: tuple[float, ...], d_state: int, rank: int) -> list[float]:
     return [rank_input[r] for r in range(rank) for _ in range(d_state)]
+
+
+def _expanded_update(
+    rank_input: tuple[float, ...],
+    b_matrix: tuple[tuple[float, ...], ...],
+    d_state: int,
+    rank: int,
+) -> list[float]:
+    return [b_matrix[n][r] * rank_input[r] for r in range(rank) for n in range(d_state)]
 
 
 def required_readout_rotations(
@@ -230,12 +242,16 @@ def run_static_mimo_recurrence_with_backend(
     backend: FHEBackend,
     multiplicative_depth: int,
     readout_strategy: ReadoutStrategy = "slotwise",
+    input_mode: InputMode = "client-update",
 ) -> OpenFheRecurrenceResult:
     """Evaluate the encrypted static MIMO recurrence with a backend."""
 
     d_state = problem.d_state
     rank = problem.mimo_rank
     slots = d_state * rank
+    if input_mode not in {"server-bx", "client-update"}:
+        msg = f"unsupported input_mode: {input_mode}"
+        raise ValueError(msg)
     if backend.batch_size < slots:
         msg = f"backend batch_size={backend.batch_size} is smaller than required slots={slots}"
         raise ValueError(msg)
@@ -247,11 +263,17 @@ def run_static_mimo_recurrence_with_backend(
     c_pt = backend.encode(_flat_state_by_rank(problem.c, d_state, rank))
 
     decrypted_outputs: list[tuple[float, ...]] = []
+    client_plaintext_public_weight_multiplies = 0
     for rank_input in problem.rank_inputs:
-        input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
+        if input_mode == "server-bx":
+            input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
+            update_ct = backend.mul_plain(input_ct, b_pt)
+        else:
+            update_ct = backend.encrypt(_expanded_update(rank_input, problem.b, d_state, rank))
+            client_plaintext_public_weight_multiplies += slots
         state_ct = backend.add(
             backend.mul_plain(state_ct, decay_pt),
-            backend.mul_plain(input_ct, b_pt),
+            update_ct,
         )
         contrib_ct = backend.mul_plain(state_ct, c_pt)
         output_ct = _readout_ciphertext(
@@ -288,6 +310,8 @@ def run_static_mimo_recurrence_with_backend(
         backend_stats=backend.stats().to_json_dict(),
         latency_sec_per_token=eval_seconds / problem.seq_len,
         readout_strategy=readout_strategy,
+        input_mode=input_mode,
+        client_plaintext_public_weight_multiplies=client_plaintext_public_weight_multiplies,
     )
 
 
@@ -297,6 +321,7 @@ def run_openfhe_static_recurrence(
     multiplicative_depth: int | None = None,
     scaling_mod_size: int = 50,
     readout_strategy: ReadoutStrategy = "slotwise",
+    input_mode: InputMode = "client-update",
 ) -> OpenFheRecurrenceResult:
     """Encrypt inputs and evaluate the static MIMO recurrence with OpenFHE CKKS."""
 
@@ -316,4 +341,5 @@ def run_openfhe_static_recurrence(
         backend=backend,
         multiplicative_depth=depth,
         readout_strategy=readout_strategy,
+        input_mode=input_mode,
     )

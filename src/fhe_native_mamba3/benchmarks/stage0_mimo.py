@@ -8,6 +8,7 @@ from typing import Any, Literal
 from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.openfhe_backend import (
+    InputMode,
     make_demo_problem,
     required_readout_rotations,
     run_static_mimo_recurrence_with_backend,
@@ -29,6 +30,7 @@ class Stage0MimoConfig:
     multiplicative_depth: int = 8
     scaling_mod_size: int = 50
     readout_strategy: Stage0Readout = "slotwise"
+    input_mode: InputMode = "client-update"
 
     @property
     def state_slots(self) -> int:
@@ -68,6 +70,7 @@ def run_stage0_mimo(config: Stage0MimoConfig) -> dict[str, Any]:
         backend=backend,
         multiplicative_depth=config.multiplicative_depth,
         readout_strategy=config.readout_strategy,
+        input_mode=config.input_mode,
     )
     stats = result.backend_stats
     next_bottleneck = _next_bottleneck(stats)
@@ -84,6 +87,7 @@ def run_stage0_mimo(config: Stage0MimoConfig) -> dict[str, Any]:
             "state_slots": config.state_slots,
             "parameter_count": config.mimo_rank + 2 * config.d_state * config.mimo_rank,
             "readout_strategy": config.readout_strategy,
+            "input_mode": config.input_mode,
         },
         "ckks": {
             "multiplicative_depth": config.multiplicative_depth,
@@ -103,6 +107,9 @@ def run_stage0_mimo(config: Stage0MimoConfig) -> dict[str, Any]:
             "encrypt": stats["encrypt_count"],
             "decrypt": stats["decrypt_count"],
             "encode": stats["encode_count"],
+            "client_plaintext_public_weight_multiplies": (
+                result.client_plaintext_public_weight_multiplies
+            ),
         },
         "timing": {
             "setup_seconds": stats["setup_seconds"],

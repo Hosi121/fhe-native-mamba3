@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.3`. Future changes should bump
+The project is currently at SemVer `0.2.4`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -112,6 +112,11 @@ python3 -m fhe_native_mamba3.cli stage0-mimo \
   --mimo-rank 2
 ```
 
+The default input mode is `client-update`: the client applies public `B`
+weights before encryption and sends encrypted `B_t x_t` updates. Use
+`--input-mode server-bx` to benchmark the older server-side plaintext-weight
+multiply path.
+
 The same harness can run without encryption for operation-count checks:
 
 ```bash
@@ -126,6 +131,7 @@ python3 -m fhe_native_mamba3.cli stage0-sweep \
   --seq-lens 2,4 \
   --d-states 2,4,8 \
   --mimo-ranks 2,4 \
+  --input-modes client-update,server-bx \
   --output-jsonl runs/stage0_tracking.jsonl
 ```
 
