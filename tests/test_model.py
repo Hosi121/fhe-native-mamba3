@@ -118,6 +118,43 @@ def test_windowed_scan_matches_sequential_when_window_covers_sequence() -> None:
     )
 
 
+def test_ssd_scan_matches_sequential_when_window_covers_sequence() -> None:
+    torch.manual_seed(2)
+    base = FheMamba3Config(
+        vocab_size=32,
+        d_model=16,
+        n_layers=1,
+        d_state=3,
+        mimo_rank=2,
+        max_seq_len=16,
+        bc_mode="static",
+        decay_mode="state_rank",
+        scan_mode="sequential",
+    )
+    ssd = FheMamba3Config(
+        vocab_size=32,
+        d_model=16,
+        n_layers=1,
+        d_state=3,
+        mimo_rank=2,
+        max_seq_len=16,
+        bc_mode="static",
+        decay_mode="state_rank",
+        scan_mode="ssd",
+        effective_window=16,
+    )
+    sequential_model = FheMamba3ForCausalLM(base)
+    ssd_model = FheMamba3ForCausalLM(ssd)
+    ssd_model.load_state_dict(sequential_model.state_dict())
+    input_ids = torch.randint(1, base.vocab_size, (2, 10))
+    assert torch.allclose(
+        sequential_model(input_ids)["logits"],
+        ssd_model(input_ids)["logits"],
+        atol=1e-5,
+        rtol=1e-5,
+    )
+
+
 def test_cost_static_is_lower_depth_than_dynamic() -> None:
     static = FheMamba3Config(d_model=32, d_state=4, mimo_rank=2, bc_mode="static")
     dynamic = FheMamba3Config(d_model=32, d_state=4, mimo_rank=2, bc_mode="dynamic")

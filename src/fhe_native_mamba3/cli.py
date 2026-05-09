@@ -43,7 +43,11 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--bc-mode", choices=["static", "dynamic"], default="static")
     parser.add_argument("--decay-mode", choices=["scalar", "state_rank"], default="scalar")
     parser.add_argument("--gate-mode", choices=["none", "linear", "quadratic"], default="linear")
-    parser.add_argument("--scan-mode", choices=["sequential", "windowed"], default="sequential")
+    parser.add_argument(
+        "--scan-mode",
+        choices=["sequential", "windowed", "ssd"],
+        default="sequential",
+    )
     parser.add_argument("--effective-window", type=int, default=0)
     parser.add_argument("--dropout", type=float, default=0.0)
 

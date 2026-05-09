@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.10`. Future changes should bump
+The project is currently at SemVer `0.2.11`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -26,8 +26,11 @@ Versioning policy:
   to Mamba-3 MIMO, but adds ciphertext-ciphertext products.
 - `scalar` decay mode: the recurrent `A` term is shared across the state axis,
   matching the scalar-recurrence assumption in the research memo.
-- `windowed` scan mode: evaluates the static scalar recurrence through an SSD
-  analytical form over a bounded effective window.
+- `windowed` scan mode: evaluates the static scalar recurrence through a
+  bounded effective-window analytical form.
+- `ssd` scan mode: evaluates static scalar or state-rank recurrence through an
+  explicit SSD causal matrix, matching the prefill path we intend to lower to
+  CKKS rotations.
 - `linear` and `quadratic` gates: low-degree polynomial substitutes for
   sigmoid/SiLU-style gating.
 - `FixedScaleNorm`: a plaintext gain and compile-time scale instead of
@@ -81,7 +84,7 @@ Inspect the memo-aligned CKKS cost model:
 python3 -m fhe_native_mamba3.cli cost-model \
   --bc-mode static \
   --decay-mode scalar \
-  --scan-mode windowed \
+  --scan-mode ssd \
   --effective-window 256 \
   --seq-len 256 \
   --heads 32 \

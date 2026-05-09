@@ -15,10 +15,12 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional
 
+from fhe_native_mamba3.ssd import ssd_static_scan
+
 BcMode = Literal["static", "dynamic"]
 DecayMode = Literal["scalar", "state_rank"]
 GateMode = Literal["none", "linear", "quadratic"]
-ScanMode = Literal["sequential", "windowed"]
+ScanMode = Literal["sequential", "windowed", "ssd"]
 
 
 @dataclass(frozen=True)
@@ -59,11 +61,11 @@ class FheMamba3Config:
         if self.gate_mode not in {"none", "linear", "quadratic"}:
             msg = f"unsupported gate_mode: {self.gate_mode}"
             raise ValueError(msg)
-        if self.scan_mode not in {"sequential", "windowed"}:
+        if self.scan_mode not in {"sequential", "windowed", "ssd"}:
             msg = f"unsupported scan_mode: {self.scan_mode}"
             raise ValueError(msg)
-        if self.scan_mode == "windowed" and self.bc_mode != "static":
-            msg = "windowed scan currently supports static B/C only"
+        if self.scan_mode in {"windowed", "ssd"} and self.bc_mode != "static":
+            msg = "windowed/ssd scan currently supports static B/C only"
             raise ValueError(msg)
         if self.effective_window is not None and self.effective_window <= 0:
             msg = "effective_window must be positive when set"
@@ -189,6 +191,22 @@ class FheMamba3Block(nn.Module):
             outputs.append(y_rank)
         return torch.stack(outputs, dim=1)
 
+    def _forward_static_ssd(
+        self,
+        rank_input: Tensor,
+        b_terms: Tensor,
+        c_terms: Tensor,
+        decay: Tensor,
+    ) -> Tensor:
+        return ssd_static_scan(
+            rank_input,
+            b_terms,
+            c_terms,
+            decay,
+            decay_mode=self.config.decay_mode,
+            window=self.config.effective_window,
+        )
+
     def forward(
         self, x: Tensor, *, return_intermediates: bool = False
     ) -> Tensor | tuple[Tensor, dict[str, Any]]:
@@ -208,7 +226,9 @@ class FheMamba3Block(nn.Module):
                 raise RuntimeError(msg)
             b_terms = self.b_static.to(dtype=x.dtype, device=x.device)
             c_terms = self.c_static.to(dtype=x.dtype, device=x.device)
-            if self.config.scan_mode == "windowed":
+            if self.config.scan_mode == "ssd":
+                y = self._forward_static_ssd(rank_input, b_terms, c_terms, decay)
+            elif self.config.scan_mode == "windowed":
                 y = self._forward_static_windowed(rank_input, b_terms, c_terms, decay)
             else:
                 for t in range(seq_len):
@@ -222,7 +242,7 @@ class FheMamba3Block(nn.Module):
                     y_rank = (c_terms.unsqueeze(0) * state).sum(dim=1)
                     outputs.append(y_rank)
                 y = torch.stack(outputs, dim=1)
-            if self.config.scan_mode == "windowed":
+            if self.config.scan_mode in {"windowed", "ssd"}:
                 update_proxy = b_terms.unsqueeze(0).unsqueeze(0) * rank_input.unsqueeze(2)
                 update_abs_max = float(update_proxy.detach().abs().max().cpu())
                 state_abs_max = float(y.detach().abs().max().cpu())

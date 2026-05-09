@@ -98,15 +98,16 @@ def estimate_block_cost(config: FheMamba3Config, seq_len: int) -> FheCostEstimat
     depth = 0
     notes: list[str] = []
 
-    if config.scan_mode == "windowed":
+    if config.scan_mode in {"windowed", "ssd"}:
         window = min(config.effective_window or seq_len, seq_len)
-        rotations += seq_len * max(0, window.bit_length() - 1)
-        notes.append(f"windowed SSD form uses effective_window={window}")
+        scan_depth = max(0, window.bit_length() - 1)
+        rotations += seq_len * scan_depth if config.scan_mode == "windowed" else scan_depth
+        notes.append(f"{config.scan_mode} SSD form uses effective_window={window}")
     else:
         window = seq_len
 
     if config.bc_mode == "static":
-        recurrent_steps = seq_len * window if config.scan_mode == "windowed" else seq_len
+        recurrent_steps = seq_len * window if config.scan_mode in {"windowed", "ssd"} else seq_len
         ct_pt += recurrent_steps * (2 * d_state * rank)
         adds += recurrent_steps * (2 * d_state * rank)
         notes.append("static B/C keeps the recurrent path at ciphertext-plaintext depth")

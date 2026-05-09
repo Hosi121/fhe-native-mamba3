@@ -26,7 +26,7 @@ def test_inspect_cli_outputs_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.10"
+    assert payload["version"] == "0.2.11"
     assert payload["cost_per_block"]["seq_len"] == 8
 
 
@@ -50,16 +50,17 @@ def test_cost_model_cli_outputs_ckks_payload() -> None:
             "--effective-window",
             "4",
             "--scan-mode",
-            "windowed",
+            "ssd",
         ],
         check=True,
         capture_output=True,
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.10"
+    assert payload["version"] == "0.2.11"
     assert payload["integrated_cost"]["effective_window"] == 4
     assert payload["integrated_cost"]["head_packing"]["heads_per_ciphertext"] >= 1
+    assert payload["integrated_cost"]["block_cost"]["rotations"] == 2
 
 
 def test_openfhe_recurrence_cli_encrypts_inputs() -> None:
@@ -115,7 +116,7 @@ def test_stage0_tracking_cli_outputs_benchmark_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.10"
+    assert payload["version"] == "0.2.11"
     assert payload["stage"] == "0"
     assert payload["backend"] == "tracking"
     assert payload["encrypted"] is False
@@ -146,7 +147,7 @@ def test_stage0_sweep_cli_outputs_summary() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.10"
+    assert payload["version"] == "0.2.11"
     assert payload["result_count"] == 4
     assert payload["summary"]["max_abs_error_max"] < 1e-12
 
@@ -208,7 +209,7 @@ def test_profile_synthetic_cli_outputs_profile() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.10"
+    assert payload["version"] == "0.2.11"
     assert payload["profile"]["seq_len"] == 8
     assert payload["profile"]["blocks"][0]["lambda_by_beta"]["0.5"] >= 0.0
 
@@ -236,4 +237,4 @@ def test_planning_cli_commands_output_json() -> None:
             text=True,
         )
         payload = json.loads(completed.stdout)
-        assert payload["version"] == "0.2.10"
+        assert payload["version"] == "0.2.11"
