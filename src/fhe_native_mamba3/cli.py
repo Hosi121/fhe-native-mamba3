@@ -166,6 +166,10 @@ def _parse_int_list(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in value.split(",") if part)
 
 
+def _parse_float_list(value: str) -> tuple[float, ...]:
+    return tuple(float(part) for part in value.split(",") if part)
+
+
 def _parse_readout_list(value: str) -> tuple[str, ...]:
     strategies = tuple(part for part in value.split(",") if part)
     unsupported = sorted(set(strategies) - {"slotwise", "rank-reduce"})
@@ -218,6 +222,42 @@ def backend_capabilities_cmd(_args: argparse.Namespace) -> int:
     payload = {
         "version": __version__,
         "backends": backend_capability_matrix(),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def profile_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.data import generate_modular_stream
+    from fhe_native_mamba3.model import FheMamba3ForCausalLM
+    from fhe_native_mamba3.profiling import profile_model_batch
+
+    torch.manual_seed(args.seed)
+    device = torch.device(
+        args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
+    config = _config_from_args(args)
+    model = FheMamba3ForCausalLM(config).to(device)
+    input_ids, labels = generate_modular_stream(
+        batch_size=args.batch_size,
+        seq_len=args.seq_len,
+        vocab_size=config.vocab_size,
+        device=device,
+        seed=args.seed,
+    )
+    profile = profile_model_batch(
+        model,
+        input_ids,
+        labels=labels,
+        beta_grid=args.beta_grid,
+    )
+    payload = {
+        "version": __version__,
+        "device": str(device),
+        "config": asdict(config),
+        "profile": profile.to_json_dict(),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
@@ -466,6 +506,18 @@ def build_parser() -> argparse.ArgumentParser:
     sweep_parser.add_argument("--scaling-mod-size", type=int, default=50)
     sweep_parser.add_argument("--output-jsonl", default="")
     sweep_parser.set_defaults(func=stage0_sweep_cmd)
+
+    profile_parser = subparsers.add_parser(
+        "profile-synthetic",
+        help="profile plaintext FHE-relevant ranges on a synthetic batch",
+    )
+    _add_model_args(profile_parser)
+    profile_parser.add_argument("--batch-size", type=int, default=4)
+    profile_parser.add_argument("--seq-len", type=int, default=64)
+    profile_parser.add_argument("--seed", type=int, default=7)
+    profile_parser.add_argument("--device", default="")
+    profile_parser.add_argument("--beta-grid", type=_parse_float_list, default=(0.1, 0.3, 0.5, 1.0))
+    profile_parser.set_defaults(func=profile_cmd)
 
     capabilities_parser = subparsers.add_parser(
         "backend-capabilities",

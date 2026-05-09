@@ -5,6 +5,7 @@ import torch
 from fhe_native_mamba3.ckks import CkksConfig, CkksTrace
 from fhe_native_mamba3.cost import estimate_block_cost
 from fhe_native_mamba3.model import FheMamba3Config, FheMamba3ForCausalLM
+from fhe_native_mamba3.profiling import profile_model_batch
 
 
 def test_static_model_forward_and_backward() -> None:
@@ -40,6 +41,44 @@ def test_dynamic_model_forward() -> None:
     input_ids = torch.randint(1, config.vocab_size, (2, 10))
     output = model(input_ids)
     assert output["logits"].shape == (2, 10, config.vocab_size)
+
+
+def test_model_returns_intermediates_for_plaintext_profile() -> None:
+    config = FheMamba3Config(
+        vocab_size=32,
+        d_model=16,
+        n_layers=2,
+        d_state=3,
+        mimo_rank=2,
+        max_seq_len=16,
+        bc_mode="static",
+    )
+    model = FheMamba3ForCausalLM(config)
+    input_ids = torch.randint(1, config.vocab_size, (2, 10))
+    output = model(input_ids, labels=input_ids, return_intermediates=True)
+    assert output["logits"].shape == (2, 10, config.vocab_size)
+    assert len(output["intermediates"]) == 2
+    assert output["intermediates"][0]["state_abs_max"] >= 0.0
+
+
+def test_profile_model_batch_reports_contraction_and_gap_metrics() -> None:
+    config = FheMamba3Config(
+        vocab_size=32,
+        d_model=16,
+        n_layers=1,
+        d_state=3,
+        mimo_rank=2,
+        max_seq_len=16,
+        bc_mode="static",
+    )
+    model = FheMamba3ForCausalLM(config)
+    input_ids = torch.randint(1, config.vocab_size, (2, 10))
+    profile = profile_model_batch(model, input_ids, labels=input_ids, beta_grid=(0.5, 1.0))
+    payload = profile.to_json_dict()
+    assert payload["batch_size"] == 2
+    assert payload["seq_len"] == 10
+    assert payload["top1_top2_gap_min"] >= 0.0
+    assert payload["blocks"][0]["lambda_by_beta"]["0.5"] >= 0.0
 
 
 def test_windowed_scan_matches_sequential_when_window_covers_sequence() -> None:

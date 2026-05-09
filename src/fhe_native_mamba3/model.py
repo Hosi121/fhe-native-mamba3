@@ -9,7 +9,7 @@ and branches over encrypted values.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import torch
 from torch import Tensor, nn
@@ -189,7 +189,9 @@ class FheMamba3Block(nn.Module):
             outputs.append(y_rank)
         return torch.stack(outputs, dim=1)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Tensor, *, return_intermediates: bool = False
+    ) -> Tensor | tuple[Tensor, dict[str, Any]]:
         batch, seq_len, _ = x.shape
         residual = x
         x = self.in_norm(x)
@@ -197,6 +199,8 @@ class FheMamba3Block(nn.Module):
         decay = self._decay(dtype=x.dtype, device=x.device)
         state = x.new_zeros(batch, self.config.d_state, self.config.mimo_rank)
         outputs: list[Tensor] = []
+        state_abs_max = 0.0
+        update_abs_max = 0.0
 
         if self.config.bc_mode == "static":
             if self.b_static is None or self.c_static is None:
@@ -208,10 +212,20 @@ class FheMamba3Block(nn.Module):
                 y = self._forward_static_windowed(rank_input, b_terms, c_terms, decay)
             else:
                 for t in range(seq_len):
-                    state = decay * state + b_terms.unsqueeze(0) * rank_input[:, t].unsqueeze(1)
+                    update_term = b_terms.unsqueeze(0) * rank_input[:, t].unsqueeze(1)
+                    state = decay * state + update_term
+                    state_abs_max = max(state_abs_max, float(state.detach().abs().max().cpu()))
+                    update_abs_max = max(
+                        update_abs_max,
+                        float(update_term.detach().abs().max().cpu()),
+                    )
                     y_rank = (c_terms.unsqueeze(0) * state).sum(dim=1)
                     outputs.append(y_rank)
                 y = torch.stack(outputs, dim=1)
+            if self.config.scan_mode == "windowed":
+                update_proxy = b_terms.unsqueeze(0).unsqueeze(0) * rank_input.unsqueeze(2)
+                update_abs_max = float(update_proxy.detach().abs().max().cpu())
+                state_abs_max = float(y.detach().abs().max().cpu())
         else:
             if self.b_dynamic is None or self.c_dynamic is None:
                 msg = "dynamic B/C projections are not initialized"
@@ -220,13 +234,28 @@ class FheMamba3Block(nn.Module):
             b_terms = self.b_dynamic(x).view(shape)
             c_terms = self.c_dynamic(x).view(shape)
             for t in range(seq_len):
-                state = decay * state + b_terms[:, t] * rank_input[:, t].unsqueeze(1)
+                update_term = b_terms[:, t] * rank_input[:, t].unsqueeze(1)
+                state = decay * state + update_term
+                state_abs_max = max(state_abs_max, float(state.detach().abs().max().cpu()))
+                update_abs_max = max(update_abs_max, float(update_term.detach().abs().max().cpu()))
                 y_rank = (c_terms[:, t] * state).sum(dim=1)
                 outputs.append(y_rank)
             y = torch.stack(outputs, dim=1)
         update = self.out_rank(y) + self.skip(x)
         update = self.gate(residual, update)
-        return residual + self.dropout(update)
+        result = residual + self.dropout(update)
+        if not return_intermediates:
+            return result
+        trace = {
+            "decay_abs_min": float(decay.detach().abs().min().cpu()),
+            "decay_abs_mean": float(decay.detach().abs().mean().cpu()),
+            "decay_abs_max": float(decay.detach().abs().max().cpu()),
+            "rank_input_abs_max": float(rank_input.detach().abs().max().cpu()),
+            "update_abs_max": update_abs_max,
+            "state_abs_max": state_abs_max,
+            "block_output_abs_max": float(result.detach().abs().max().cpu()),
+        }
+        return result, trace
 
 
 class FheMamba3ForCausalLM(nn.Module):
@@ -249,7 +278,13 @@ class FheMamba3ForCausalLM(nn.Module):
         nn.init.normal_(self.embed.weight, mean=0.0, std=self.config.d_model**-0.5)
         nn.init.normal_(self.pos, mean=0.0, std=self.config.d_model**-0.5)
 
-    def forward(self, input_ids: Tensor, labels: Tensor | None = None) -> dict[str, Tensor]:
+    def forward(
+        self,
+        input_ids: Tensor,
+        labels: Tensor | None = None,
+        *,
+        return_intermediates: bool = False,
+    ) -> dict[str, Any]:
         if input_ids.ndim != 2:
             msg = "input_ids must have shape [batch, seq_len]"
             raise ValueError(msg)
@@ -259,11 +294,19 @@ class FheMamba3ForCausalLM(nn.Module):
             raise ValueError(msg)
 
         x = self.embed(input_ids) + self.pos[:seq_len].unsqueeze(0)
+        intermediates: list[dict[str, Any]] = []
         for block in self.blocks:
-            x = block(x)
+            if return_intermediates:
+                block_output = block(x, return_intermediates=True)
+                x, trace = block_output
+                intermediates.append(trace)
+            else:
+                x = block(x)
         logits = self.lm_head(self.norm(x))
 
-        output = {"logits": logits}
+        output: dict[str, Any] = {"logits": logits}
+        if return_intermediates:
+            output["intermediates"] = intermediates
         if labels is not None:
             loss = functional.cross_entropy(
                 logits[:, :-1].contiguous().view(-1, self.config.vocab_size),
