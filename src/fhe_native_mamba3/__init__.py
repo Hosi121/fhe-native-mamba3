@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.16"
+__version__ = "0.2.17"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -28,6 +28,8 @@ _LAZY_IMPORTS = {
     "PackingPlan": ("fhe_native_mamba3.ckks", "PackingPlan"),
     "Stage0MimoConfig": ("fhe_native_mamba3.benchmarks.stage0_mimo", "Stage0MimoConfig"),
     "Stage0SweepConfig": ("fhe_native_mamba3.benchmarks.stage0_sweep", "Stage0SweepConfig"),
+    "StateDictMappingReport": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingReport"),
+    "StateDictMappingRule": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingRule"),
     "TrackingBackend": ("fhe_native_mamba3.backends.tracking", "TrackingBackend"),
     "WeightCalibration": ("fhe_native_mamba3.weight_encoding", "WeightCalibration"),
     "WeightBundleManifest": ("fhe_native_mamba3.weight_bundle", "WeightBundleManifest"),
@@ -58,7 +60,9 @@ _LAZY_IMPORTS = {
     "estimate_integrated_cost": ("fhe_native_mamba3.cost", "estimate_integrated_cost"),
     "greedy_bootstrap_schedule": ("fhe_native_mamba3.cost", "greedy_bootstrap_schedule"),
     "inspect_checkpoint": ("fhe_native_mamba3.checkpoint", "inspect_checkpoint"),
+    "load_mapping_rules": ("fhe_native_mamba3.state_dict_mapping", "load_mapping_rules"),
     "make_demo_problem": ("fhe_native_mamba3.openfhe_backend", "make_demo_problem"),
+    "map_state_dict": ("fhe_native_mamba3.state_dict_mapping", "map_state_dict"),
     "plaintext_static_recurrence": (
         "fhe_native_mamba3.openfhe_backend",
         "plaintext_static_recurrence",
@@ -74,6 +78,10 @@ _LAZY_IMPORTS = {
     "save_weight_bundle_from_checkpoint": (
         "fhe_native_mamba3.weight_bundle",
         "save_weight_bundle_from_checkpoint",
+    ),
+    "save_weight_bundle_from_mapped_checkpoint": (
+        "fhe_native_mamba3.weight_bundle",
+        "save_weight_bundle_from_mapped_checkpoint",
     ),
 }
 
@@ -97,6 +105,8 @@ __all__ = [
     "PackingPlan",
     "Stage0MimoConfig",
     "Stage0SweepConfig",
+    "StateDictMappingReport",
+    "StateDictMappingRule",
     "TrackingBackend",
     "WeightBundleManifest",
     "WeightCalibration",
@@ -113,14 +123,17 @@ __all__ = [
     "estimate_integrated_cost",
     "greedy_bootstrap_schedule",
     "inspect_checkpoint",
+    "load_mapping_rules",
     "load_weight_bundle_model",
     "make_demo_problem",
+    "map_state_dict",
     "plaintext_static_recurrence",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
     "save_weight_bundle",
     "save_weight_bundle_from_checkpoint",
+    "save_weight_bundle_from_mapped_checkpoint",
 ]
 
 

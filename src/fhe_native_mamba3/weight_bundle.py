@@ -10,6 +10,11 @@ from typing import Any
 import torch
 
 from fhe_native_mamba3.model import FheMamba3Config, FheMamba3ForCausalLM
+from fhe_native_mamba3.state_dict_mapping import (
+    StateDictMappingReport,
+    StateDictMappingRule,
+    map_state_dict,
+)
 from fhe_native_mamba3.weight_encoding import (
     WeightCalibration,
     WeightEncodingConfig,
@@ -174,6 +179,27 @@ def save_weight_bundle_from_checkpoint(
         raise ValueError(msg)
     model.load_state_dict(state_dict)
     return save_weight_bundle(model, output_dir, encoding_config)
+
+
+def save_weight_bundle_from_mapped_checkpoint(
+    checkpoint_state_dict: dict[str, torch.Tensor],
+    output_dir: str | Path,
+    *,
+    config: FheMamba3Config,
+    rules: tuple[StateDictMappingRule, ...],
+    encoding_config: WeightEncodingConfig = WeightEncodingConfig(),
+    allow_partial: bool = False,
+) -> tuple[WeightBundleManifest, StateDictMappingReport]:
+    """Map an external state_dict into the prototype model and save a bundle."""
+
+    model = FheMamba3ForCausalLM(config)
+    mapped_state_dict, report = map_state_dict(checkpoint_state_dict, model.state_dict(), rules)
+    if not allow_partial and not report.is_complete:
+        msg = "state_dict mapping is incomplete; inspect mapping_report before bundling"
+        raise ValueError(msg)
+    model.load_state_dict(mapped_state_dict)
+    manifest = save_weight_bundle(model, output_dir, encoding_config)
+    return manifest, report
 
 
 def _master_weight_tensor(tensor: torch.Tensor) -> torch.Tensor:

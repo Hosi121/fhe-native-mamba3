@@ -250,7 +250,11 @@ def checkpoint_inspect_cmd(args: argparse.Namespace) -> int:
 def checkpoint_map_report_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.model import FheMamba3ForCausalLM
-    from fhe_native_mamba3.state_dict_mapping import identity_mapping_rules, map_state_dict
+    from fhe_native_mamba3.state_dict_mapping import (
+        identity_mapping_rules,
+        load_mapping_rules,
+        map_state_dict,
+    )
 
     config = _config_from_args(args)
     target_model = FheMamba3ForCausalLM(config)
@@ -260,13 +264,61 @@ def checkpoint_map_report_cmd(args: argparse.Namespace) -> int:
         map_location=args.map_location,
     )
     target_state_dict = target_model.state_dict()
-    rules = identity_mapping_rules(source_state_dict, target_state_dict)
+    rules = (
+        load_mapping_rules(args.rules_json)
+        if args.rules_json
+        else identity_mapping_rules(source_state_dict, target_state_dict)
+    )
     _mapped, report = map_state_dict(source_state_dict, target_state_dict, rules)
     payload = {
         "version": __version__,
         "checkpoint": args.checkpoint,
         "state_dict_key": resolved_key,
         "target_config": asdict(config),
+        "mapping_report": report.to_json_dict(max_statuses=args.max_statuses),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def checkpoint_map_to_bundle_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.model import FheMamba3ForCausalLM
+    from fhe_native_mamba3.state_dict_mapping import identity_mapping_rules, load_mapping_rules
+    from fhe_native_mamba3.weight_bundle import save_weight_bundle_from_mapped_checkpoint
+    from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
+
+    config = _config_from_args(args)
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    target_model = FheMamba3ForCausalLM(config)
+    rules = (
+        load_mapping_rules(args.rules_json)
+        if args.rules_json
+        else identity_mapping_rules(source_state_dict, target_model.state_dict())
+    )
+    manifest, report = save_weight_bundle_from_mapped_checkpoint(
+        source_state_dict,
+        args.output_dir,
+        config=config,
+        rules=rules,
+        encoding_config=WeightEncodingConfig(
+            scale_bits=args.scale_bits,
+            target_max_abs=args.target_max_abs,
+            source_dtype=args.source_dtype,
+        ),
+        allow_partial=args.allow_partial,
+    )
+    payload = {
+        "version": __version__,
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "output_dir": args.output_dir,
+        "weight_bundle": manifest.to_json_dict(),
+        "summary": _weight_bundle_summary(manifest),
         "mapping_report": report.to_json_dict(max_statuses=args.max_statuses),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
@@ -671,8 +723,26 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint_map_parser.add_argument("checkpoint")
     checkpoint_map_parser.add_argument("--state-dict-key", default="")
     checkpoint_map_parser.add_argument("--map-location", default="cpu")
+    checkpoint_map_parser.add_argument("--rules-json", default="")
     checkpoint_map_parser.add_argument("--max-statuses", type=int, default=50)
     checkpoint_map_parser.set_defaults(func=checkpoint_map_report_cmd)
+
+    checkpoint_bundle_parser = subparsers.add_parser(
+        "checkpoint-map-to-bundle",
+        help="map a checkpoint into the prototype model and save a fp32 weight bundle",
+    )
+    _add_model_args(checkpoint_bundle_parser)
+    checkpoint_bundle_parser.add_argument("checkpoint")
+    checkpoint_bundle_parser.add_argument("--output-dir", required=True)
+    checkpoint_bundle_parser.add_argument("--state-dict-key", default="")
+    checkpoint_bundle_parser.add_argument("--map-location", default="cpu")
+    checkpoint_bundle_parser.add_argument("--rules-json", default="")
+    checkpoint_bundle_parser.add_argument("--allow-partial", action="store_true")
+    checkpoint_bundle_parser.add_argument("--scale-bits", type=int, default=40)
+    checkpoint_bundle_parser.add_argument("--target-max-abs", type=float, default=1.0)
+    checkpoint_bundle_parser.add_argument("--source-dtype", default="fp32")
+    checkpoint_bundle_parser.add_argument("--max-statuses", type=int, default=50)
+    checkpoint_bundle_parser.set_defaults(func=checkpoint_map_to_bundle_cmd)
 
     rotation_parser = subparsers.add_parser(
         "rotation-inventory",

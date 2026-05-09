@@ -5,12 +5,14 @@ from dataclasses import asdict
 import torch
 
 from fhe_native_mamba3.model import FheMamba3Config, FheMamba3ForCausalLM
+from fhe_native_mamba3.state_dict_mapping import identity_mapping_rules
 from fhe_native_mamba3.weight_bundle import (
     WEIGHT_BUNDLE_FORMAT_VERSION,
     load_weight_bundle_manifest,
     load_weight_bundle_model,
     save_weight_bundle,
     save_weight_bundle_from_checkpoint,
+    save_weight_bundle_from_mapped_checkpoint,
 )
 
 
@@ -75,3 +77,20 @@ def test_weight_bundle_from_checkpoint_round_trips(tmp_path) -> None:
     assert manifest.model_config["vocab_size"] == 16
     for name, tensor in model.state_dict().items():
         assert torch.equal(restored.state_dict()[name], tensor)
+
+
+def test_weight_bundle_from_mapped_checkpoint_requires_complete_mapping(tmp_path) -> None:
+    config = FheMamba3Config(vocab_size=16, d_model=8, n_layers=1, d_state=2, mimo_rank=2)
+    model = FheMamba3ForCausalLM(config)
+    source = model.state_dict()
+    rules = identity_mapping_rules(source, model.state_dict())
+
+    manifest, report = save_weight_bundle_from_mapped_checkpoint(
+        source,
+        tmp_path / "bundle",
+        config=config,
+        rules=rules,
+    )
+
+    assert report.is_complete is True
+    assert manifest.parameter_count == sum(tensor.numel() for tensor in source.values())

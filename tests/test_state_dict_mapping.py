@@ -5,7 +5,9 @@ import torch
 from fhe_native_mamba3.state_dict_mapping import (
     StateDictMappingRule,
     identity_mapping_rules,
+    load_mapping_rules,
     map_state_dict,
+    save_mapping_rules,
 )
 
 
@@ -48,3 +50,15 @@ def test_map_state_dict_reports_missing_unexpected_and_shape_mismatch() -> None:
     assert report.missing_source_keys == ("missing",)
     assert report.unexpected_source_keys == ("extra",)
     assert report.is_complete is False
+
+
+def test_mapping_rules_round_trip_json(tmp_path) -> None:
+    rules = (
+        StateDictMappingRule(source="external.a", target="internal.a"),
+        StateDictMappingRule(source="external.b", target="internal.b"),
+    )
+    path = tmp_path / "rules.json"
+
+    save_mapping_rules(path, rules)
+
+    assert load_mapping_rules(path) == rules

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -17,6 +19,10 @@ class StateDictMappingRule:
 
     def to_json_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_json_dict(cls, payload: dict[str, Any]) -> StateDictMappingRule:
+        return cls(source=str(payload["source"]), target=str(payload["target"]))
 
 
 @dataclass(frozen=True)
@@ -85,6 +91,24 @@ def identity_mapping_rules(
         StateDictMappingRule(source=key, target=key)
         for key in sorted(set(source_state_dict) & set(target_state_dict))
     )
+
+
+def load_mapping_rules(path: str | Path) -> tuple[StateDictMappingRule, ...]:
+    """Load mapping rules from a JSON file."""
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    rules_payload = payload["rules"] if isinstance(payload, dict) else payload
+    if not isinstance(rules_payload, list):
+        msg = "mapping rules JSON must be a list or an object with a 'rules' list"
+        raise ValueError(msg)
+    return tuple(StateDictMappingRule.from_json_dict(item) for item in rules_payload)
+
+
+def save_mapping_rules(path: str | Path, rules: tuple[StateDictMappingRule, ...]) -> None:
+    """Persist mapping rules as stable JSON."""
+
+    payload = {"rules": [rule.to_json_dict() for rule in rules]}
+    Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def map_state_dict(
