@@ -11,7 +11,12 @@ fi
 
 "${PYTHON}" -m ruff format --check .
 "${PYTHON}" -m ruff check .
-"${PYTHON}" -m pytest
+if "${PYTHON}" -c "import pytest_cov" >/dev/null 2>&1; then
+  "${PYTHON}" -m pytest --cov=fhe_native_mamba3 --cov-report=term-missing
+else
+  echo "pytest-cov is not installed; running pytest without coverage"
+  "${PYTHON}" -m pytest
+fi
 
 if [[ -x ".venv/bin/pre-commit" ]]; then
   PYTHON="${PYTHON}" .venv/bin/pre-commit run --all-files

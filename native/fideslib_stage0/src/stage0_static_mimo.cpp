@@ -1,6 +1,6 @@
 #include <fideslib.hpp>
+#include <stage0_layout.hpp>
 
-#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -123,38 +123,6 @@ auto make_c_vector(int slots) -> std::vector<double> {
   return values;
 }
 
-auto make_readout_rotations(int d_state, int mimo_rank) -> std::vector<int32_t> {
-  std::vector<int32_t> rotations;
-  for (int step = 1; step < d_state; step *= 2) {
-    rotations.push_back(static_cast<int32_t>(step));
-  }
-  for (int rank = 1; rank < mimo_rank; ++rank) {
-    const int shift = rank * d_state - rank;
-    if (shift != 0) {
-      rotations.push_back(static_cast<int32_t>(shift));
-    }
-  }
-  std::sort(rotations.begin(), rotations.end());
-  rotations.erase(std::unique(rotations.begin(), rotations.end()), rotations.end());
-  return rotations;
-}
-
-void print_vector(std::ostream& out, const std::vector<double>& values, int length) {
-  out << "[";
-  for (int i = 0; i < length; ++i) {
-    if (i > 0) {
-      out << ",";
-    }
-    const auto value = values.at(static_cast<size_t>(i));
-    if (std::isfinite(value)) {
-      out << value;
-    } else {
-      out << "null";
-    }
-  }
-  out << "]";
-}
-
 void align_levels(
     const CryptoContext<DCRTPoly>& cc,
     Ciphertext<DCRTPoly>& lhs,
@@ -176,26 +144,6 @@ void align_levels(
       break;
     }
   }
-}
-
-auto make_reduce_mask(int d_state, int mimo_rank, int step) -> std::vector<double> {
-  const int slots = d_state * mimo_rank;
-  std::vector<double> mask(static_cast<size_t>(slots), 0.0);
-  for (int rank = 0; rank < mimo_rank; ++rank) {
-    for (int n = 0; n < d_state; ++n) {
-      if (n + step < d_state && n % (2 * step) == 0) {
-        mask[static_cast<size_t>(rank * d_state + n)] = 1.0;
-      }
-    }
-  }
-  return mask;
-}
-
-auto make_scatter_mask(int d_state, int mimo_rank, int rank) -> std::vector<double> {
-  const int slots = d_state * mimo_rank;
-  std::vector<double> mask(static_cast<size_t>(slots), 0.0);
-  mask[static_cast<size_t>(rank * d_state)] = 1.0;
-  return mask;
 }
 
 auto rank_reduce_readout(
@@ -274,7 +222,7 @@ auto main(int argc, char* argv[]) -> int {
     cc->EvalMultKeyGen(keys.secretKey);
     const auto readout_rotation_keys =
         config.readout_mode == "rank-reduce"
-            ? make_readout_rotations(config.d_state, config.mimo_rank)
+            ? stage0::make_readout_rotations(config.d_state, config.mimo_rank)
             : std::vector<int32_t>{};
     if (!readout_rotation_keys.empty()) {
       cc->EvalRotateKeyGen(keys.secretKey, readout_rotation_keys);
@@ -296,14 +244,14 @@ auto main(int argc, char* argv[]) -> int {
       for (int step = 1; step < config.d_state; step *= 2) {
         readout_reduce_steps.push_back(step);
         auto mask_plain = cc->MakeCKKSPackedPlaintext(
-            make_reduce_mask(config.d_state, config.mimo_rank, step));
+            stage0::make_reduce_mask(config.d_state, config.mimo_rank, step));
         mask_plain->SetLength(static_cast<size_t>(state_slots));
         readout_reduce_masks.push_back(mask_plain);
       }
       for (int rank = 0; rank < config.mimo_rank; ++rank) {
         readout_scatter_shifts.push_back(rank * config.d_state - rank);
         auto mask_plain = cc->MakeCKKSPackedPlaintext(
-            make_scatter_mask(config.d_state, config.mimo_rank, rank));
+            stage0::make_scatter_mask(config.d_state, config.mimo_rank, rank));
         mask_plain->SetLength(static_cast<size_t>(state_slots));
         readout_scatter_masks.push_back(mask_plain);
       }
@@ -493,13 +441,13 @@ auto main(int argc, char* argv[]) -> int {
     std::cout << "\"state_has_nonfinite\":" << (state_has_nonfinite ? "true" : "false") << ",";
     std::cout << "\"output_has_nonfinite\":" << (output_has_nonfinite ? "true" : "false") << ",";
     std::cout << "\"expected_final_state\":";
-    print_vector(std::cout, h_expected, state_slots);
+    stage0::print_json_vector(std::cout, h_expected, state_slots);
     std::cout << ",\"decrypted_final_state\":";
-    print_vector(std::cout, h_decrypted, state_slots);
+    stage0::print_json_vector(std::cout, h_decrypted, state_slots);
     std::cout << ",\"expected_final_output\":";
-    print_vector(std::cout, expected_output, config.mimo_rank);
+    stage0::print_json_vector(std::cout, expected_output, config.mimo_rank);
     std::cout << ",\"decrypted_final_output\":";
-    print_vector(std::cout, output_decrypted, config.mimo_rank);
+    stage0::print_json_vector(std::cout, output_decrypted, config.mimo_rank);
     std::cout << ",\"readout_rotation_keys\":";
     std::cout << "[";
     for (size_t i = 0; i < readout_rotation_keys.size(); ++i) {

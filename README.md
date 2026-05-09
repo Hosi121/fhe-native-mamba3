@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.7`. Future changes should bump
+The project is currently at SemVer `0.2.8`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -48,6 +48,9 @@ python3 -m pip install --user -e '.[dev]'
 pre-commit install
 scripts/run_checks.sh
 ```
+
+`scripts/run_checks.sh` runs coverage when `pytest-cov` is installed. The
+testing split is documented in [docs/testing.md](docs/testing.md).
 
 Run a tiny CPU smoke train:
 
