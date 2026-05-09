@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.28"
+__version__ = "0.2.29"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -72,6 +72,10 @@ _LAZY_IMPORTS = {
     "calibrate_weight_tensor": (
         "fhe_native_mamba3.weight_encoding",
         "calibrate_weight_tensor",
+    ),
+    "ckks_batch_size_for_slots": (
+        "fhe_native_mamba3.backends.openfhe",
+        "ckks_batch_size_for_slots",
     ),
     "client_side_argmax": ("fhe_native_mamba3.decoding", "client_side_argmax"),
     "decoding_policies": ("fhe_native_mamba3.decoding", "decoding_policies"),
@@ -153,6 +157,7 @@ __all__ = [
     "build_weight_bundle_recurrence_problem",
     "calibrate_weight_tensor",
     "calibrate_weight_values",
+    "ckks_batch_size_for_slots",
     "client_side_argmax",
     "decoding_policies",
     "draft_mapping_rules",

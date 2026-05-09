@@ -8,6 +8,15 @@ from typing import Any
 from fhe_native_mamba3.backends.base import BackendStats
 
 
+def ckks_batch_size_for_slots(slot_count: int) -> int:
+    """Return the OpenFHE CKKS batch size needed to hold logical slots."""
+
+    if slot_count <= 0:
+        msg = "slot_count must be positive"
+        raise ValueError(msg)
+    return 1 << (slot_count - 1).bit_length()
+
+
 class OpenFheCkksBackend:
     """Thin OpenFHE CKKS wrapper with operation counters."""
 
@@ -43,7 +52,8 @@ class OpenFheCkksBackend:
         params = CCParamsCKKSRNS()
         params.SetMultiplicativeDepth(multiplicative_depth)
         params.SetScalingModSize(scaling_mod_size)
-        params.SetBatchSize(batch_size)
+        ckks_batch_size = ckks_batch_size_for_slots(batch_size)
+        params.SetBatchSize(ckks_batch_size)
         self.cc = GenCryptoContext(params)
         self.cc.Enable(PKESchemeFeature.PKE)
         self.cc.Enable(PKESchemeFeature.KEYSWITCH)
@@ -53,7 +63,7 @@ class OpenFheCkksBackend:
         if rotations:
             self.cc.EvalRotateKeyGen(self.keys.secretKey, list(rotations))
 
-        self._batch_size = batch_size
+        self._batch_size = ckks_batch_size
         self._multiplicative_depth = multiplicative_depth
         self._scaling_mod_size = scaling_mod_size
         self._stats = BackendStats(

@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.28`. Future changes should bump
+The project is currently at SemVer `0.2.29`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -107,6 +107,9 @@ python3 -m fhe_native_mamba3.cli openfhe-recurrence \
 This encrypts the per-token MIMO rank inputs, evaluates the static scalar
 recurrence and C readout with OpenFHE `EvalMult`, `EvalAdd`, and `EvalRotate`,
 then decrypts only the final outputs for error checking.
+When the logical state slot count is not a power of two, the OpenFHE backend
+rounds the CKKS batch size up to the next power of two and leaves extra slots
+zero-padded.
 
 Run the Stage 0 benchmark harness:
 
