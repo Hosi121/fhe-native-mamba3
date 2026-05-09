@@ -352,6 +352,26 @@ def checkpoint_map_to_bundle_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def mamba_checkpoint_plan_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint
+
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    plan = plan_mamba_checkpoint(source_state_dict)
+    payload = {
+        "version": __version__,
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "mamba_checkpoint_plan": plan.to_json_dict(max_layers=args.max_layers),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def mamba_checkpoint_to_bundle_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.mamba_checkpoint import save_mamba_checkpoint_bundle
@@ -1115,6 +1135,16 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint_bundle_parser.add_argument("--source-dtype", default="fp32")
     checkpoint_bundle_parser.add_argument("--max-statuses", type=int, default=50)
     checkpoint_bundle_parser.set_defaults(func=checkpoint_map_to_bundle_cmd)
+
+    mamba_plan_parser = subparsers.add_parser(
+        "mamba-checkpoint-plan",
+        help="inspect a Mamba-family checkpoint and report detected adapter keys",
+    )
+    mamba_plan_parser.add_argument("checkpoint")
+    mamba_plan_parser.add_argument("--state-dict-key", default="")
+    mamba_plan_parser.add_argument("--map-location", default="cpu")
+    mamba_plan_parser.add_argument("--max-layers", type=int, default=8)
+    mamba_plan_parser.set_defaults(func=mamba_checkpoint_plan_cmd)
 
     mamba_bundle_parser = subparsers.add_parser(
         "mamba-checkpoint-to-bundle",

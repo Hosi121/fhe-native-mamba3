@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.25`. Future changes should bump
+The project is currently at SemVer `0.2.26`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -182,6 +182,9 @@ python3 -m fhe_native_mamba3.cli weight-bundle-recurrence \
 python3 -m fhe_native_mamba3.cli weight-bundle-from-checkpoint \
   runs/train/checkpoint.pt \
   --output-dir runs/weight-bundle-from-checkpoint
+python3 -m fhe_native_mamba3.cli mamba-checkpoint-plan \
+  runs/mamba/checkpoint.pt \
+  --max-layers 4
 python3 -m fhe_native_mamba3.cli mamba-checkpoint-to-bundle \
   runs/mamba/checkpoint.pt \
   --output-dir runs/mamba-weight-bundle \

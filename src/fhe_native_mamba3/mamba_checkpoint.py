@@ -63,6 +63,107 @@ class MambaCheckpointAdapterReport:
         }
 
 
+@dataclass(frozen=True)
+class MambaLayerPlan:
+    """Detected source tensor layout for one Mamba-family layer."""
+
+    layer_index: int
+    prefix: str
+    norm_key: str | None
+    in_proj_key: str | None
+    x_proj_key: str | None
+    a_log_key: str | None
+    source_inner_dim: int | None
+    source_d_state: int | None
+    inferred_dt_rank: int | None
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class MambaCheckpointPlan:
+    """Read-only diagnosis of a Mamba-family checkpoint layout."""
+
+    source_format: str
+    embedding_key: str | None
+    final_norm_key: str | None
+    vocab_size: int | None
+    d_model: int | None
+    inferred_layers: int
+    layers: tuple[MambaLayerPlan, ...]
+
+    @property
+    def complete_layer_count(self) -> int:
+        return sum(
+            1
+            for layer in self.layers
+            if layer.in_proj_key is not None
+            and layer.x_proj_key is not None
+            and layer.a_log_key is not None
+        )
+
+    @property
+    def inferred_d_state(self) -> int | None:
+        for layer in self.layers:
+            if layer.source_d_state is not None:
+                return layer.source_d_state
+        return None
+
+    @property
+    def inferred_mimo_rank(self) -> int | None:
+        for layer in self.layers:
+            if layer.source_inner_dim is not None:
+                return layer.source_inner_dim
+        return None
+
+    def to_json_dict(self, *, max_layers: int | None = None) -> dict[str, Any]:
+        layers = self.layers[:max_layers] if max_layers is not None else self.layers
+        return {
+            "source_format": self.source_format,
+            "embedding_key": self.embedding_key,
+            "final_norm_key": self.final_norm_key,
+            "vocab_size": self.vocab_size,
+            "d_model": self.d_model,
+            "inferred_layers": self.inferred_layers,
+            "complete_layer_count": self.complete_layer_count,
+            "inferred_d_state": self.inferred_d_state,
+            "inferred_mimo_rank": self.inferred_mimo_rank,
+            "layers": [layer.to_json_dict() for layer in layers],
+        }
+
+
+def plan_mamba_checkpoint(
+    source_state_dict: dict[str, torch.Tensor],
+) -> MambaCheckpointPlan:
+    """Inspect Mamba-family checkpoint keys without constructing a model."""
+
+    embedding_key = _find_embedding_key(source_state_dict)
+    embedding = (
+        _require_matrix(source_state_dict[embedding_key], embedding_key)
+        if embedding_key is not None
+        else None
+    )
+    final_norm_key = _find_first_key(
+        source_state_dict,
+        ("backbone.norm_f.weight", "norm_f.weight", "norm.weight"),
+    )
+    inferred_layers = _infer_layer_count(source_state_dict)
+    layers = tuple(
+        _plan_layer(source_state_dict, layer_index=layer_index)
+        for layer_index in range(inferred_layers)
+    )
+    return MambaCheckpointPlan(
+        source_format="mamba-family-state-dict",
+        embedding_key=embedding_key,
+        final_norm_key=final_norm_key,
+        vocab_size=int(embedding.shape[0]) if embedding is not None else None,
+        d_model=int(embedding.shape[1]) if embedding is not None else None,
+        inferred_layers=inferred_layers,
+        layers=layers,
+    )
+
+
 def save_mamba_checkpoint_bundle(
     source_state_dict: dict[str, torch.Tensor],
     output_dir: str | Path,
@@ -102,16 +203,7 @@ def adapt_mamba_state_dict_to_model(
     if d_state <= 0 or mimo_rank <= 0:
         msg = "d_state and mimo_rank must be positive"
         raise ValueError(msg)
-    embedding_key = _find_first_key(
-        source_state_dict,
-        (
-            "backbone.embedding.weight",
-            "embedding.weight",
-            "embed_tokens.weight",
-            "model.embed_tokens.weight",
-            "embed.weight",
-        ),
-    )
+    embedding_key = _find_embedding_key(source_state_dict)
     if embedding_key is None:
         msg = "could not find a Mamba-family embedding weight"
         raise ValueError(msg)
@@ -413,3 +505,86 @@ def _infer_layer_count(state_dict: dict[str, torch.Tensor]) -> int:
     if not layer_indices:
         return 0
     return max(layer_indices) + 1
+
+
+def _plan_layer(
+    source_state_dict: dict[str, torch.Tensor],
+    *,
+    layer_index: int,
+) -> MambaLayerPlan:
+    prefix = _layer_prefix(source_state_dict, layer_index)
+    norm_key = _find_layer_key(source_state_dict, prefix, ("norm.weight",))
+    in_proj_key = _find_layer_key(
+        source_state_dict,
+        prefix,
+        ("mixer.in_proj.weight", "in_proj.weight"),
+    )
+    x_proj_key = _find_layer_key(
+        source_state_dict,
+        prefix,
+        ("mixer.x_proj.weight", "x_proj.weight"),
+    )
+    a_log_key = _find_layer_key(source_state_dict, prefix, ("mixer.A_log", "A_log"))
+    source_d_state = _infer_source_d_state(source_state_dict, a_log_key=a_log_key)
+    source_inner_dim = _infer_source_inner_dim(
+        source_state_dict,
+        in_proj_key=in_proj_key,
+        x_proj_key=x_proj_key,
+        a_log_key=a_log_key,
+    )
+    inferred_dt_rank = None
+    if x_proj_key is not None and source_d_state is not None:
+        inferred_dt_rank = max(0, int(source_state_dict[x_proj_key].shape[0]) - 2 * source_d_state)
+    return MambaLayerPlan(
+        layer_index=layer_index,
+        prefix=prefix,
+        norm_key=norm_key,
+        in_proj_key=in_proj_key,
+        x_proj_key=x_proj_key,
+        a_log_key=a_log_key,
+        source_inner_dim=source_inner_dim,
+        source_d_state=source_d_state,
+        inferred_dt_rank=inferred_dt_rank,
+    )
+
+
+def _find_embedding_key(source_state_dict: dict[str, torch.Tensor]) -> str | None:
+    return _find_first_key(
+        source_state_dict,
+        (
+            "backbone.embedding.weight",
+            "embedding.weight",
+            "embed_tokens.weight",
+            "model.embed_tokens.weight",
+            "embed.weight",
+        ),
+    )
+
+
+def _infer_source_d_state(
+    source_state_dict: dict[str, torch.Tensor],
+    *,
+    a_log_key: str | None,
+) -> int | None:
+    if a_log_key is None:
+        return None
+    a_log = source_state_dict[a_log_key]
+    if a_log.ndim >= 2:
+        return int(a_log.shape[-1])
+    return int(a_log.numel()) if a_log.numel() > 0 else None
+
+
+def _infer_source_inner_dim(
+    source_state_dict: dict[str, torch.Tensor],
+    *,
+    in_proj_key: str | None,
+    x_proj_key: str | None,
+    a_log_key: str | None,
+) -> int | None:
+    if a_log_key is not None and source_state_dict[a_log_key].ndim >= 1:
+        return int(source_state_dict[a_log_key].shape[0])
+    if x_proj_key is not None and source_state_dict[x_proj_key].ndim >= 2:
+        return int(source_state_dict[x_proj_key].shape[1])
+    if in_proj_key is not None and source_state_dict[in_proj_key].ndim >= 2:
+        return max(1, int(source_state_dict[in_proj_key].shape[0]) // 2)
+    return None

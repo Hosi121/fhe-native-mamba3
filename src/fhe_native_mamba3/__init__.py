@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.25"
+__version__ = "0.2.26"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -17,6 +17,8 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.mamba_checkpoint",
         "MambaCheckpointAdapterReport",
     ),
+    "MambaCheckpointPlan": ("fhe_native_mamba3.mamba_checkpoint", "MambaCheckpointPlan"),
+    "MambaLayerPlan": ("fhe_native_mamba3.mamba_checkpoint", "MambaLayerPlan"),
     "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
     "FheCostEstimate": ("fhe_native_mamba3.cost", "FheCostEstimate"),
@@ -85,6 +87,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "plaintext_static_recurrence",
     ),
+    "plan_mamba_checkpoint": (
+        "fhe_native_mamba3.mamba_checkpoint",
+        "plan_mamba_checkpoint",
+    ),
     "run_openfhe_static_recurrence": (
         "fhe_native_mamba3.openfhe_backend",
         "run_openfhe_static_recurrence",
@@ -123,6 +129,8 @@ __all__ = [
     "FheMamba3ForCausalLM",
     "IntegratedCostEstimate",
     "MambaCheckpointAdapterReport",
+    "MambaCheckpointPlan",
+    "MambaLayerPlan",
     "OpenFheCkksBackend",
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
@@ -157,6 +165,7 @@ __all__ = [
     "make_demo_problem",
     "map_state_dict",
     "plaintext_static_recurrence",
+    "plan_mamba_checkpoint",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",

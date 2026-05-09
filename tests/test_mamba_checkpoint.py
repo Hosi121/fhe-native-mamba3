@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from fhe_native_mamba3.mamba_checkpoint import save_mamba_checkpoint_bundle
+from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint, save_mamba_checkpoint_bundle
 from fhe_native_mamba3.weight_bundle import load_weight_bundle_model
 
 
@@ -46,6 +46,31 @@ def test_mamba_checkpoint_bundle_rejects_missing_embedding(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="embedding"):
         save_mamba_checkpoint_bundle(source, tmp_path, d_state=2, mimo_rank=2)
+
+
+def test_plan_mamba_checkpoint_reports_detected_layout() -> None:
+    plan = plan_mamba_checkpoint(_fake_mamba_state_dict())
+
+    assert plan.source_format == "mamba-family-state-dict"
+    assert plan.embedding_key == "backbone.embedding.weight"
+    assert plan.final_norm_key == "backbone.norm_f.weight"
+    assert plan.vocab_size == 11
+    assert plan.d_model == 8
+    assert plan.inferred_layers == 1
+    assert plan.complete_layer_count == 1
+    assert plan.inferred_d_state == 3
+    assert plan.inferred_mimo_rank == 6
+
+    layer = plan.layers[0]
+    assert layer.layer_index == 0
+    assert layer.prefix == "backbone.layers.0"
+    assert layer.norm_key == "backbone.layers.0.norm.weight"
+    assert layer.in_proj_key == "backbone.layers.0.mixer.in_proj.weight"
+    assert layer.x_proj_key == "backbone.layers.0.mixer.x_proj.weight"
+    assert layer.a_log_key == "backbone.layers.0.mixer.A_log"
+    assert layer.source_inner_dim == 6
+    assert layer.source_d_state == 3
+    assert layer.inferred_dt_rank == 2
 
 
 def _fake_mamba_state_dict() -> dict[str, torch.Tensor]:
