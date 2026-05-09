@@ -19,6 +19,7 @@ export PYTHONPATH="${SLURM_SUBMIT_DIR}/src:${PYTHONPATH:-}"
 
 "${PYTHON}" -m fhe_native_mamba3.cli inspect \
   --bc-mode static \
+  --decay-mode scalar \
   --gate-mode linear \
   --d-model 64 \
   --d-state 8 \
@@ -26,8 +27,25 @@ export PYTHONPATH="${SLURM_SUBMIT_DIR}/src:${PYTHONPATH:-}"
   --n-layers 2 \
   --seq-len 64
 
+"${PYTHON}" -m fhe_native_mamba3.cli cost-model \
+  --bc-mode static \
+  --decay-mode scalar \
+  --scan-mode windowed \
+  --effective-window 64 \
+  --gate-mode linear \
+  --d-model 64 \
+  --d-state 8 \
+  --mimo-rank 4 \
+  --n-layers 2 \
+  --seq-len 64 \
+  --heads 32 \
+  --head-pack 32 \
+  --bootstrap-sec 2.0 \
+  --scan-step-ms 1.0
+
 "${PYTHON}" -m fhe_native_mamba3.cli train-synthetic \
   --bc-mode static \
+  --decay-mode scalar \
   --gate-mode linear \
   --steps 10 \
   --batch-size 8 \
@@ -42,6 +60,7 @@ export PYTHONPATH="${SLURM_SUBMIT_DIR}/src:${PYTHONPATH:-}"
 
 "${PYTHON}" -m fhe_native_mamba3.cli benchmark \
   --bc-mode static \
+  --decay-mode scalar \
   --gate-mode linear \
   --batch-size 8 \
   --seq-len 64 \

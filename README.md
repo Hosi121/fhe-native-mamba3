@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project starts at SemVer `0.1.0`. Future changes should bump
+The project is currently at SemVer `0.2.0`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 ## Design
@@ -15,10 +15,17 @@ The project starts at SemVer `0.1.0`. Future changes should bump
   FHE path and keeps the recurrence mostly at ciphertext-plaintext arithmetic.
 - `dynamic` B/C mode: B and C are token-dependent projections. This is closer
   to Mamba-3 MIMO, but adds ciphertext-ciphertext products.
+- `scalar` decay mode: the recurrent `A` term is shared across the state axis,
+  matching the scalar-recurrence assumption in the research memo.
+- `windowed` scan mode: evaluates the static scalar recurrence through an SSD
+  analytical form over a bounded effective window.
 - `linear` and `quadratic` gates: low-degree polynomial substitutes for
   sigmoid/SiLU-style gating.
 - `FixedScaleNorm`: a plaintext gain and compile-time scale instead of
   RMSNorm/LayerNorm during encrypted inference.
+- Symbolic CKKS model: tracks levels, bootstraps, MIMO/head packing, rotations,
+  and the current conjecture-style seconds/token estimate. It is not OpenFHE
+  execution yet.
 
 References used for the prototype:
 
@@ -54,6 +61,21 @@ python3 -m fhe_native_mamba3.cli inspect \
   --bc-mode static \
   --gate-mode linear \
   --seq-len 128
+```
+
+Inspect the memo-aligned CKKS cost model:
+
+```bash
+python3 -m fhe_native_mamba3.cli cost-model \
+  --bc-mode static \
+  --decay-mode scalar \
+  --scan-mode windowed \
+  --effective-window 256 \
+  --seq-len 256 \
+  --heads 32 \
+  --head-pack 32 \
+  --bootstrap-sec 2.0 \
+  --scan-step-ms 1.0
 ```
 
 ## Sync to `high`

@@ -1,6 +1,14 @@
 # FHE Lowering Notes
 
-This prototype separates two research tracks.
+This prototype separates three research tracks.
+
+## Symbolic CKKS First
+
+Version `0.2.0` adds a symbolic CKKS layer tracker before OpenFHE lowering. It
+records ciphertext-ciphertext products, ciphertext-plaintext products, rotations,
+remaining levels, greedy bootstrap positions, and head/MIMO packing. This keeps
+the research memo's assumptions executable without claiming that encrypted
+OpenFHE inference is already implemented.
 
 ## Static B/C
 
@@ -34,7 +42,7 @@ distilled or constrained toward static/low-rank plaintext B/C for FHE inference.
 
 ## Next Backend Step
 
-The next concrete step is a CKKS lowering pass that maps:
+The next concrete step is an OpenFHE CKKS lowering pass that maps:
 
 - rank channels to SIMD slots,
 - state dimension to either packed slots or separate ciphertexts,

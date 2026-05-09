@@ -13,7 +13,8 @@ from typing import Any
 import torch
 
 from fhe_native_mamba3 import __version__
-from fhe_native_mamba3.cost import estimate_block_cost
+from fhe_native_mamba3.ckks import CkksConfig
+from fhe_native_mamba3.cost import estimate_block_cost, estimate_integrated_cost
 from fhe_native_mamba3.data import generate_modular_stream
 from fhe_native_mamba3.model import FheMamba3Config, FheMamba3ForCausalLM
 
@@ -27,7 +28,10 @@ def _config_from_args(args: argparse.Namespace) -> FheMamba3Config:
         mimo_rank=args.mimo_rank,
         max_seq_len=args.max_seq_len,
         bc_mode=args.bc_mode,
+        decay_mode=args.decay_mode,
         gate_mode=args.gate_mode,
+        scan_mode=args.scan_mode,
+        effective_window=args.effective_window if args.effective_window > 0 else None,
         dropout=args.dropout,
     )
 
@@ -40,8 +44,23 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--mimo-rank", type=int, default=8)
     parser.add_argument("--max-seq-len", type=int, default=256)
     parser.add_argument("--bc-mode", choices=["static", "dynamic"], default="static")
+    parser.add_argument("--decay-mode", choices=["scalar", "state_rank"], default="scalar")
     parser.add_argument("--gate-mode", choices=["none", "linear", "quadratic"], default="linear")
+    parser.add_argument("--scan-mode", choices=["sequential", "windowed"], default="sequential")
+    parser.add_argument("--effective-window", type=int, default=0)
     parser.add_argument("--dropout", type=float, default=0.0)
+
+
+def _add_ckks_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--ckks-max-level", type=int, default=30)
+    parser.add_argument("--ckks-min-level", type=int, default=3)
+    parser.add_argument("--ckks-slots", type=int, default=32768)
+    parser.add_argument("--bootstrap-sec", type=float, default=2.0)
+    parser.add_argument("--scan-step-ms", type=float, default=1.0)
+    parser.add_argument("--nonlinearity-ms", type=float, default=0.0)
+    parser.add_argument("--heads", type=int, default=32)
+    parser.add_argument("--head-pack", type=int, default=32)
+    parser.add_argument("--bootstrap-every-layers", type=int, default=2)
 
 
 def inspect_cmd(args: argparse.Namespace) -> int:
@@ -51,6 +70,44 @@ def inspect_cmd(args: argparse.Namespace) -> int:
         "version": __version__,
         "config": asdict(config),
         "cost_per_block": asdict(estimate),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def cost_model_cmd(args: argparse.Namespace) -> int:
+    config = _config_from_args(args)
+    ckks = CkksConfig(
+        max_level=args.ckks_max_level,
+        min_level=args.ckks_min_level,
+        slots=args.ckks_slots,
+        bootstrap_seconds=args.bootstrap_sec,
+    )
+    estimate = estimate_integrated_cost(
+        config,
+        seq_len=args.seq_len,
+        heads=args.heads,
+        requested_head_pack=args.head_pack,
+        ckks=ckks,
+        scan_step_ms=args.scan_step_ms,
+        nonlinearity_ms=args.nonlinearity_ms,
+        bootstrap_every_layers=args.bootstrap_every_layers,
+    )
+    estimate_payload = asdict(estimate)
+    estimate_payload["head_packing"].update(
+        {
+            "slots_per_head": estimate.head_packing.slots_per_head,
+            "max_heads_by_slots": estimate.head_packing.max_heads_by_slots,
+            "heads_per_ciphertext": estimate.head_packing.heads_per_ciphertext,
+            "ciphertext_groups": estimate.head_packing.ciphertext_groups,
+            "slot_utilization": estimate.head_packing.slot_utilization,
+        }
+    )
+    payload = {
+        "version": __version__,
+        "config": asdict(config),
+        "ckks": asdict(ckks),
+        "integrated_cost": estimate_payload,
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
@@ -162,6 +219,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_model_args(inspect_parser)
     inspect_parser.add_argument("--seq-len", type=int, default=128)
     inspect_parser.set_defaults(func=inspect_cmd)
+
+    cost_parser = subparsers.add_parser("cost-model", help="print symbolic CKKS cost model")
+    _add_model_args(cost_parser)
+    _add_ckks_args(cost_parser)
+    cost_parser.add_argument("--seq-len", type=int, default=128)
+    cost_parser.set_defaults(func=cost_model_cmd)
 
     train_parser = subparsers.add_parser("train-synthetic", help="train on a tiny synthetic task")
     _add_model_args(train_parser)

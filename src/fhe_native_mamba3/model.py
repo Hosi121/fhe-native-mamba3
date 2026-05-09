@@ -16,7 +16,9 @@ from torch import Tensor, nn
 from torch.nn import functional
 
 BcMode = Literal["static", "dynamic"]
+DecayMode = Literal["scalar", "state_rank"]
 GateMode = Literal["none", "linear", "quadratic"]
+ScanMode = Literal["sequential", "windowed"]
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,10 @@ class FheMamba3Config:
     mimo_rank: int = 8
     max_seq_len: int = 256
     bc_mode: BcMode = "static"
+    decay_mode: DecayMode = "scalar"
     gate_mode: GateMode = "linear"
+    scan_mode: ScanMode = "sequential"
+    effective_window: int | None = None
     dropout: float = 0.0
     fixed_scale_norm: bool = True
     pad_token_id: int = 0
@@ -48,8 +53,20 @@ class FheMamba3Config:
         if self.bc_mode not in {"static", "dynamic"}:
             msg = f"unsupported bc_mode: {self.bc_mode}"
             raise ValueError(msg)
+        if self.decay_mode not in {"scalar", "state_rank"}:
+            msg = f"unsupported decay_mode: {self.decay_mode}"
+            raise ValueError(msg)
         if self.gate_mode not in {"none", "linear", "quadratic"}:
             msg = f"unsupported gate_mode: {self.gate_mode}"
+            raise ValueError(msg)
+        if self.scan_mode not in {"sequential", "windowed"}:
+            msg = f"unsupported scan_mode: {self.scan_mode}"
+            raise ValueError(msg)
+        if self.scan_mode == "windowed" and self.bc_mode != "static":
+            msg = "windowed scan currently supports static B/C only"
+            raise ValueError(msg)
+        if self.effective_window is not None and self.effective_window <= 0:
+            msg = "effective_window must be positive when set"
             raise ValueError(msg)
 
 
@@ -112,7 +129,10 @@ class FheMamba3Block(nn.Module):
         self.gate = PolynomialGate(config.d_model, config.gate_mode)
         self.dropout = nn.Dropout(config.dropout)
 
-        self.decay_logits = nn.Parameter(torch.zeros(config.d_state, config.mimo_rank))
+        if config.decay_mode == "scalar":
+            self.decay_logits = nn.Parameter(torch.zeros(config.mimo_rank))
+        else:
+            self.decay_logits = nn.Parameter(torch.zeros(config.d_state, config.mimo_rank))
         if config.bc_mode == "static":
             self.b_static = nn.Parameter(torch.empty(config.d_state, config.mimo_rank))
             self.c_static = nn.Parameter(torch.empty(config.d_state, config.mimo_rank))
@@ -138,12 +158,43 @@ class FheMamba3Block(nn.Module):
         if self.c_static is not None:
             nn.init.normal_(self.c_static, mean=0.0, std=self.config.d_state**-0.5)
 
+    def _decay(self, dtype: torch.dtype, device: torch.device) -> Tensor:
+        decay = torch.sigmoid(self.decay_logits).to(dtype=dtype, device=device)
+        if self.config.decay_mode == "scalar":
+            return decay.view(1, 1, self.config.mimo_rank)
+        return decay.unsqueeze(0)
+
+    def _forward_static_windowed(
+        self,
+        rank_input: Tensor,
+        b_terms: Tensor,
+        c_terms: Tensor,
+        decay: Tensor,
+    ) -> Tensor:
+        _, seq_len, rank = rank_input.shape
+        window = min(self.config.effective_window or seq_len, seq_len)
+        bc_gain = b_terms * c_terms
+        outputs: list[Tensor] = []
+
+        for t in range(seq_len):
+            start = max(0, t - window + 1)
+            offsets = torch.arange(t - start, -1, -1, device=rank_input.device)
+            segment = rank_input[:, start : t + 1]
+            if self.config.decay_mode == "scalar":
+                weights = decay.view(rank).pow(offsets.unsqueeze(1))
+                y_rank = segment.mul(weights.unsqueeze(0)).sum(dim=1) * bc_gain.sum(dim=0)
+            else:
+                weights = decay.squeeze(0).unsqueeze(0).pow(offsets.view(-1, 1, 1))
+                y_rank = torch.einsum("bwr,wnr,nr->br", segment, weights, bc_gain)
+            outputs.append(y_rank)
+        return torch.stack(outputs, dim=1)
+
     def forward(self, x: Tensor) -> Tensor:
         batch, seq_len, _ = x.shape
         residual = x
         x = self.in_norm(x)
         rank_input = self.in_rank(x)
-        decay = torch.sigmoid(self.decay_logits).to(dtype=x.dtype, device=x.device)
+        decay = self._decay(dtype=x.dtype, device=x.device)
         state = x.new_zeros(batch, self.config.d_state, self.config.mimo_rank)
         outputs: list[Tensor] = []
 
@@ -153,10 +204,14 @@ class FheMamba3Block(nn.Module):
                 raise RuntimeError(msg)
             b_terms = self.b_static.to(dtype=x.dtype, device=x.device)
             c_terms = self.c_static.to(dtype=x.dtype, device=x.device)
-            for t in range(seq_len):
-                state = decay * state + b_terms.unsqueeze(0) * rank_input[:, t].unsqueeze(1)
-                y_rank = (c_terms.unsqueeze(0) * state).sum(dim=1)
-                outputs.append(y_rank)
+            if self.config.scan_mode == "windowed":
+                y = self._forward_static_windowed(rank_input, b_terms, c_terms, decay)
+            else:
+                for t in range(seq_len):
+                    state = decay * state + b_terms.unsqueeze(0) * rank_input[:, t].unsqueeze(1)
+                    y_rank = (c_terms.unsqueeze(0) * state).sum(dim=1)
+                    outputs.append(y_rank)
+                y = torch.stack(outputs, dim=1)
         else:
             if self.b_dynamic is None or self.c_dynamic is None:
                 msg = "dynamic B/C projections are not initialized"
@@ -168,8 +223,7 @@ class FheMamba3Block(nn.Module):
                 state = decay * state + b_terms[:, t] * rank_input[:, t].unsqueeze(1)
                 y_rank = (c_terms[:, t] * state).sum(dim=1)
                 outputs.append(y_rank)
-
-        y = torch.stack(outputs, dim=1)
+            y = torch.stack(outputs, dim=1)
         update = self.out_rank(y) + self.skip(x)
         update = self.gate(residual, update)
         return residual + self.dropout(update)
