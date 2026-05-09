@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.20"
+__version__ = "0.2.21"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -9,6 +9,10 @@ _LAZY_IMPORTS = {
     "CheckpointInspection": ("fhe_native_mamba3.checkpoint", "CheckpointInspection"),
     "CheckpointTensorSpec": ("fhe_native_mamba3.checkpoint", "CheckpointTensorSpec"),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
+    "WeightBundleRecurrenceProblem": (
+        "fhe_native_mamba3.bundle_recurrence",
+        "WeightBundleRecurrenceProblem",
+    ),
     "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
     "FheCostEstimate": ("fhe_native_mamba3.cost", "FheCostEstimate"),
@@ -50,6 +54,10 @@ _LAZY_IMPORTS = {
     "build_weight_bundle_manifest": (
         "fhe_native_mamba3.weight_bundle",
         "build_weight_bundle_manifest",
+    ),
+    "build_weight_bundle_recurrence_problem": (
+        "fhe_native_mamba3.bundle_recurrence",
+        "build_weight_bundle_recurrence_problem",
     ),
     "calibrate_weight_tensor": (
         "fhe_native_mamba3.weight_encoding",
@@ -113,12 +121,14 @@ __all__ = [
     "StateDictMappingRule",
     "TrackingBackend",
     "WeightBundleManifest",
+    "WeightBundleRecurrenceProblem",
     "WeightCalibration",
     "WeightEncodingConfig",
     "__version__",
     "backend_capability_matrix",
     "build_rotation_inventory",
     "build_weight_bundle_manifest",
+    "build_weight_bundle_recurrence_problem",
     "calibrate_weight_tensor",
     "calibrate_weight_values",
     "client_side_argmax",

@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.20`. Future changes should bump
+The project is currently at SemVer `0.2.21`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -175,6 +175,10 @@ python3 -m fhe_native_mamba3.cli weight-bundle-generate \
   runs/weight-bundle \
   --prompt 1,2,3 \
   --steps 4
+python3 -m fhe_native_mamba3.cli weight-bundle-recurrence \
+  runs/weight-bundle \
+  --backend tracking \
+  --prompt 1,2,3
 python3 -m fhe_native_mamba3.cli weight-bundle-from-checkpoint \
   runs/train/checkpoint.pt \
   --output-dir runs/weight-bundle-from-checkpoint

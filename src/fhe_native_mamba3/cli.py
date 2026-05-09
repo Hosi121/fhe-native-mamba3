@@ -576,6 +576,98 @@ def weight_bundle_generate_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def weight_bundle_recurrence_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
+    from fhe_native_mamba3.backends.tracking import TrackingBackend
+    from fhe_native_mamba3.bundle_recurrence import build_weight_bundle_recurrence_problem
+    from fhe_native_mamba3.openfhe_backend import (
+        required_readout_rotations,
+        run_static_mimo_recurrence_with_backend,
+    )
+
+    extracted = build_weight_bundle_recurrence_problem(
+        args.bundle_dir,
+        token_ids=_parse_int_list(args.prompt),
+        layer_index=args.layer_index,
+    )
+    problem = extracted.problem
+    rotations = required_readout_rotations(
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        readout_strategy=args.readout_strategy,
+    )
+    if args.backend == "openfhe":
+        backend = OpenFheCkksBackend(
+            batch_size=problem.d_state * problem.mimo_rank,
+            multiplicative_depth=args.multiplicative_depth,
+            scaling_mod_size=args.scaling_mod_size,
+            rotations=rotations,
+        )
+    elif args.backend == "tracking":
+        backend = TrackingBackend(batch_size=problem.d_state * problem.mimo_rank)
+    else:
+        msg = f"unsupported backend: {args.backend}"
+        raise ValueError(msg)
+
+    result = run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=backend,
+        multiplicative_depth=args.multiplicative_depth,
+        readout_strategy=args.readout_strategy,
+        input_mode=args.input_mode,
+    )
+    stats = result.backend_stats
+    payload = {
+        "version": __version__,
+        "stage": "bundle-recurrence",
+        "source": "weight-bundle",
+        "bundle_dir": args.bundle_dir,
+        "backend": stats["backend"],
+        "encrypted": stats["encrypted"],
+        "model": {
+            "layer_index": args.layer_index,
+            "seq_len": problem.seq_len,
+            "d_state": problem.d_state,
+            "mimo_rank": problem.mimo_rank,
+            "state_slots": problem.d_state * problem.mimo_rank,
+            "readout_strategy": args.readout_strategy,
+            "input_mode": args.input_mode,
+        },
+        "ckks": {
+            "multiplicative_depth": args.multiplicative_depth,
+            "scaling_mod_size": args.scaling_mod_size,
+            "ring_dimension": result.ring_dimension,
+            "batch_size": result.batch_size,
+            "rotations": list(result.rotations),
+        },
+        "weight_bundle": extracted.manifest.to_json_dict(),
+        "latency_sec_per_token": result.latency_sec_per_token,
+        "max_abs_error": result.max_abs_error,
+        "operation_counts": {
+            "ct_ct_mul": stats["ct_ct_mul_count"],
+            "ct_pt_mul": stats["ct_pt_mul_count"],
+            "add": stats["add_count"],
+            "rotations": stats["rotation_count"],
+            "bootstraps": stats["bootstrap_count"],
+            "encrypt": stats["encrypt_count"],
+            "decrypt": stats["decrypt_count"],
+            "encode": stats["encode_count"],
+            "client_plaintext_public_weight_multiplies": (
+                result.client_plaintext_public_weight_multiplies
+            ),
+        },
+        "timing": {
+            "setup_seconds": stats["setup_seconds"],
+            "eval_seconds": stats["eval_seconds"],
+        },
+        "extracted_problem": extracted.to_json_dict(),
+        "decrypted_outputs": result.decrypted_outputs,
+        "expected_outputs": result.expected_outputs,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def weight_bundle_from_checkpoint_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.weight_bundle import save_weight_bundle_from_checkpoint
     from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
@@ -944,6 +1036,30 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_generate_parser.add_argument("--steps", type=int, default=4)
     bundle_generate_parser.add_argument("--device", default="")
     bundle_generate_parser.set_defaults(func=weight_bundle_generate_cmd)
+
+    bundle_recurrence_parser = subparsers.add_parser(
+        "weight-bundle-recurrence",
+        help="extract one bundle layer as a static MIMO recurrence and run an FHE backend",
+    )
+    bundle_recurrence_parser.add_argument("bundle_dir")
+    bundle_recurrence_parser.add_argument(
+        "--backend", choices=["openfhe", "tracking"], default="tracking"
+    )
+    bundle_recurrence_parser.add_argument("--prompt", default="1,2,3")
+    bundle_recurrence_parser.add_argument("--layer-index", type=int, default=0)
+    bundle_recurrence_parser.add_argument(
+        "--readout-strategy",
+        choices=["slotwise", "rank-reduce", "rank-local"],
+        default="rank-local",
+    )
+    bundle_recurrence_parser.add_argument(
+        "--input-mode",
+        choices=["server-bx", "client-update"],
+        default="client-update",
+    )
+    bundle_recurrence_parser.add_argument("--multiplicative-depth", type=int, default=8)
+    bundle_recurrence_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    bundle_recurrence_parser.set_defaults(func=weight_bundle_recurrence_cmd)
 
     bundle_checkpoint_parser = subparsers.add_parser(
         "weight-bundle-from-checkpoint",
