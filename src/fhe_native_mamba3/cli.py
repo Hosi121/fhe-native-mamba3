@@ -383,6 +383,32 @@ def _mamba_checkpoint_plan_payload(
     return plan_mamba_checkpoint(source_state_dict).to_json_dict(max_layers=max_layers)
 
 
+def _resolve_mamba_adapter_shape(
+    args: argparse.Namespace,
+    source_state_dict: dict[str, Any],
+) -> tuple[int, int, dict[str, Any]]:
+    if not args.infer_shape:
+        return (
+            args.d_state,
+            args.mimo_rank,
+            {"source": "cli", "d_state": args.d_state, "mimo_rank": args.mimo_rank},
+        )
+
+    from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint
+
+    plan = plan_mamba_checkpoint(source_state_dict)
+    d_state = plan.inferred_d_state
+    mimo_rank = plan.inferred_mimo_rank
+    if d_state is None or mimo_rank is None:
+        msg = "could not infer d_state and mimo_rank from checkpoint; pass them explicitly"
+        raise ValueError(msg)
+    return (
+        d_state,
+        mimo_rank,
+        {"source": "checkpoint", "d_state": d_state, "mimo_rank": mimo_rank},
+    )
+
+
 def mamba_checkpoint_to_bundle_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.mamba_checkpoint import save_mamba_checkpoint_bundle
@@ -393,11 +419,12 @@ def mamba_checkpoint_to_bundle_cmd(args: argparse.Namespace) -> int:
         state_dict_key=args.state_dict_key or None,
         map_location=args.map_location,
     )
+    d_state, mimo_rank, adapter_shape = _resolve_mamba_adapter_shape(args, source_state_dict)
     manifest, report = save_mamba_checkpoint_bundle(
         source_state_dict,
         args.output_dir,
-        d_state=args.d_state,
-        mimo_rank=args.mimo_rank,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
         n_layers=args.n_layers if args.n_layers > 0 else None,
         max_seq_len=args.max_seq_len,
         seed=args.seed,
@@ -412,6 +439,7 @@ def mamba_checkpoint_to_bundle_cmd(args: argparse.Namespace) -> int:
         "checkpoint": args.checkpoint,
         "state_dict_key": resolved_key,
         "output_dir": args.output_dir,
+        "adapter_shape": adapter_shape,
         "weight_bundle": manifest.to_json_dict(),
         "summary": _weight_bundle_summary(manifest),
         "mamba_checkpoint_plan": _mamba_checkpoint_plan_payload(
@@ -441,11 +469,12 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         state_dict_key=args.state_dict_key or None,
         map_location=args.map_location,
     )
+    d_state, mimo_rank, adapter_shape = _resolve_mamba_adapter_shape(args, source_state_dict)
     manifest, report = save_mamba_checkpoint_bundle(
         source_state_dict,
         args.output_dir,
-        d_state=args.d_state,
-        mimo_rank=args.mimo_rank,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
         n_layers=args.n_layers if args.n_layers > 0 else None,
         max_seq_len=args.max_seq_len,
         seed=args.seed,
@@ -492,6 +521,7 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         "checkpoint": args.checkpoint,
         "state_dict_key": resolved_key,
         "output_dir": args.output_dir,
+        "adapter_shape": adapter_shape,
         "backend": stats["backend"],
         "encrypted": stats["encrypted"],
         "mamba_checkpoint_plan": _mamba_checkpoint_plan_payload(
@@ -1175,6 +1205,11 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_bundle_parser.add_argument("--map-location", default="cpu")
     mamba_bundle_parser.add_argument("--d-state", type=int, default=16)
     mamba_bundle_parser.add_argument("--mimo-rank", type=int, default=8)
+    mamba_bundle_parser.add_argument(
+        "--infer-shape",
+        action="store_true",
+        help="derive d_state and mimo_rank from the detected checkpoint tensors",
+    )
     mamba_bundle_parser.add_argument("--n-layers", type=int, default=0)
     mamba_bundle_parser.add_argument("--max-seq-len", type=int, default=256)
     mamba_bundle_parser.add_argument("--seed", type=int, default=0)
@@ -1195,6 +1230,11 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_smoke_parser.add_argument("--map-location", default="cpu")
     mamba_smoke_parser.add_argument("--d-state", type=int, default=1)
     mamba_smoke_parser.add_argument("--mimo-rank", type=int, default=1)
+    mamba_smoke_parser.add_argument(
+        "--infer-shape",
+        action="store_true",
+        help="derive d_state and mimo_rank from the detected checkpoint tensors",
+    )
     mamba_smoke_parser.add_argument("--n-layers", type=int, default=1)
     mamba_smoke_parser.add_argument("--max-seq-len", type=int, default=8)
     mamba_smoke_parser.add_argument("--seed", type=int, default=0)

@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.27`. Future changes should bump
+The project is currently at SemVer `0.2.28`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -194,6 +194,8 @@ python3 -m fhe_native_mamba3.cli mamba-checkpoint-to-bundle \
   --max-plan-layers 4
 # The checkpoint argument may also be a Hugging Face model directory containing
 # model.safetensors, model.safetensors.index.json, or pytorch_model.bin.
+# Pass --infer-shape to derive d_state and mimo_rank from the checkpoint
+# A_log/x_proj tensors instead of using the CLI shape arguments.
 python3 -m fhe_native_mamba3.cli mamba-checkpoint-recurrence-smoke \
   runs/mamba/checkpoint.pt \
   --output-dir runs/mamba-encrypted-smoke-bundle \
