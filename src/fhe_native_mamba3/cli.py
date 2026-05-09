@@ -247,6 +247,32 @@ def checkpoint_inspect_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def checkpoint_map_report_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.model import FheMamba3ForCausalLM
+    from fhe_native_mamba3.state_dict_mapping import identity_mapping_rules, map_state_dict
+
+    config = _config_from_args(args)
+    target_model = FheMamba3ForCausalLM(config)
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    target_state_dict = target_model.state_dict()
+    rules = identity_mapping_rules(source_state_dict, target_state_dict)
+    _mapped, report = map_state_dict(source_state_dict, target_state_dict, rules)
+    payload = {
+        "version": __version__,
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "target_config": asdict(config),
+        "mapping_report": report.to_json_dict(max_statuses=args.max_statuses),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def profile_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -636,6 +662,17 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint_parser.add_argument("--map-location", default="cpu")
     checkpoint_parser.add_argument("--max-tensors", type=int, default=50)
     checkpoint_parser.set_defaults(func=checkpoint_inspect_cmd)
+
+    checkpoint_map_parser = subparsers.add_parser(
+        "checkpoint-map-report",
+        help="compare checkpoint keys against a target prototype model config",
+    )
+    _add_model_args(checkpoint_map_parser)
+    checkpoint_map_parser.add_argument("checkpoint")
+    checkpoint_map_parser.add_argument("--state-dict-key", default="")
+    checkpoint_map_parser.add_argument("--map-location", default="cpu")
+    checkpoint_map_parser.add_argument("--max-statuses", type=int, default=50)
+    checkpoint_map_parser.set_defaults(func=checkpoint_map_report_cmd)
 
     rotation_parser = subparsers.add_parser(
         "rotation-inventory",

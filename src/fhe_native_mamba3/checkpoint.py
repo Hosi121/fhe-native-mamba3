@@ -78,6 +78,18 @@ def inspect_checkpoint(
     )
 
 
+def load_checkpoint_state_dict(
+    checkpoint_path: str | Path,
+    *,
+    state_dict_key: str | None = None,
+    map_location: str | torch.device = "cpu",
+) -> tuple[dict[str, torch.Tensor], str]:
+    """Load the tensor state_dict selected by the same rules as inspection."""
+
+    checkpoint = _load_checkpoint(Path(checkpoint_path), map_location)
+    return _extract_state_dict(checkpoint, state_dict_key)
+
+
 def _load_checkpoint(path: Path, map_location: str | torch.device) -> Any:
     try:
         return torch.load(path, map_location=map_location, weights_only=True)
