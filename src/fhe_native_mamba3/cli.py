@@ -354,22 +354,33 @@ def checkpoint_map_to_bundle_cmd(args: argparse.Namespace) -> int:
 
 def mamba_checkpoint_plan_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
-    from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint
 
     source_state_dict, resolved_key = load_checkpoint_state_dict(
         args.checkpoint,
         state_dict_key=args.state_dict_key or None,
         map_location=args.map_location,
     )
-    plan = plan_mamba_checkpoint(source_state_dict)
     payload = {
         "version": __version__,
         "checkpoint": args.checkpoint,
         "state_dict_key": resolved_key,
-        "mamba_checkpoint_plan": plan.to_json_dict(max_layers=args.max_layers),
+        "mamba_checkpoint_plan": _mamba_checkpoint_plan_payload(
+            source_state_dict,
+            max_layers=args.max_layers,
+        ),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
+
+
+def _mamba_checkpoint_plan_payload(
+    source_state_dict: dict[str, Any],
+    *,
+    max_layers: int | None,
+) -> dict[str, Any]:
+    from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint
+
+    return plan_mamba_checkpoint(source_state_dict).to_json_dict(max_layers=max_layers)
 
 
 def mamba_checkpoint_to_bundle_cmd(args: argparse.Namespace) -> int:
@@ -403,6 +414,10 @@ def mamba_checkpoint_to_bundle_cmd(args: argparse.Namespace) -> int:
         "output_dir": args.output_dir,
         "weight_bundle": manifest.to_json_dict(),
         "summary": _weight_bundle_summary(manifest),
+        "mamba_checkpoint_plan": _mamba_checkpoint_plan_payload(
+            source_state_dict,
+            max_layers=args.max_plan_layers,
+        ),
         "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
@@ -479,6 +494,10 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         "output_dir": args.output_dir,
         "backend": stats["backend"],
         "encrypted": stats["encrypted"],
+        "mamba_checkpoint_plan": _mamba_checkpoint_plan_payload(
+            source_state_dict,
+            max_layers=args.max_plan_layers,
+        ),
         "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
         "weight_bundle": manifest.to_json_dict(),
         "summary": _weight_bundle_summary(manifest),
@@ -1162,6 +1181,7 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_bundle_parser.add_argument("--scale-bits", type=int, default=40)
     mamba_bundle_parser.add_argument("--target-max-abs", type=float, default=1.0)
     mamba_bundle_parser.add_argument("--source-dtype", default="fp32")
+    mamba_bundle_parser.add_argument("--max-plan-layers", type=int, default=8)
     mamba_bundle_parser.add_argument("--max-statuses", type=int, default=50)
     mamba_bundle_parser.set_defaults(func=mamba_checkpoint_to_bundle_cmd)
 
@@ -1198,6 +1218,7 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_smoke_parser.add_argument("--scale-bits", type=int, default=40)
     mamba_smoke_parser.add_argument("--target-max-abs", type=float, default=1.0)
     mamba_smoke_parser.add_argument("--source-dtype", default="fp32")
+    mamba_smoke_parser.add_argument("--max-plan-layers", type=int, default=8)
     mamba_smoke_parser.add_argument("--max-statuses", type=int, default=50)
     mamba_smoke_parser.set_defaults(func=mamba_checkpoint_recurrence_smoke_cmd)
 
