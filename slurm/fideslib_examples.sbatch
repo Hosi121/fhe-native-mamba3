@@ -69,4 +69,6 @@ rm -rf "${BOOTSTRAP_SOURCE}"
 cp -a "${FIDESLIB_DIR}/examples/bootstrap" "${BOOTSTRAP_SOURCE}"
 perl -0pi -e 's/EvalBootstrapKeyGen\(keyPair,/EvalBootstrapKeyGen(keyPair.secretKey,/g' \
   "${BOOTSTRAP_SOURCE}/src/bootstrap.cpp"
+perl -0pi -e 's/\n\tcryptoContext->LoadContext\(keyPair\.publicKey\);\s*\n\tcryptoContext->EvalBootstrapSetup/\n\n\tcryptoContext->EvalBootstrapSetup/g; s/(cryptoContext->EvalBootstrapKeyGen\(keyPair\.secretKey, numSlots\);\n)/$1\tcryptoContext->LoadContext(keyPair.publicKey);\n/g' \
+  "${BOOTSTRAP_SOURCE}/src/bootstrap.cpp"
 build_and_run_example bootstrap "${BOOTSTRAP_SOURCE}"
