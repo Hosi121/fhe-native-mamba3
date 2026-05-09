@@ -26,6 +26,70 @@ class StateDictMappingRule:
 
 
 @dataclass(frozen=True)
+class MappingDraftEntry:
+    """Draft status for one target tensor during rule generation."""
+
+    target: str
+    status: str
+    source: str | None
+    target_shape: tuple[int, ...]
+    candidate_sources: tuple[str, ...]
+    message: str
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "target": self.target,
+            "status": self.status,
+            "source": self.source,
+            "target_shape": list(self.target_shape),
+            "candidate_sources": list(self.candidate_sources),
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class StateDictMappingDraft:
+    """Conservative draft mapping rules plus diagnostics."""
+
+    rules: tuple[StateDictMappingRule, ...]
+    entries: tuple[MappingDraftEntry, ...]
+    unused_source_keys: tuple[str, ...]
+
+    @property
+    def rule_count(self) -> int:
+        return len(self.rules)
+
+    @property
+    def exact_count(self) -> int:
+        return sum(1 for entry in self.entries if entry.status == "exact")
+
+    @property
+    def unique_shape_count(self) -> int:
+        return sum(1 for entry in self.entries if entry.status == "unique_shape")
+
+    @property
+    def ambiguous_count(self) -> int:
+        return sum(1 for entry in self.entries if entry.status == "ambiguous_shape")
+
+    @property
+    def unmatched_count(self) -> int:
+        return sum(1 for entry in self.entries if entry.status == "unmatched")
+
+    def to_json_dict(self, *, max_entries: int | None = None) -> dict[str, Any]:
+        entries = self.entries[:max_entries] if max_entries is not None else self.entries
+        return {
+            "rule_count": self.rule_count,
+            "exact_count": self.exact_count,
+            "unique_shape_count": self.unique_shape_count,
+            "ambiguous_count": self.ambiguous_count,
+            "unmatched_count": self.unmatched_count,
+            "rules": [rule.to_json_dict() for rule in self.rules],
+            "entries": [entry.to_json_dict() for entry in entries],
+            "unused_source_keys": list(self.unused_source_keys),
+        }
+
+
+@dataclass(frozen=True)
 class TensorMappingStatus:
     """Result for one attempted tensor mapping."""
 
@@ -93,6 +157,79 @@ def identity_mapping_rules(
     )
 
 
+def draft_mapping_rules(
+    source_state_dict: dict[str, torch.Tensor],
+    target_state_dict: dict[str, torch.Tensor],
+) -> StateDictMappingDraft:
+    """Draft safe mapping rules from exact names and globally unique shapes."""
+
+    source_shapes = _state_dict_shapes(source_state_dict)
+    target_shapes = _state_dict_shapes(target_state_dict)
+    source_remaining = set(source_state_dict)
+    target_remaining = set(target_state_dict)
+    rules: list[StateDictMappingRule] = []
+    entries_by_target: dict[str, MappingDraftEntry] = {}
+
+    for target in sorted(target_state_dict):
+        if target in source_state_dict and source_shapes[target] == target_shapes[target]:
+            source_remaining.remove(target)
+            target_remaining.remove(target)
+            rules.append(StateDictMappingRule(source=target, target=target))
+            entries_by_target[target] = MappingDraftEntry(
+                target=target,
+                status="exact",
+                source=target,
+                target_shape=target_shapes[target],
+                candidate_sources=(target,),
+                message="same-name tensor has matching shape",
+            )
+
+    source_by_shape = _keys_by_shape(source_shapes, source_remaining)
+    target_by_shape = _keys_by_shape(target_shapes, target_remaining)
+    for target in sorted(target_remaining):
+        target_shape = target_shapes[target]
+        source_candidates = source_by_shape.get(target_shape, ())
+        target_candidates = target_by_shape.get(target_shape, ())
+        if len(source_candidates) == 1 and len(target_candidates) == 1:
+            source = source_candidates[0]
+            source_remaining.remove(source)
+            rules.append(StateDictMappingRule(source=source, target=target))
+            entries_by_target[target] = MappingDraftEntry(
+                target=target,
+                status="unique_shape",
+                source=source,
+                target_shape=target_shape,
+                candidate_sources=(source,),
+                message="source and target shapes are globally unique after exact matches",
+            )
+            continue
+        if source_candidates:
+            entries_by_target[target] = MappingDraftEntry(
+                target=target,
+                status="ambiguous_shape",
+                source=None,
+                target_shape=target_shape,
+                candidate_sources=source_candidates,
+                message="shape matches are not unique; review manually",
+            )
+            continue
+        entries_by_target[target] = MappingDraftEntry(
+            target=target,
+            status="unmatched",
+            source=None,
+            target_shape=target_shape,
+            candidate_sources=(),
+            message="no remaining source tensor has this shape",
+        )
+
+    entries = tuple(entries_by_target[target] for target in sorted(target_state_dict))
+    return StateDictMappingDraft(
+        rules=tuple(rules),
+        entries=entries,
+        unused_source_keys=tuple(sorted(source_remaining)),
+    )
+
+
 def load_mapping_rules(path: str | Path) -> tuple[StateDictMappingRule, ...]:
     """Load mapping rules from a JSON file."""
 
@@ -109,6 +246,15 @@ def save_mapping_rules(path: str | Path, rules: tuple[StateDictMappingRule, ...]
 
     payload = {"rules": [rule.to_json_dict() for rule in rules]}
     Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def save_mapping_draft(path: str | Path, draft: StateDictMappingDraft) -> None:
+    """Persist a draft mapping payload that can also be used as rules JSON."""
+
+    Path(path).write_text(
+        json.dumps(draft.to_json_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def map_state_dict(
@@ -214,3 +360,17 @@ def _shape_or_none(tensor: torch.Tensor | None) -> tuple[int, ...] | None:
     if tensor is None:
         return None
     return tuple(int(dim) for dim in tensor.shape)
+
+
+def _state_dict_shapes(state_dict: dict[str, torch.Tensor]) -> dict[str, tuple[int, ...]]:
+    return {key: tuple(int(dim) for dim in tensor.shape) for key, tensor in state_dict.items()}
+
+
+def _keys_by_shape(
+    shapes: dict[str, tuple[int, ...]],
+    keys: set[str],
+) -> dict[tuple[int, ...], tuple[str, ...]]:
+    grouped: dict[tuple[int, ...], list[str]] = {}
+    for key in keys:
+        grouped.setdefault(shapes[key], []).append(key)
+    return {shape: tuple(sorted(shape_keys)) for shape, shape_keys in grouped.items()}

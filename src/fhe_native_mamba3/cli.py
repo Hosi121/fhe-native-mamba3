@@ -281,6 +281,33 @@ def checkpoint_map_report_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def checkpoint_map_template_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.model import FheMamba3ForCausalLM
+    from fhe_native_mamba3.state_dict_mapping import draft_mapping_rules, save_mapping_draft
+
+    config = _config_from_args(args)
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    target_model = FheMamba3ForCausalLM(config)
+    draft = draft_mapping_rules(source_state_dict, target_model.state_dict())
+    if args.output_json:
+        save_mapping_draft(args.output_json, draft)
+    payload = {
+        "version": __version__,
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "target_config": asdict(config),
+        "output_json": args.output_json,
+        "mapping_template": draft.to_json_dict(max_entries=args.max_entries),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def checkpoint_map_to_bundle_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.model import FheMamba3ForCausalLM
@@ -726,6 +753,18 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint_map_parser.add_argument("--rules-json", default="")
     checkpoint_map_parser.add_argument("--max-statuses", type=int, default=50)
     checkpoint_map_parser.set_defaults(func=checkpoint_map_report_cmd)
+
+    checkpoint_template_parser = subparsers.add_parser(
+        "checkpoint-map-template",
+        help="draft a conservative checkpoint mapping JSON from exact names and unique shapes",
+    )
+    _add_model_args(checkpoint_template_parser)
+    checkpoint_template_parser.add_argument("checkpoint")
+    checkpoint_template_parser.add_argument("--state-dict-key", default="")
+    checkpoint_template_parser.add_argument("--map-location", default="cpu")
+    checkpoint_template_parser.add_argument("--output-json", default="")
+    checkpoint_template_parser.add_argument("--max-entries", type=int, default=50)
+    checkpoint_template_parser.set_defaults(func=checkpoint_map_template_cmd)
 
     checkpoint_bundle_parser = subparsers.add_parser(
         "checkpoint-map-to-bundle",

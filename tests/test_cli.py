@@ -31,7 +31,7 @@ def test_inspect_cli_outputs_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.17"
+    assert payload["version"] == "0.2.18"
     assert payload["cost_per_block"]["seq_len"] == 8
 
 
@@ -62,7 +62,7 @@ def test_cost_model_cli_outputs_ckks_payload() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.17"
+    assert payload["version"] == "0.2.18"
     assert payload["integrated_cost"]["effective_window"] == 4
     assert payload["integrated_cost"]["head_packing"]["heads_per_ciphertext"] >= 1
     assert payload["integrated_cost"]["block_cost"]["rotations"] == 2
@@ -121,7 +121,7 @@ def test_stage0_tracking_cli_outputs_benchmark_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.17"
+    assert payload["version"] == "0.2.18"
     assert payload["stage"] == "0"
     assert payload["backend"] == "tracking"
     assert payload["encrypted"] is False
@@ -152,7 +152,7 @@ def test_stage0_sweep_cli_outputs_summary() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.17"
+    assert payload["version"] == "0.2.18"
     assert payload["result_count"] == 4
     assert payload["summary"]["max_abs_error_max"] < 1e-12
 
@@ -214,7 +214,7 @@ def test_profile_synthetic_cli_outputs_profile() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.17"
+    assert payload["version"] == "0.2.18"
     assert payload["profile"]["seq_len"] == 8
     assert payload["profile"]["blocks"][0]["lambda_by_beta"]["0.5"] >= 0.0
 
@@ -242,7 +242,7 @@ def test_planning_cli_commands_output_json() -> None:
             text=True,
         )
         payload = json.loads(completed.stdout)
-        assert payload["version"] == "0.2.17"
+        assert payload["version"] == "0.2.18"
 
 
 def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
@@ -279,7 +279,7 @@ def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
         text=True,
     )
     export_payload = json.loads(export_completed.stdout)
-    assert export_payload["version"] == "0.2.17"
+    assert export_payload["version"] == "0.2.18"
     assert export_payload["summary"]["tensor_count"] > 0
     assert export_payload["summary"]["parameter_count"] > 0
     assert (bundle_dir / "manifest.json").exists()
@@ -298,7 +298,7 @@ def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
         text=True,
     )
     inspect_payload = json.loads(inspect_completed.stdout)
-    assert inspect_payload["version"] == "0.2.17"
+    assert inspect_payload["version"] == "0.2.18"
     assert inspect_payload["summary"] == export_payload["summary"]
     assert inspect_payload["weight_bundle"]["model_config"]["scan_mode"] == "ssd"
 
@@ -333,7 +333,7 @@ def test_weight_bundle_cli_converts_checkpoint(tmp_path) -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.17"
+    assert payload["version"] == "0.2.18"
     assert payload["summary"]["tensor_count"] == len(model.state_dict())
     assert payload["weight_bundle"]["model_config"]["vocab_size"] == 16
 
@@ -358,7 +358,7 @@ def test_checkpoint_inspect_cli_outputs_tensor_shapes(tmp_path) -> None:
     )
     payload = json.loads(completed.stdout)
     inspection = payload["checkpoint_inspection"]
-    assert payload["version"] == "0.2.17"
+    assert payload["version"] == "0.2.18"
     assert inspection["state_dict_key"] == "model"
     assert inspection["tensor_count"] == 2
     assert inspection["parameter_count"] == 10
@@ -400,10 +400,87 @@ def test_checkpoint_map_report_cli_compares_against_target_model(tmp_path) -> No
     )
     payload = json.loads(completed.stdout)
     report = payload["mapping_report"]
-    assert payload["version"] == "0.2.17"
+    assert payload["version"] == "0.2.18"
     assert report["is_complete"] is True
     assert report["mapped_count"] == len(model.state_dict())
     assert len(report["statuses"]) == 2
+
+
+def test_checkpoint_map_template_cli_writes_reusable_rules_json(tmp_path) -> None:
+    config = FheMamba3Config(vocab_size=17, d_model=8, n_layers=1, d_state=2, mimo_rank=2)
+    model = FheMamba3ForCausalLM(config)
+    source_state_dict = dict(model.state_dict())
+    source_state_dict["external.in_rank.weight"] = source_state_dict.pop("blocks.0.in_rank.weight")
+    checkpoint_path = tmp_path / "checkpoint.pt"
+    rules_path = tmp_path / "draft-rules.json"
+    bundle_dir = tmp_path / "mapped-bundle"
+    torch.save({"model": source_state_dict}, checkpoint_path)
+
+    template_completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fhe_native_mamba3.cli",
+            "checkpoint-map-template",
+            str(checkpoint_path),
+            "--output-json",
+            str(rules_path),
+            "--vocab-size",
+            "17",
+            "--d-model",
+            "8",
+            "--n-layers",
+            "1",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "2",
+            "--max-seq-len",
+            "256",
+            "--max-entries",
+            "2",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    template_payload = json.loads(template_completed.stdout)
+    template = template_payload["mapping_template"]
+    assert template_payload["version"] == "0.2.18"
+    assert template["unique_shape_count"] == 1
+    assert rules_path.exists()
+
+    bundle_completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fhe_native_mamba3.cli",
+            "checkpoint-map-to-bundle",
+            str(checkpoint_path),
+            "--output-dir",
+            str(bundle_dir),
+            "--rules-json",
+            str(rules_path),
+            "--vocab-size",
+            "17",
+            "--d-model",
+            "8",
+            "--n-layers",
+            "1",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "2",
+            "--max-seq-len",
+            "256",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    bundle_payload = json.loads(bundle_completed.stdout)
+    assert bundle_payload["mapping_report"]["is_complete"] is True
+    assert bundle_payload["summary"]["tensor_count"] == len(model.state_dict())
 
 
 def test_checkpoint_map_to_bundle_cli_exports_complete_mapping(tmp_path) -> None:
@@ -442,7 +519,7 @@ def test_checkpoint_map_to_bundle_cli_exports_complete_mapping(tmp_path) -> None
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.17"
+    assert payload["version"] == "0.2.18"
     assert payload["mapping_report"]["is_complete"] is True
     assert payload["summary"]["tensor_count"] == len(model.state_dict())
     assert (bundle_dir / "manifest.json").exists()

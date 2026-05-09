@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.17"
+__version__ = "0.2.18"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -30,6 +30,7 @@ _LAZY_IMPORTS = {
     "Stage0SweepConfig": ("fhe_native_mamba3.benchmarks.stage0_sweep", "Stage0SweepConfig"),
     "StateDictMappingReport": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingReport"),
     "StateDictMappingRule": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingRule"),
+    "StateDictMappingDraft": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingDraft"),
     "TrackingBackend": ("fhe_native_mamba3.backends.tracking", "TrackingBackend"),
     "WeightCalibration": ("fhe_native_mamba3.weight_encoding", "WeightCalibration"),
     "WeightBundleManifest": ("fhe_native_mamba3.weight_bundle", "WeightBundleManifest"),
@@ -56,6 +57,7 @@ _LAZY_IMPORTS = {
     ),
     "client_side_argmax": ("fhe_native_mamba3.decoding", "client_side_argmax"),
     "decoding_policies": ("fhe_native_mamba3.decoding", "decoding_policies"),
+    "draft_mapping_rules": ("fhe_native_mamba3.state_dict_mapping", "draft_mapping_rules"),
     "estimate_block_cost": ("fhe_native_mamba3.cost", "estimate_block_cost"),
     "estimate_integrated_cost": ("fhe_native_mamba3.cost", "estimate_integrated_cost"),
     "greedy_bootstrap_schedule": ("fhe_native_mamba3.cost", "greedy_bootstrap_schedule"),
@@ -83,6 +85,7 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.weight_bundle",
         "save_weight_bundle_from_mapped_checkpoint",
     ),
+    "save_mapping_draft": ("fhe_native_mamba3.state_dict_mapping", "save_mapping_draft"),
 }
 
 __all__ = [
@@ -105,6 +108,7 @@ __all__ = [
     "PackingPlan",
     "Stage0MimoConfig",
     "Stage0SweepConfig",
+    "StateDictMappingDraft",
     "StateDictMappingReport",
     "StateDictMappingRule",
     "TrackingBackend",
@@ -119,6 +123,7 @@ __all__ = [
     "calibrate_weight_values",
     "client_side_argmax",
     "decoding_policies",
+    "draft_mapping_rules",
     "estimate_block_cost",
     "estimate_integrated_cost",
     "greedy_bootstrap_schedule",
@@ -131,6 +136,7 @@ __all__ = [
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
+    "save_mapping_draft",
     "save_weight_bundle",
     "save_weight_bundle_from_checkpoint",
     "save_weight_bundle_from_mapped_checkpoint",

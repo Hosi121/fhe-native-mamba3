@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.17`. Future changes should bump
+The project is currently at SemVer `0.2.18`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -177,9 +177,17 @@ python3 -m fhe_native_mamba3.cli checkpoint-map-report \
   --d-state 4 \
   --mimo-rank 2 \
   --n-layers 1
+python3 -m fhe_native_mamba3.cli checkpoint-map-template \
+  runs/train/checkpoint.pt \
+  --output-json runs/mapping-draft.json \
+  --d-model 16 \
+  --d-state 4 \
+  --mimo-rank 2 \
+  --n-layers 1
 python3 -m fhe_native_mamba3.cli checkpoint-map-to-bundle \
   runs/train/checkpoint.pt \
   --output-dir runs/mapped-weight-bundle \
+  --rules-json runs/mapping-draft.json \
   --d-model 16 \
   --d-state 4 \
   --mimo-rank 2 \
