@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.11"
+__version__ = "0.2.12"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -28,6 +28,7 @@ _LAZY_IMPORTS = {
     "Stage0SweepConfig": ("fhe_native_mamba3.benchmarks.stage0_sweep", "Stage0SweepConfig"),
     "TrackingBackend": ("fhe_native_mamba3.backends.tracking", "TrackingBackend"),
     "WeightCalibration": ("fhe_native_mamba3.weight_encoding", "WeightCalibration"),
+    "WeightBundleManifest": ("fhe_native_mamba3.weight_bundle", "WeightBundleManifest"),
     "WeightEncodingConfig": ("fhe_native_mamba3.weight_encoding", "WeightEncodingConfig"),
     "backend_capability_matrix": (
         "fhe_native_mamba3.backends.capabilities",
@@ -40,6 +41,14 @@ _LAZY_IMPORTS = {
     "calibrate_weight_values": (
         "fhe_native_mamba3.weight_encoding",
         "calibrate_weight_values",
+    ),
+    "build_weight_bundle_manifest": (
+        "fhe_native_mamba3.weight_bundle",
+        "build_weight_bundle_manifest",
+    ),
+    "calibrate_weight_tensor": (
+        "fhe_native_mamba3.weight_encoding",
+        "calibrate_weight_tensor",
     ),
     "client_side_argmax": ("fhe_native_mamba3.decoding", "client_side_argmax"),
     "decoding_policies": ("fhe_native_mamba3.decoding", "decoding_policies"),
@@ -57,6 +66,8 @@ _LAZY_IMPORTS = {
     ),
     "run_stage0_mimo": ("fhe_native_mamba3.benchmarks.stage0_mimo", "run_stage0_mimo"),
     "run_stage0_sweep": ("fhe_native_mamba3.benchmarks.stage0_sweep", "run_stage0_sweep"),
+    "load_weight_bundle_model": ("fhe_native_mamba3.weight_bundle", "load_weight_bundle_model"),
+    "save_weight_bundle": ("fhe_native_mamba3.weight_bundle", "save_weight_bundle"),
 }
 
 __all__ = [
@@ -78,22 +89,27 @@ __all__ = [
     "Stage0MimoConfig",
     "Stage0SweepConfig",
     "TrackingBackend",
+    "WeightBundleManifest",
     "WeightCalibration",
     "WeightEncodingConfig",
     "__version__",
     "backend_capability_matrix",
     "build_rotation_inventory",
+    "build_weight_bundle_manifest",
+    "calibrate_weight_tensor",
     "calibrate_weight_values",
     "client_side_argmax",
     "decoding_policies",
     "estimate_block_cost",
     "estimate_integrated_cost",
     "greedy_bootstrap_schedule",
+    "load_weight_bundle_model",
     "make_demo_problem",
     "plaintext_static_recurrence",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
+    "save_weight_bundle",
 ]
 
 

@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.11`. Future changes should bump
+The project is currently at SemVer `0.2.12`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -158,6 +158,17 @@ python3 -m fhe_native_mamba3.cli rotation-inventory \
   --d-model 768 \
   --bootstrap-internal-key-count 0
 python3 -m fhe_native_mamba3.cli weight-calibrate --values 0.1,-2.0,3.0
+```
+
+Python code can also export the current prototype model into a fp32 weight
+bundle:
+
+```python
+from fhe_native_mamba3.model import FheMamba3Config, FheMamba3ForCausalLM
+from fhe_native_mamba3.weight_bundle import save_weight_bundle
+
+model = FheMamba3ForCausalLM(FheMamba3Config(scan_mode="ssd"))
+save_weight_bundle(model, "runs/weight-bundle")
 ```
 
 Probe FIDESlib readiness on a GPU node:

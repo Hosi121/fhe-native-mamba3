@@ -44,11 +44,49 @@ def calibrate_weight_values(
     if not flat:
         msg = "values must be non-empty"
         raise ValueError(msg)
+    max_abs = max(abs(value) for value in flat)
+    return _build_calibration(
+        value_count=len(flat),
+        max_abs=max_abs,
+        config=config,
+    )
+
+
+def calibrate_weight_tensor(
+    tensor: Any,
+    config: WeightEncodingConfig = WeightEncodingConfig(),
+) -> WeightCalibration:
+    """Calibrate a tensor without materializing all values as Python floats."""
+
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover - torch is a core dependency.
+        msg = "torch is required for tensor calibration"
+        raise RuntimeError(msg) from exc
+
+    if not isinstance(tensor, torch.Tensor):
+        return calibrate_weight_values(tensor, config)
+    if tensor.numel() == 0:
+        msg = "tensor must be non-empty"
+        raise ValueError(msg)
+    max_abs = float(tensor.detach().float().abs().max().cpu())
+    return _build_calibration(
+        value_count=int(tensor.numel()),
+        max_abs=max_abs,
+        config=config,
+    )
+
+
+def _build_calibration(
+    *,
+    value_count: int,
+    max_abs: float,
+    config: WeightEncodingConfig,
+) -> WeightCalibration:
     if config.target_max_abs <= 0:
         msg = "target_max_abs must be positive"
         raise ValueError(msg)
 
-    max_abs = max(abs(value) for value in flat)
     rescale_factor = 1.0 if max_abs <= config.target_max_abs else config.target_max_abs / max_abs
     dynamic_range_bits = 0 if max_abs == 0 else max(0, ceil(log2(max_abs / config.target_max_abs)))
     encode_scale_bits = min(
@@ -60,7 +98,7 @@ def calibrate_weight_values(
         "Apply rescale_factor before CKKS plaintext encoding when max_abs exceeds target.",
     ]
     return WeightCalibration(
-        value_count=len(flat),
+        value_count=value_count,
         max_abs=max_abs,
         encode_scale_bits=encode_scale_bits,
         rescale_factor=rescale_factor,
