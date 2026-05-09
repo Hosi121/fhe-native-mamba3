@@ -91,6 +91,13 @@ def load_checkpoint_state_dict(
 
 
 def _load_checkpoint(path: Path, map_location: str | torch.device) -> Any:
+    if path.suffix == ".safetensors":
+        try:
+            from safetensors.torch import load_file
+        except ImportError as exc:  # pragma: no cover - optional dependency guard.
+            msg = "loading .safetensors checkpoints requires the safetensors package"
+            raise ValueError(msg) from exc
+        return load_file(path, device=str(map_location))
     try:
         return torch.load(path, map_location=map_location, weights_only=True)
     except TypeError:  # pragma: no cover - compatibility with older torch.

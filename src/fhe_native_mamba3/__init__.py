@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.21"
+__version__ = "0.2.22"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -12,6 +12,10 @@ _LAZY_IMPORTS = {
     "WeightBundleRecurrenceProblem": (
         "fhe_native_mamba3.bundle_recurrence",
         "WeightBundleRecurrenceProblem",
+    ),
+    "MambaCheckpointAdapterReport": (
+        "fhe_native_mamba3.mamba_checkpoint",
+        "MambaCheckpointAdapterReport",
     ),
     "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
@@ -59,6 +63,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.bundle_recurrence",
         "build_weight_bundle_recurrence_problem",
     ),
+    "adapt_mamba_state_dict_to_model": (
+        "fhe_native_mamba3.mamba_checkpoint",
+        "adapt_mamba_state_dict_to_model",
+    ),
     "calibrate_weight_tensor": (
         "fhe_native_mamba3.weight_encoding",
         "calibrate_weight_tensor",
@@ -94,6 +102,10 @@ _LAZY_IMPORTS = {
         "save_weight_bundle_from_mapped_checkpoint",
     ),
     "save_mapping_draft": ("fhe_native_mamba3.state_dict_mapping", "save_mapping_draft"),
+    "save_mamba_checkpoint_bundle": (
+        "fhe_native_mamba3.mamba_checkpoint",
+        "save_mamba_checkpoint_bundle",
+    ),
 }
 
 __all__ = [
@@ -110,6 +122,7 @@ __all__ = [
     "FheMamba3Config",
     "FheMamba3ForCausalLM",
     "IntegratedCostEstimate",
+    "MambaCheckpointAdapterReport",
     "OpenFheCkksBackend",
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
@@ -125,6 +138,7 @@ __all__ = [
     "WeightCalibration",
     "WeightEncodingConfig",
     "__version__",
+    "adapt_mamba_state_dict_to_model",
     "backend_capability_matrix",
     "build_rotation_inventory",
     "build_weight_bundle_manifest",
@@ -146,6 +160,7 @@ __all__ = [
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
+    "save_mamba_checkpoint_bundle",
     "save_mapping_draft",
     "save_weight_bundle",
     "save_weight_bundle_from_checkpoint",

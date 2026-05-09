@@ -352,6 +352,159 @@ def checkpoint_map_to_bundle_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def mamba_checkpoint_to_bundle_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.mamba_checkpoint import save_mamba_checkpoint_bundle
+    from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
+
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    manifest, report = save_mamba_checkpoint_bundle(
+        source_state_dict,
+        args.output_dir,
+        d_state=args.d_state,
+        mimo_rank=args.mimo_rank,
+        n_layers=args.n_layers if args.n_layers > 0 else None,
+        max_seq_len=args.max_seq_len,
+        seed=args.seed,
+        encoding_config=WeightEncodingConfig(
+            scale_bits=args.scale_bits,
+            target_max_abs=args.target_max_abs,
+            source_dtype=args.source_dtype,
+        ),
+    )
+    payload = {
+        "version": __version__,
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "output_dir": args.output_dir,
+        "weight_bundle": manifest.to_json_dict(),
+        "summary": _weight_bundle_summary(manifest),
+        "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
+    from fhe_native_mamba3.backends.tracking import TrackingBackend
+    from fhe_native_mamba3.bundle_recurrence import build_weight_bundle_recurrence_problem
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.mamba_checkpoint import save_mamba_checkpoint_bundle
+    from fhe_native_mamba3.openfhe_backend import (
+        required_readout_rotations,
+        run_static_mimo_recurrence_with_backend,
+    )
+    from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
+
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    manifest, report = save_mamba_checkpoint_bundle(
+        source_state_dict,
+        args.output_dir,
+        d_state=args.d_state,
+        mimo_rank=args.mimo_rank,
+        n_layers=args.n_layers if args.n_layers > 0 else None,
+        max_seq_len=args.max_seq_len,
+        seed=args.seed,
+        encoding_config=WeightEncodingConfig(
+            scale_bits=args.scale_bits,
+            target_max_abs=args.target_max_abs,
+            source_dtype=args.source_dtype,
+        ),
+    )
+    extracted = build_weight_bundle_recurrence_problem(
+        args.output_dir,
+        token_ids=_parse_int_list(args.prompt),
+        layer_index=args.layer_index,
+    )
+    problem = extracted.problem
+    rotations = required_readout_rotations(
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        readout_strategy=args.readout_strategy,
+    )
+    if args.backend == "openfhe":
+        backend = OpenFheCkksBackend(
+            batch_size=problem.d_state * problem.mimo_rank,
+            multiplicative_depth=args.multiplicative_depth,
+            scaling_mod_size=args.scaling_mod_size,
+            rotations=rotations,
+        )
+    elif args.backend == "tracking":
+        backend = TrackingBackend(batch_size=problem.d_state * problem.mimo_rank)
+    else:
+        msg = f"unsupported backend: {args.backend}"
+        raise ValueError(msg)
+    result = run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=backend,
+        multiplicative_depth=args.multiplicative_depth,
+        readout_strategy=args.readout_strategy,
+        input_mode=args.input_mode,
+    )
+    stats = result.backend_stats
+    payload = {
+        "version": __version__,
+        "stage": "mamba-checkpoint-recurrence-smoke",
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "output_dir": args.output_dir,
+        "backend": stats["backend"],
+        "encrypted": stats["encrypted"],
+        "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
+        "weight_bundle": manifest.to_json_dict(),
+        "summary": _weight_bundle_summary(manifest),
+        "model": {
+            "layer_index": args.layer_index,
+            "seq_len": problem.seq_len,
+            "d_state": problem.d_state,
+            "mimo_rank": problem.mimo_rank,
+            "state_slots": problem.d_state * problem.mimo_rank,
+            "readout_strategy": args.readout_strategy,
+            "input_mode": args.input_mode,
+        },
+        "ckks": {
+            "multiplicative_depth": args.multiplicative_depth,
+            "scaling_mod_size": args.scaling_mod_size,
+            "ring_dimension": result.ring_dimension,
+            "batch_size": result.batch_size,
+            "rotations": list(result.rotations),
+        },
+        "latency_sec_per_token": result.latency_sec_per_token,
+        "max_abs_error": result.max_abs_error,
+        "operation_counts": {
+            "ct_ct_mul": stats["ct_ct_mul_count"],
+            "ct_pt_mul": stats["ct_pt_mul_count"],
+            "add": stats["add_count"],
+            "rotations": stats["rotation_count"],
+            "bootstraps": stats["bootstrap_count"],
+            "encrypt": stats["encrypt_count"],
+            "decrypt": stats["decrypt_count"],
+            "encode": stats["encode_count"],
+            "client_plaintext_public_weight_multiplies": (
+                result.client_plaintext_public_weight_multiplies
+            ),
+        },
+        "timing": {
+            "setup_seconds": stats["setup_seconds"],
+            "eval_seconds": stats["eval_seconds"],
+        },
+        "extracted_problem": extracted.to_json_dict(),
+        "decrypted_outputs": result.decrypted_outputs,
+        "expected_outputs": result.expected_outputs,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def profile_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -962,6 +1115,61 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint_bundle_parser.add_argument("--source-dtype", default="fp32")
     checkpoint_bundle_parser.add_argument("--max-statuses", type=int, default=50)
     checkpoint_bundle_parser.set_defaults(func=checkpoint_map_to_bundle_cmd)
+
+    mamba_bundle_parser = subparsers.add_parser(
+        "mamba-checkpoint-to-bundle",
+        help="adapt a common Mamba-family checkpoint into a prototype fp32 weight bundle",
+    )
+    mamba_bundle_parser.add_argument("checkpoint")
+    mamba_bundle_parser.add_argument("--output-dir", required=True)
+    mamba_bundle_parser.add_argument("--state-dict-key", default="")
+    mamba_bundle_parser.add_argument("--map-location", default="cpu")
+    mamba_bundle_parser.add_argument("--d-state", type=int, default=16)
+    mamba_bundle_parser.add_argument("--mimo-rank", type=int, default=8)
+    mamba_bundle_parser.add_argument("--n-layers", type=int, default=0)
+    mamba_bundle_parser.add_argument("--max-seq-len", type=int, default=256)
+    mamba_bundle_parser.add_argument("--seed", type=int, default=0)
+    mamba_bundle_parser.add_argument("--scale-bits", type=int, default=40)
+    mamba_bundle_parser.add_argument("--target-max-abs", type=float, default=1.0)
+    mamba_bundle_parser.add_argument("--source-dtype", default="fp32")
+    mamba_bundle_parser.add_argument("--max-statuses", type=int, default=50)
+    mamba_bundle_parser.set_defaults(func=mamba_checkpoint_to_bundle_cmd)
+
+    mamba_smoke_parser = subparsers.add_parser(
+        "mamba-checkpoint-recurrence-smoke",
+        help="adapt a Mamba-family checkpoint and run an encrypted recurrence smoke test",
+    )
+    mamba_smoke_parser.add_argument("checkpoint")
+    mamba_smoke_parser.add_argument("--output-dir", required=True)
+    mamba_smoke_parser.add_argument("--state-dict-key", default="")
+    mamba_smoke_parser.add_argument("--map-location", default="cpu")
+    mamba_smoke_parser.add_argument("--d-state", type=int, default=1)
+    mamba_smoke_parser.add_argument("--mimo-rank", type=int, default=1)
+    mamba_smoke_parser.add_argument("--n-layers", type=int, default=1)
+    mamba_smoke_parser.add_argument("--max-seq-len", type=int, default=8)
+    mamba_smoke_parser.add_argument("--seed", type=int, default=0)
+    mamba_smoke_parser.add_argument("--prompt", default="1")
+    mamba_smoke_parser.add_argument("--layer-index", type=int, default=0)
+    mamba_smoke_parser.add_argument(
+        "--backend", choices=["openfhe", "tracking"], default="tracking"
+    )
+    mamba_smoke_parser.add_argument(
+        "--readout-strategy",
+        choices=["slotwise", "rank-reduce", "rank-local"],
+        default="rank-local",
+    )
+    mamba_smoke_parser.add_argument(
+        "--input-mode",
+        choices=["server-bx", "client-update"],
+        default="client-update",
+    )
+    mamba_smoke_parser.add_argument("--multiplicative-depth", type=int, default=8)
+    mamba_smoke_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    mamba_smoke_parser.add_argument("--scale-bits", type=int, default=40)
+    mamba_smoke_parser.add_argument("--target-max-abs", type=float, default=1.0)
+    mamba_smoke_parser.add_argument("--source-dtype", default="fp32")
+    mamba_smoke_parser.add_argument("--max-statuses", type=int, default=50)
+    mamba_smoke_parser.set_defaults(func=mamba_checkpoint_recurrence_smoke_cmd)
 
     rotation_parser = subparsers.add_parser(
         "rotation-inventory",
