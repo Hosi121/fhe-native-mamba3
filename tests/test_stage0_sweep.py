@@ -10,12 +10,12 @@ def test_stage0_sweep_returns_summary() -> None:
             seq_lens=(2,),
             d_states=(2, 4),
             mimo_ranks=(2,),
-            readout_strategies=("slotwise", "rank-reduce"),
+            readout_strategies=("slotwise", "rank-reduce", "rank-local"),
             input_modes=("client-update", "server-bx"),
         )
     )
     assert result["stage"] == "0"
-    assert result["result_count"] == 8
+    assert result["result_count"] == 12
     assert result["summary"]["max_abs_error_max"] < 1e-12
-    assert result["summary"]["lowest_rotations"]["readout_strategy"] == "rank-reduce"
+    assert result["summary"]["lowest_rotations"]["readout_strategy"] == "rank-local"
     assert result["summary"]["lowest_ct_pt_mul"]["input_mode"] == "client-update"

@@ -12,20 +12,29 @@ inline auto state_slots(int d_state, int mimo_rank) -> int {
   return d_state * mimo_rank;
 }
 
-inline auto make_readout_rotations(int d_state, int mimo_rank) -> std::vector<int32_t> {
+inline auto make_readout_rotations(
+    int d_state,
+    int mimo_rank,
+    bool dense_output) -> std::vector<int32_t> {
   std::vector<int32_t> rotations;
   for (int step = 1; step < d_state; step *= 2) {
     rotations.push_back(static_cast<int32_t>(step));
   }
-  for (int rank = 1; rank < mimo_rank; ++rank) {
-    const int shift = rank * d_state - rank;
-    if (shift != 0) {
-      rotations.push_back(static_cast<int32_t>(shift));
+  if (dense_output) {
+    for (int rank = 1; rank < mimo_rank; ++rank) {
+      const int shift = rank * d_state - rank;
+      if (shift != 0) {
+        rotations.push_back(static_cast<int32_t>(shift));
+      }
     }
   }
   std::sort(rotations.begin(), rotations.end());
   rotations.erase(std::unique(rotations.begin(), rotations.end()), rotations.end());
   return rotations;
+}
+
+inline auto make_readout_rotations(int d_state, int mimo_rank) -> std::vector<int32_t> {
+  return make_readout_rotations(d_state, mimo_rank, true);
 }
 
 inline auto make_reduce_mask(int d_state, int mimo_rank, int step) -> std::vector<double> {
@@ -56,12 +65,24 @@ inline auto make_reduce_steps(int d_state) -> std::vector<int> {
   return steps;
 }
 
-inline auto make_scatter_shifts(int d_state, int mimo_rank) -> std::vector<int> {
+inline auto make_scatter_shifts(int d_state, int mimo_rank, bool dense_output) -> std::vector<int> {
   std::vector<int> shifts;
   for (int rank = 0; rank < mimo_rank; ++rank) {
-    shifts.push_back(rank * d_state - rank);
+    shifts.push_back(dense_output ? rank * d_state - rank : 0);
   }
   return shifts;
+}
+
+inline auto make_scatter_shifts(int d_state, int mimo_rank) -> std::vector<int> {
+  return make_scatter_shifts(d_state, mimo_rank, true);
+}
+
+inline auto make_output_slots(int d_state, int mimo_rank, bool dense_output) -> std::vector<int> {
+  std::vector<int> output_slots;
+  for (int rank = 0; rank < mimo_rank; ++rank) {
+    output_slots.push_back(dense_output ? rank : rank * d_state);
+  }
+  return output_slots;
 }
 
 inline void print_json_vector(std::ostream& out, const std::vector<double>& values, int length) {

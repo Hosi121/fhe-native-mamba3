@@ -38,8 +38,9 @@ ctest --test-dir build/stage0-layout-tests --output-on-failure
 These tests cover the pure pieces that are easiest to break:
 
 - rank-major slot layout
-- rank-reduce rotation-key inventory
+- rank-reduce and rank-local rotation-key inventory
 - reduce/scatter masks
+- dense and rank-local output slot mapping
 - JSON emission for nonfinite decrypted values
 
 ## GPU Integration Probes
@@ -61,5 +62,6 @@ These probes produce benchmark JSON and are recorded in
   a local C++ test runner.
 - `rank-reduce` readout is verified up to `mimo_rank=2` under the toy CKKS
   parameters; higher ranks are recorded as known failing configurations.
+  `rank-local` is the scatter-free candidate path for the next B200 sweep.
 - Bootstrap scheduling has symbolic tests only. End-to-end bootstrap placement
   still needs a dedicated integration probe.

@@ -15,7 +15,7 @@ from fhe_native_mamba3.openfhe_backend import (
 )
 
 Stage0Backend = Literal["openfhe", "tracking"]
-Stage0Readout = Literal["slotwise", "rank-reduce"]
+Stage0Readout = Literal["slotwise", "rank-reduce", "rank-local"]
 
 
 @dataclass(frozen=True)

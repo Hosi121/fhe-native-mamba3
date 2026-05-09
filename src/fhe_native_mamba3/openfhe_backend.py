@@ -10,7 +10,7 @@ from typing import Any, Literal
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
 
-ReadoutStrategy = str
+ReadoutStrategy = Literal["slotwise", "rank-reduce", "rank-local"]
 InputMode = Literal["server-bx", "client-update"]
 
 
@@ -134,9 +134,13 @@ def required_readout_rotations(
 ) -> tuple[int, ...]:
     """Rotations needed to reduce state slots into per-rank output slots."""
 
-    if readout_strategy == "rank-reduce":
+    if readout_strategy in {"rank-reduce", "rank-local"}:
         reduce_steps = {2**stage for stage in range(max(0, (d_state - 1).bit_length()))}
-        scatter_steps = {r * d_state - r for r in range(mimo_rank) if r * d_state - r != 0}
+        scatter_steps = (
+            set()
+            if readout_strategy == "rank-local"
+            else {r * d_state - r for r in range(mimo_rank) if r * d_state - r != 0}
+        )
         return tuple(sorted(reduce_steps | scatter_steps))
     if readout_strategy != "slotwise":
         msg = f"unsupported readout_strategy: {readout_strategy}"
@@ -154,6 +158,22 @@ def required_readout_rotations(
     )
 
 
+def readout_output_slots(
+    *,
+    d_state: int,
+    mimo_rank: int,
+    readout_strategy: ReadoutStrategy,
+) -> tuple[int, ...]:
+    """Slots that contain the per-rank readout after the selected layout."""
+
+    if readout_strategy in {"slotwise", "rank-reduce"}:
+        return tuple(range(mimo_rank))
+    if readout_strategy == "rank-local":
+        return tuple(rank * d_state for rank in range(mimo_rank))
+    msg = f"unsupported readout_strategy: {readout_strategy}"
+    raise ValueError(msg)
+
+
 def _readout_ciphertext(
     *,
     backend: FHEBackend,
@@ -162,12 +182,13 @@ def _readout_ciphertext(
     rank: int,
     readout_strategy: ReadoutStrategy,
 ) -> Any:
-    if readout_strategy == "rank-reduce":
+    if readout_strategy in {"rank-reduce", "rank-local"}:
         return _readout_rank_reduce(
             backend=backend,
             contrib_ct=contrib_ct,
             d_state=d_state,
             rank=rank,
+            dense_output=readout_strategy == "rank-reduce",
         )
     if readout_strategy != "slotwise":
         msg = f"unsupported readout_strategy: {readout_strategy}"
@@ -208,6 +229,7 @@ def _readout_rank_reduce(
     contrib_ct: Any,
     d_state: int,
     rank: int,
+    dense_output: bool,
 ) -> Any:
     reduced = contrib_ct
     stage = 0
@@ -225,7 +247,7 @@ def _readout_rank_reduce(
     output_ct = backend.encrypt([0.0] * backend.batch_size)
     for r in range(rank):
         source = r * d_state
-        target = r
+        target = r if dense_output else source
         mask = [0.0] * backend.batch_size
         mask[source] = 1.0
         term = backend.mul_plain(reduced, backend.encode(mask))
@@ -263,6 +285,11 @@ def run_static_mimo_recurrence_with_backend(
     c_pt = backend.encode(_flat_state_by_rank(problem.c, d_state, rank))
 
     decrypted_outputs: list[tuple[float, ...]] = []
+    output_slots = readout_output_slots(
+        d_state=d_state,
+        mimo_rank=rank,
+        readout_strategy=readout_strategy,
+    )
     client_plaintext_public_weight_multiplies = 0
     for rank_input in problem.rank_inputs:
         if input_mode == "server-bx":
@@ -283,7 +310,8 @@ def run_static_mimo_recurrence_with_backend(
             rank=rank,
             readout_strategy=readout_strategy,
         )
-        decrypted_outputs.append(backend.decrypt(output_ct, length=rank))
+        output_values = backend.decrypt(output_ct, length=backend.batch_size)
+        decrypted_outputs.append(tuple(output_values[slot] for slot in output_slots))
     eval_seconds = time.perf_counter() - started
     backend.stats().eval_seconds += eval_seconds
 

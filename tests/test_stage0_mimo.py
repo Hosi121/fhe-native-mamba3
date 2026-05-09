@@ -62,3 +62,31 @@ def test_stage0_rank_reduce_uses_fewer_rotations_for_larger_state() -> None:
     assert slotwise["max_abs_error"] < 1e-12
     assert rank_reduce["max_abs_error"] < 1e-12
     assert rank_reduce["operation_counts"]["rotations"] < slotwise["operation_counts"]["rotations"]
+
+
+def test_stage0_rank_local_keeps_outputs_in_rank_groups() -> None:
+    rank_reduce = run_stage0_mimo(
+        Stage0MimoConfig(
+            backend="tracking",
+            seq_len=2,
+            d_state=4,
+            mimo_rank=4,
+            readout_strategy="rank-reduce",
+        )
+    )
+    rank_local = run_stage0_mimo(
+        Stage0MimoConfig(
+            backend="tracking",
+            seq_len=2,
+            d_state=4,
+            mimo_rank=4,
+            readout_strategy="rank-local",
+        )
+    )
+    assert rank_local["max_abs_error"] < 1e-12
+    assert rank_local["ckks"]["rotations"] == [1, 2]
+    assert rank_reduce["ckks"]["rotations"] == [1, 2, 3, 6, 9]
+    assert rank_local["decrypted_outputs"] == rank_reduce["decrypted_outputs"]
+    assert (
+        rank_local["operation_counts"]["rotations"] < rank_reduce["operation_counts"]["rotations"]
+    )

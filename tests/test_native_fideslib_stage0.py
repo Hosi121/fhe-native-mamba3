@@ -20,9 +20,11 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "EvalMult(encrypted_inputs" in source_text
     assert '"client-update"' in source_text
     assert '"rank-reduce"' in source_text
+    assert '"rank-local"' in source_text
     assert "EvalRotateKeyGen" in source_text
     assert "rank_reduce_readout" in source_text
     assert "readout_rotation_keys" in source_text
+    assert "make_output_slots" in source_text
     assert "output_has_nonfinite" in source_text
     assert "client_plaintext_public_weight_multiplies" in source_text
     assert "level_alignment_unity_multiplies" in source_text

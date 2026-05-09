@@ -39,7 +39,11 @@ void test_readout_rotation_inventory() {
   require_equal<int32_t>(
       stage0::make_readout_rotations(4, 4),
       {1, 2, 3, 6, 9},
-      "readout rotations");
+      "dense readout rotations");
+  require_equal<int32_t>(
+      stage0::make_readout_rotations(4, 4, false),
+      {1, 2},
+      "rank-local readout rotations");
 }
 
 void test_reduce_masks_follow_rank_major_layout() {
@@ -58,7 +62,15 @@ void test_scatter_masks_and_shifts() {
       stage0::make_scatter_mask(4, 2, 1),
       {0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0},
       "scatter mask");
-  require_equal<int>(stage0::make_scatter_shifts(4, 4), {0, 3, 6, 9}, "scatter shifts");
+  require_equal<int>(stage0::make_scatter_shifts(4, 4), {0, 3, 6, 9}, "dense scatter shifts");
+  require_equal<int>(
+      stage0::make_scatter_shifts(4, 4, false),
+      {0, 0, 0, 0},
+      "rank-local scatter shifts");
+  require_equal<int>(
+      stage0::make_output_slots(4, 4, false),
+      {0, 4, 8, 12},
+      "rank-local output slots");
 }
 
 void test_nonfinite_values_are_valid_json_nulls() {

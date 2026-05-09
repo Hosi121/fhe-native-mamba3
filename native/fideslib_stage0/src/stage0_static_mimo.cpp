@@ -75,8 +75,9 @@ auto parse_args(int argc, char* argv[]) -> Config {
   if (config.input_mode != "server-bx" && config.input_mode != "client-update") {
     throw std::invalid_argument("input-mode must be server-bx or client-update");
   }
-  if (config.readout_mode != "none" && config.readout_mode != "rank-reduce") {
-    throw std::invalid_argument("readout-mode must be none or rank-reduce");
+  if (config.readout_mode != "none" && config.readout_mode != "rank-reduce" &&
+      config.readout_mode != "rank-local") {
+    throw std::invalid_argument("readout-mode must be none, rank-reduce, or rank-local");
   }
   return config;
 }
@@ -220,9 +221,11 @@ auto main(int argc, char* argv[]) -> int {
 
     auto keys = cc->KeyGen();
     cc->EvalMultKeyGen(keys.secretKey);
+    const bool has_readout = config.readout_mode != "none";
+    const bool dense_readout = config.readout_mode == "rank-reduce";
     const auto readout_rotation_keys =
-        config.readout_mode == "rank-reduce"
-            ? stage0::make_readout_rotations(config.d_state, config.mimo_rank)
+        has_readout
+            ? stage0::make_readout_rotations(config.d_state, config.mimo_rank, dense_readout)
             : std::vector<int32_t>{};
     if (!readout_rotation_keys.empty()) {
       cc->EvalRotateKeyGen(keys.secretKey, readout_rotation_keys);
@@ -240,7 +243,7 @@ auto main(int argc, char* argv[]) -> int {
     std::vector<Plaintext> readout_reduce_masks;
     std::vector<int> readout_scatter_shifts;
     std::vector<Plaintext> readout_scatter_masks;
-    if (config.readout_mode == "rank-reduce") {
+    if (has_readout) {
       for (int step = 1; step < config.d_state; step *= 2) {
         readout_reduce_steps.push_back(step);
         auto mask_plain = cc->MakeCKKSPackedPlaintext(
@@ -248,8 +251,9 @@ auto main(int argc, char* argv[]) -> int {
         mask_plain->SetLength(static_cast<size_t>(state_slots));
         readout_reduce_masks.push_back(mask_plain);
       }
+      readout_scatter_shifts =
+          stage0::make_scatter_shifts(config.d_state, config.mimo_rank, dense_readout);
       for (int rank = 0; rank < config.mimo_rank; ++rank) {
-        readout_scatter_shifts.push_back(rank * config.d_state - rank);
         auto mask_plain = cc->MakeCKKSPackedPlaintext(
             stage0::make_scatter_mask(config.d_state, config.mimo_rank, rank));
         mask_plain->SetLength(static_cast<size_t>(state_slots));
@@ -323,7 +327,7 @@ auto main(int argc, char* argv[]) -> int {
       align_levels(cc, decayed, update, unity_multiplies);
       h_cipher = cc->EvalAdd(decayed, update);
 
-      if (config.readout_mode == "rank-reduce") {
+      if (has_readout) {
         output_cipher = rank_reduce_readout(
             cc,
             h_cipher,
@@ -350,6 +354,8 @@ auto main(int argc, char* argv[]) -> int {
     h_decrypted.resize(static_cast<size_t>(state_slots));
 
     std::vector<double> output_decrypted(static_cast<size_t>(config.mimo_rank), 0.0);
+    const auto output_slots_by_rank =
+        stage0::make_output_slots(config.d_state, config.mimo_rank, dense_readout);
     double output_max_abs_error = 0.0;
     bool output_has_nonfinite = false;
     if (has_output_cipher) {
@@ -364,7 +370,8 @@ auto main(int argc, char* argv[]) -> int {
           expected += c_vector[static_cast<size_t>(slot)] * h_expected[static_cast<size_t>(slot)];
         }
         expected_output[static_cast<size_t>(rank)] = expected;
-        output_decrypted[static_cast<size_t>(rank)] = output_slots[static_cast<size_t>(rank)];
+        output_decrypted[static_cast<size_t>(rank)] =
+            output_slots[static_cast<size_t>(output_slots_by_rank[static_cast<size_t>(rank)])];
         if (!std::isfinite(output_decrypted[static_cast<size_t>(rank)])) {
           output_has_nonfinite = true;
           output_max_abs_error = 1e300;
@@ -459,6 +466,8 @@ auto main(int argc, char* argv[]) -> int {
     std::cout << "]";
     if (config.readout_mode == "rank-reduce") {
       std::cout << ",\"next_bottleneck\":\"rank-reduce readout rotations before SSD scan\"";
+    } else if (config.readout_mode == "rank-local") {
+      std::cout << ",\"next_bottleneck\":\"rank-local readout ct-pt multiplies before SSD scan\"";
     } else {
       std::cout << ",\"next_bottleneck\":\"ct-pt decay multiplies before packed readout/SSD scan\"";
     }

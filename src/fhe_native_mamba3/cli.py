@@ -172,7 +172,7 @@ def _parse_float_list(value: str) -> tuple[float, ...]:
 
 def _parse_readout_list(value: str) -> tuple[str, ...]:
     strategies = tuple(part for part in value.split(",") if part)
-    unsupported = sorted(set(strategies) - {"slotwise", "rank-reduce"})
+    unsupported = sorted(set(strategies) - {"slotwise", "rank-reduce", "rank-local"})
     if unsupported:
         msg = f"unsupported readout strategies: {unsupported}"
         raise argparse.ArgumentTypeError(msg)
@@ -473,7 +473,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage0_parser.add_argument("--scaling-mod-size", type=int, default=50)
     stage0_parser.add_argument(
         "--readout-strategy",
-        choices=["slotwise", "rank-reduce"],
+        choices=["slotwise", "rank-reduce", "rank-local"],
         default="slotwise",
     )
     stage0_parser.add_argument(
