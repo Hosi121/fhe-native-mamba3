@@ -33,7 +33,7 @@ section() {
 
 build_and_run_example() {
   local name="$1"
-  local source_dir="${FIDESLIB_DIR}/examples/${name}"
+  local source_dir="${2:-${FIDESLIB_DIR}/examples/${name}}"
   local build_dir="${source_dir}/build_b200"
 
   section "Configure ${name}"
@@ -63,4 +63,10 @@ test -f "${FIDESLIB_PREFIX}/lib/fideslib.a"
 test -f "${OPENFHE_PREFIX}/lib/OpenFHE/OpenFHEConfig.cmake"
 
 build_and_run_example simple
-build_and_run_example bootstrap
+
+BOOTSTRAP_SOURCE="${SLURM_TMPDIR:-/tmp}/fideslib_bootstrap_${SLURM_JOB_ID:-manual}"
+rm -rf "${BOOTSTRAP_SOURCE}"
+cp -a "${FIDESLIB_DIR}/examples/bootstrap" "${BOOTSTRAP_SOURCE}"
+perl -0pi -e 's/EvalBootstrapKeyGen\(keyPair,/EvalBootstrapKeyGen(keyPair.secretKey,/g' \
+  "${BOOTSTRAP_SOURCE}/src/bootstrap.cpp"
+build_and_run_example bootstrap "${BOOTSTRAP_SOURCE}"
