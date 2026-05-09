@@ -488,6 +488,43 @@ def weight_bundle_inspect_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def weight_bundle_eval_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.data import generate_modular_stream
+    from fhe_native_mamba3.weight_bundle import load_weight_bundle_model
+
+    device = torch.device(
+        args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
+    model, manifest = load_weight_bundle_model(args.bundle_dir, map_location="cpu")
+    model.to(device).eval()
+    input_ids, labels = generate_modular_stream(
+        batch_size=args.batch_size,
+        seq_len=args.seq_len,
+        vocab_size=model.config.vocab_size,
+        device=device,
+        seed=args.seed,
+    )
+    with torch.inference_mode():
+        output = model(input_ids, labels=labels)
+    logits = output["logits"]
+    next_tokens = logits[:, -1].argmax(dim=-1).detach().cpu().tolist()
+    payload = {
+        "version": __version__,
+        "bundle_dir": args.bundle_dir,
+        "device": str(device),
+        "weight_bundle": manifest.to_json_dict(),
+        "summary": _weight_bundle_summary(manifest),
+        "input_shape": list(input_ids.shape),
+        "logits_shape": list(logits.shape),
+        "loss": round(float(output["loss"].detach().cpu()), 6),
+        "client_side_next_tokens": [int(token) for token in next_tokens],
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def weight_bundle_from_checkpoint_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.weight_bundle import save_weight_bundle_from_checkpoint
     from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
@@ -835,6 +872,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bundle_inspect_parser.add_argument("bundle_dir")
     bundle_inspect_parser.set_defaults(func=weight_bundle_inspect_cmd)
+
+    bundle_eval_parser = subparsers.add_parser(
+        "weight-bundle-eval",
+        help="load a fp32 weight bundle and run a deterministic plaintext forward pass",
+    )
+    bundle_eval_parser.add_argument("bundle_dir")
+    bundle_eval_parser.add_argument("--batch-size", type=int, default=2)
+    bundle_eval_parser.add_argument("--seq-len", type=int, default=8)
+    bundle_eval_parser.add_argument("--seed", type=int, default=7)
+    bundle_eval_parser.add_argument("--device", default="")
+    bundle_eval_parser.set_defaults(func=weight_bundle_eval_cmd)
 
     bundle_checkpoint_parser = subparsers.add_parser(
         "weight-bundle-from-checkpoint",
