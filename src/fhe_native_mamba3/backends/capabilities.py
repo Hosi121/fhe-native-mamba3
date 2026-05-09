@@ -64,10 +64,10 @@ def known_backend_capabilities() -> tuple[BackendCapability, ...]:
             gpu=True,
             bootstrap=True,
             openfhe_interop=True,
-            status="probe-required",
+            status="verified-on-b200-stage0-native",
             notes=(
-                "Target backend for GPU bootstrap measurements.",
-                "Build and API checks must run on the target cluster before relying on it.",
+                "Built against patched OpenFHE 1.4.2 on high/kra-120 with CUDA 12.8.",
+                "GPU bootstrap smoke and repo-owned encrypted Stage 0 native MIMO recurrence pass.",
             ),
         ),
         BackendCapability(

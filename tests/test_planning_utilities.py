@@ -14,6 +14,7 @@ def test_backend_capability_matrix_marks_fideslib_as_gpu_bootstrap_candidate() -
     matrix = {entry["name"]: entry for entry in backend_capability_matrix()}
     assert matrix["fideslib-gpu"]["gpu"] is True
     assert matrix["fideslib-gpu"]["bootstrap"] is True
+    assert matrix["fideslib-gpu"]["status"] == "verified-on-b200-stage0-native"
     assert matrix["phantom-fhe"]["bootstrap"] is False
 
 

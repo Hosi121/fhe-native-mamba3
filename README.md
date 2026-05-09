@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.1`. Future changes should bump
+The project is currently at SemVer `0.2.2`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -147,6 +147,18 @@ Probe FIDESlib readiness on a GPU node:
 ```bash
 scripts/probe_fideslib.sh
 ```
+
+Build and run the repo-owned FIDESlib Stage 0 native kernel on `high`:
+
+```bash
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch slurm/fideslib_stage0.sbatch'
+```
+
+This compiles `native/fideslib_stage0`, encrypts per-token inputs and the
+recurrent state with FIDESlib/OpenFHE CKKS on the GPU, evaluates
+`h_t = a_t h_{t-1} + B_t x_t` with plaintext weights, decrypts only the final
+state, and prints benchmark JSON. The default run is a toy correctness probe,
+not the final `ringDim=2^16` Stage 0 model benchmark.
 
 ## Sync to `high`
 

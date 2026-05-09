@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.25.2)
+
+project(fideslib_stage0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_package(fideslib REQUIRED CONFIG)
+
+if(fideslib_FOUND)
+  message(STATUS "FOUND PACKAGE FIDESlib")
+  message(STATUS "FIDESlib Version: ${fideslib_VERSION}")
+  message(STATUS "FIDESlib header files location: ${FIDESLIB_INCLUDE_PATH}")
+  message(STATUS "FIDESlib lib files location: ${FIDESLIB_LIBRARIES_PATH}")
+  message(STATUS "FIDESlib C++ compiler: ${FIDESLIB_CXX_COMPILER}")
+else()
+  message(FATAL_ERROR "PACKAGE FIDESlib NOT FOUND")
+endif()
+
+set(CMAKE_CXX_COMPILER ${FIDESLIB_CXX_COMPILER})
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${FIDESLIB_CXX_FLAGS}")
+
+add_executable(stage0_static_mimo src/stage0_static_mimo.cpp)
+target_link_libraries(stage0_static_mimo PRIVATE fideslib::fideslib)
