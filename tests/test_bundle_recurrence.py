@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from fhe_native_mamba3.backends.tracking import TrackingBackend
@@ -48,3 +49,60 @@ def test_weight_bundle_recurrence_problem_uses_saved_static_weights(tmp_path) ->
 
     assert result.max_abs_error == 0
     assert result.backend_stats["backend"] == "tracking"
+
+
+def test_weight_bundle_recurrence_problem_rejects_invalid_token_ids(tmp_path) -> None:
+    config = FheMamba3Config(vocab_size=8, d_model=8, n_layers=1, d_state=2, mimo_rank=2)
+    save_weight_bundle(FheMamba3ForCausalLM(config), tmp_path)
+
+    with pytest.raises(ValueError, match="out of range"):
+        build_weight_bundle_recurrence_problem(tmp_path, token_ids=(1, 9))
+
+
+def test_weight_bundle_recurrence_problem_rejects_unsupported_layer_modes(tmp_path) -> None:
+    dynamic_config = FheMamba3Config(
+        vocab_size=8,
+        d_model=8,
+        n_layers=1,
+        d_state=2,
+        mimo_rank=2,
+        bc_mode="dynamic",
+    )
+    dynamic_dir = tmp_path / "dynamic"
+    save_weight_bundle(FheMamba3ForCausalLM(dynamic_config), dynamic_dir)
+
+    with pytest.raises(ValueError, match="static B/C"):
+        build_weight_bundle_recurrence_problem(dynamic_dir, token_ids=(1, 2))
+
+    state_rank_config = FheMamba3Config(
+        vocab_size=8,
+        d_model=8,
+        n_layers=1,
+        d_state=2,
+        mimo_rank=2,
+        decay_mode="state_rank",
+    )
+    state_rank_dir = tmp_path / "state-rank"
+    save_weight_bundle(FheMamba3ForCausalLM(state_rank_config), state_rank_dir)
+
+    with pytest.raises(ValueError, match="scalar decay"):
+        build_weight_bundle_recurrence_problem(state_rank_dir, token_ids=(1, 2))
+
+
+def test_weight_bundle_recurrence_problem_rejects_bad_layer_and_context(tmp_path) -> None:
+    config = FheMamba3Config(
+        vocab_size=8,
+        d_model=8,
+        n_layers=1,
+        d_state=2,
+        mimo_rank=2,
+        max_seq_len=3,
+    )
+    save_weight_bundle(FheMamba3ForCausalLM(config), tmp_path)
+
+    with pytest.raises(ValueError, match="token_ids must be non-empty"):
+        build_weight_bundle_recurrence_problem(tmp_path, token_ids=())
+    with pytest.raises(ValueError, match="layer_index"):
+        build_weight_bundle_recurrence_problem(tmp_path, token_ids=(1, 2), layer_index=1)
+    with pytest.raises(ValueError, match="max_seq_len"):
+        build_weight_bundle_recurrence_problem(tmp_path, token_ids=(1, 2, 3, 4))
