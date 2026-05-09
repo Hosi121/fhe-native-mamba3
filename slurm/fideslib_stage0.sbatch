@@ -21,7 +21,7 @@ export PATH="${CUDA_HOME}/bin:${PATH}"
 
 OPENFHE_PREFIX="${OPENFHE_PREFIX:-$HOME/fhe-native-mamba3-deps/openfhe-fides}"
 FIDESLIB_PREFIX="${FIDESLIB_PREFIX:-$HOME/fhe-native-mamba3-deps/fideslib-install}"
-BUILD_DIR="${BUILD_DIR:-${SLURM_SUBMIT_DIR}/build/fideslib_stage0}"
+BUILD_DIR="${BUILD_DIR:-${SLURM_SUBMIT_DIR}/build/fideslib_stage0_${SLURM_JOB_ID:-manual}}"
 BUILD_JOBS="${BUILD_JOBS:-${SLURM_CPUS_PER_TASK:-8}}"
 
 export LD_LIBRARY_PATH="${FIDESLIB_PREFIX}/lib:${OPENFHE_PREFIX}/lib:${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
@@ -60,4 +60,6 @@ section "Run"
   --multiplicative-depth "${MULTIPLICATIVE_DEPTH:-24}" \
   --scaling-mod-size "${SCALING_MOD_SIZE:-59}" \
   --first-mod-size "${FIRST_MOD_SIZE:-60}" \
-  --ring-dim "${RING_DIM:-4096}"
+  --ring-dim "${RING_DIM:-4096}" \
+  --input-mode "${INPUT_MODE:-client-update}" \
+  --update-level-offset "${UPDATE_LEVEL_OFFSET:-0}"
