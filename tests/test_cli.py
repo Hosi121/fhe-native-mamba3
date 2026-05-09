@@ -26,7 +26,7 @@ def test_inspect_cli_outputs_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.12"
+    assert payload["version"] == "0.2.13"
     assert payload["cost_per_block"]["seq_len"] == 8
 
 
@@ -57,7 +57,7 @@ def test_cost_model_cli_outputs_ckks_payload() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.12"
+    assert payload["version"] == "0.2.13"
     assert payload["integrated_cost"]["effective_window"] == 4
     assert payload["integrated_cost"]["head_packing"]["heads_per_ciphertext"] >= 1
     assert payload["integrated_cost"]["block_cost"]["rotations"] == 2
@@ -116,7 +116,7 @@ def test_stage0_tracking_cli_outputs_benchmark_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.12"
+    assert payload["version"] == "0.2.13"
     assert payload["stage"] == "0"
     assert payload["backend"] == "tracking"
     assert payload["encrypted"] is False
@@ -147,7 +147,7 @@ def test_stage0_sweep_cli_outputs_summary() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.12"
+    assert payload["version"] == "0.2.13"
     assert payload["result_count"] == 4
     assert payload["summary"]["max_abs_error_max"] < 1e-12
 
@@ -209,7 +209,7 @@ def test_profile_synthetic_cli_outputs_profile() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.12"
+    assert payload["version"] == "0.2.13"
     assert payload["profile"]["seq_len"] == 8
     assert payload["profile"]["blocks"][0]["lambda_by_beta"]["0.5"] >= 0.0
 
@@ -237,4 +237,62 @@ def test_planning_cli_commands_output_json() -> None:
             text=True,
         )
         payload = json.loads(completed.stdout)
-        assert payload["version"] == "0.2.12"
+        assert payload["version"] == "0.2.13"
+
+
+def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    export_completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fhe_native_mamba3.cli",
+            "weight-bundle-export",
+            "--output-dir",
+            str(bundle_dir),
+            "--vocab-size",
+            "16",
+            "--d-model",
+            "8",
+            "--n-layers",
+            "1",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "2",
+            "--max-seq-len",
+            "8",
+            "--scan-mode",
+            "ssd",
+            "--effective-window",
+            "8",
+            "--seed",
+            "13",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    export_payload = json.loads(export_completed.stdout)
+    assert export_payload["version"] == "0.2.13"
+    assert export_payload["summary"]["tensor_count"] > 0
+    assert export_payload["summary"]["parameter_count"] > 0
+    assert (bundle_dir / "manifest.json").exists()
+    assert (bundle_dir / "weights.pt").exists()
+
+    inspect_completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fhe_native_mamba3.cli",
+            "weight-bundle-inspect",
+            str(bundle_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    inspect_payload = json.loads(inspect_completed.stdout)
+    assert inspect_payload["version"] == "0.2.13"
+    assert inspect_payload["summary"] == export_payload["summary"]
+    assert inspect_payload["weight_bundle"]["model_config"]["scan_mode"] == "ssd"

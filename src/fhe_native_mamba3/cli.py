@@ -324,6 +324,63 @@ def weight_calibrate_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def weight_bundle_export_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.model import FheMamba3ForCausalLM
+    from fhe_native_mamba3.weight_bundle import save_weight_bundle
+    from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
+
+    torch.manual_seed(args.seed)
+    config = _config_from_args(args)
+    model = FheMamba3ForCausalLM(config)
+    manifest = save_weight_bundle(
+        model,
+        args.output_dir,
+        WeightEncodingConfig(
+            scale_bits=args.scale_bits,
+            target_max_abs=args.target_max_abs,
+            source_dtype=args.source_dtype,
+        ),
+    )
+    payload = {
+        "version": __version__,
+        "output_dir": args.output_dir,
+        "weight_bundle": manifest.to_json_dict(),
+        "summary": _weight_bundle_summary(manifest),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def weight_bundle_inspect_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.weight_bundle import load_weight_bundle_manifest
+
+    manifest = load_weight_bundle_manifest(args.bundle_dir)
+    payload = {
+        "version": __version__,
+        "bundle_dir": args.bundle_dir,
+        "weight_bundle": manifest.to_json_dict(),
+        "summary": _weight_bundle_summary(manifest),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def _weight_bundle_summary(manifest: Any) -> dict[str, Any]:
+    scale_bits = tuple(tensor.calibration.encode_scale_bits for tensor in manifest.tensors)
+    max_abs = tuple(tensor.calibration.max_abs for tensor in manifest.tensors)
+    return {
+        "format_version": manifest.format_version,
+        "tensor_count": manifest.tensor_count,
+        "parameter_count": manifest.parameter_count,
+        "weights_file": manifest.weights_file,
+        "min_encode_scale_bits": min(scale_bits) if scale_bits else 0,
+        "max_encode_scale_bits": max(scale_bits) if scale_bits else 0,
+        "max_abs": max(max_abs) if max_abs else 0.0,
+    }
+
+
 def train_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -562,6 +619,25 @@ def build_parser() -> argparse.ArgumentParser:
     weight_parser.add_argument("--target-max-abs", type=float, default=1.0)
     weight_parser.add_argument("--source-dtype", default="fp32")
     weight_parser.set_defaults(func=weight_calibrate_cmd)
+
+    bundle_export_parser = subparsers.add_parser(
+        "weight-bundle-export",
+        help="export a prototype fp32 weight bundle and calibration manifest",
+    )
+    _add_model_args(bundle_export_parser)
+    bundle_export_parser.add_argument("--output-dir", required=True)
+    bundle_export_parser.add_argument("--seed", type=int, default=7)
+    bundle_export_parser.add_argument("--scale-bits", type=int, default=40)
+    bundle_export_parser.add_argument("--target-max-abs", type=float, default=1.0)
+    bundle_export_parser.add_argument("--source-dtype", default="fp32")
+    bundle_export_parser.set_defaults(func=weight_bundle_export_cmd)
+
+    bundle_inspect_parser = subparsers.add_parser(
+        "weight-bundle-inspect",
+        help="inspect a saved fp32 weight bundle manifest",
+    )
+    bundle_inspect_parser.add_argument("bundle_dir")
+    bundle_inspect_parser.set_defaults(func=weight_bundle_inspect_cmd)
 
     train_parser = subparsers.add_parser("train-synthetic", help="train on a tiny synthetic task")
     _add_model_args(train_parser)
