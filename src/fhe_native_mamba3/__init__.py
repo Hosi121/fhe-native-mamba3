@@ -1,12 +1,13 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
     "CkksConfig": ("fhe_native_mamba3.ckks", "CkksConfig"),
     "CkksTrace": ("fhe_native_mamba3.ckks", "CkksTrace"),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
+    "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
     "FheCostEstimate": ("fhe_native_mamba3.cost", "FheCostEstimate"),
     "FheMamba3Block": ("fhe_native_mamba3.model", "FheMamba3Block"),
@@ -26,6 +27,22 @@ _LAZY_IMPORTS = {
     "Stage0MimoConfig": ("fhe_native_mamba3.benchmarks.stage0_mimo", "Stage0MimoConfig"),
     "Stage0SweepConfig": ("fhe_native_mamba3.benchmarks.stage0_sweep", "Stage0SweepConfig"),
     "TrackingBackend": ("fhe_native_mamba3.backends.tracking", "TrackingBackend"),
+    "WeightCalibration": ("fhe_native_mamba3.weight_encoding", "WeightCalibration"),
+    "WeightEncodingConfig": ("fhe_native_mamba3.weight_encoding", "WeightEncodingConfig"),
+    "backend_capability_matrix": (
+        "fhe_native_mamba3.backends.capabilities",
+        "backend_capability_matrix",
+    ),
+    "build_rotation_inventory": (
+        "fhe_native_mamba3.rotation_inventory",
+        "build_rotation_inventory",
+    ),
+    "calibrate_weight_values": (
+        "fhe_native_mamba3.weight_encoding",
+        "calibrate_weight_values",
+    ),
+    "client_side_argmax": ("fhe_native_mamba3.decoding", "client_side_argmax"),
+    "decoding_policies": ("fhe_native_mamba3.decoding", "decoding_policies"),
     "estimate_block_cost": ("fhe_native_mamba3.cost", "estimate_block_cost"),
     "estimate_integrated_cost": ("fhe_native_mamba3.cost", "estimate_integrated_cost"),
     "greedy_bootstrap_schedule": ("fhe_native_mamba3.cost", "greedy_bootstrap_schedule"),
@@ -43,6 +60,7 @@ _LAZY_IMPORTS = {
 }
 
 __all__ = [
+    "BackendCapability",
     "BackendStats",
     "BootstrapSchedule",
     "CkksConfig",
@@ -60,7 +78,14 @@ __all__ = [
     "Stage0MimoConfig",
     "Stage0SweepConfig",
     "TrackingBackend",
+    "WeightCalibration",
+    "WeightEncodingConfig",
     "__version__",
+    "backend_capability_matrix",
+    "build_rotation_inventory",
+    "calibrate_weight_values",
+    "client_side_argmax",
+    "decoding_policies",
     "estimate_block_cost",
     "estimate_integrated_cost",
     "greedy_bootstrap_schedule",

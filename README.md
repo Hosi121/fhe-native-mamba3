@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.0`. Future changes should bump
+The project is currently at SemVer `0.2.1`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -127,6 +127,25 @@ python3 -m fhe_native_mamba3.cli stage0-sweep \
   --d-states 2,4,8 \
   --mimo-ranks 2,4 \
   --output-jsonl runs/stage0_tracking.jsonl
+```
+
+Inspect planning utilities:
+
+```bash
+python3 -m fhe_native_mamba3.cli backend-capabilities
+python3 -m fhe_native_mamba3.cli decoding-policy
+python3 -m fhe_native_mamba3.cli rotation-inventory \
+  --scan-len 256 \
+  --d-state 64 \
+  --d-model 768 \
+  --bootstrap-internal-key-count 0
+python3 -m fhe_native_mamba3.cli weight-calibrate --values 0.1,-2.0,3.0
+```
+
+Probe FIDESlib readiness on a GPU node:
+
+```bash
+scripts/probe_fideslib.sh
 ```
 
 ## Sync to `high`

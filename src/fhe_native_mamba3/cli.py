@@ -200,6 +200,74 @@ def stage0_sweep_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def backend_capabilities_cmd(_args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.backends.capabilities import backend_capability_matrix
+
+    payload = {
+        "version": __version__,
+        "backends": backend_capability_matrix(),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def rotation_inventory_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.rotation_inventory import build_rotation_inventory
+
+    inventory = build_rotation_inventory(
+        scan_len=args.scan_len,
+        d_state=args.d_state,
+        d_model=args.d_model,
+        head_pack_sizes=args.head_pack_sizes,
+        matmul_diagonal_stride=args.matmul_diagonal_stride,
+        bootstrap_internal_key_count=args.bootstrap_internal_key_count,
+        key_size_mb=args.key_size_mb,
+    )
+    payload = {
+        "version": __version__,
+        "rotation_inventory": inventory.to_json_dict(),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def decoding_policy_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.decoding import decoding_policies, get_decoding_policy
+
+    policies = decoding_policies() if args.mode == "all" else (get_decoding_policy(args.mode),)
+    payload = {
+        "version": __version__,
+        "decoding_policies": [policy.to_json_dict() for policy in policies],
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def weight_calibrate_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.weight_encoding import (
+        WeightEncodingConfig,
+        apply_weight_rescale,
+        calibrate_weight_values,
+    )
+
+    values = tuple(float(part) for part in args.values.split(",") if part)
+    calibration = calibrate_weight_values(
+        values,
+        WeightEncodingConfig(
+            scale_bits=args.scale_bits,
+            target_max_abs=args.target_max_abs,
+            source_dtype=args.source_dtype,
+        ),
+    )
+    payload = {
+        "version": __version__,
+        "calibration": calibration.to_json_dict(),
+        "rescaled_values": apply_weight_rescale(values, calibration),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def train_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -371,6 +439,46 @@ def build_parser() -> argparse.ArgumentParser:
     sweep_parser.add_argument("--scaling-mod-size", type=int, default=50)
     sweep_parser.add_argument("--output-jsonl", default="")
     sweep_parser.set_defaults(func=stage0_sweep_cmd)
+
+    capabilities_parser = subparsers.add_parser(
+        "backend-capabilities",
+        help="print backend capability matrix",
+    )
+    capabilities_parser.set_defaults(func=backend_capabilities_cmd)
+
+    rotation_parser = subparsers.add_parser(
+        "rotation-inventory",
+        help="estimate rotation-key inventory and memory",
+    )
+    rotation_parser.add_argument("--scan-len", type=int, default=256)
+    rotation_parser.add_argument("--d-state", type=int, default=64)
+    rotation_parser.add_argument("--d-model", type=int, default=768)
+    rotation_parser.add_argument("--head-pack-sizes", type=_parse_int_list, default=(4, 8, 16, 32))
+    rotation_parser.add_argument("--matmul-diagonal-stride", type=int, default=1)
+    rotation_parser.add_argument("--bootstrap-internal-key-count", type=int, default=0)
+    rotation_parser.add_argument("--key-size-mb", type=float, default=128.0)
+    rotation_parser.set_defaults(func=rotation_inventory_cmd)
+
+    decoding_parser = subparsers.add_parser(
+        "decoding-policy",
+        help="print encrypted decoding policy choices",
+    )
+    decoding_parser.add_argument(
+        "--mode",
+        choices=["all", "client-side", "encrypted-argmax", "scoring"],
+        default="all",
+    )
+    decoding_parser.set_defaults(func=decoding_policy_cmd)
+
+    weight_parser = subparsers.add_parser(
+        "weight-calibrate",
+        help="calibrate fp32 master weights for CKKS plaintext encoding",
+    )
+    weight_parser.add_argument("--values", required=True)
+    weight_parser.add_argument("--scale-bits", type=int, default=40)
+    weight_parser.add_argument("--target-max-abs", type=float, default=1.0)
+    weight_parser.add_argument("--source-dtype", default="fp32")
+    weight_parser.set_defaults(func=weight_calibrate_cmd)
 
     train_parser = subparsers.add_parser("train-synthetic", help="train on a tiny synthetic task")
     _add_model_args(train_parser)
