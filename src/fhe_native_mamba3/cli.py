@@ -799,31 +799,54 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
 def _resolve_recurrence_smoke_scales(
     args: argparse.Namespace,
 ) -> tuple[float, float, dict[str, Any] | None]:
-    state_scale = args.state_scale if args.state_scale is not None else 1.0
-    output_scale = args.output_scale if args.output_scale is not None else 1.0
-    if not args.scale_plan_json:
-        return state_scale, output_scale, None
+    return _resolve_recurrence_layer_scales(
+        args.layer_index,
+        state_scale=args.state_scale,
+        output_scale=args.output_scale,
+        scale_plan=_load_recurrence_scale_plan(args.scale_plan_json),
+    )
 
-    scale_plan_path = Path(args.scale_plan_json)
+
+def _load_recurrence_scale_plan(
+    scale_plan_json: str,
+) -> tuple[str, dict[str, Any]] | None:
+    if not scale_plan_json:
+        return None
+    scale_plan_path = Path(scale_plan_json)
     payload = json.loads(scale_plan_path.read_text(encoding="utf-8"))
-    scale_plan_payload = payload.get("scale_plan", payload)
-    layer_plan = _find_scale_plan_layer(scale_plan_payload, args.layer_index)
-    if args.state_scale is None:
-        state_scale = float(layer_plan["state_scale_to_target"])
-    if args.output_scale is None:
-        output_scale = float(layer_plan["output_scale"])
+    return str(scale_plan_path), payload.get("scale_plan", payload)
+
+
+def _resolve_recurrence_layer_scales(
+    layer_index: int,
+    *,
+    state_scale: float | None,
+    output_scale: float | None,
+    scale_plan: tuple[str, dict[str, Any]] | None,
+) -> tuple[float, float, dict[str, Any] | None]:
+    resolved_state_scale = state_scale if state_scale is not None else 1.0
+    resolved_output_scale = output_scale if output_scale is not None else 1.0
+    if scale_plan is None:
+        return resolved_state_scale, resolved_output_scale, None
+
+    scale_plan_path, scale_plan_payload = scale_plan
+    layer_plan = _find_scale_plan_layer(scale_plan_payload, layer_index)
+    if state_scale is None:
+        resolved_state_scale = float(layer_plan["state_scale_to_target"])
+    if output_scale is None:
+        resolved_output_scale = float(layer_plan["output_scale"])
     return (
-        state_scale,
-        output_scale,
+        resolved_state_scale,
+        resolved_output_scale,
         {
-            "path": str(scale_plan_path),
+            "path": scale_plan_path,
             "layer_index": int(layer_plan["layer_index"]),
             "state_scale_to_target": float(layer_plan["state_scale_to_target"]),
             "output_scale": float(layer_plan["output_scale"]),
-            "used_state_scale": state_scale,
-            "used_output_scale": output_scale,
-            "cli_state_scale_override": args.state_scale is not None,
-            "cli_output_scale_override": args.output_scale is not None,
+            "used_state_scale": resolved_state_scale,
+            "used_output_scale": resolved_output_scale,
+            "cli_state_scale_override": state_scale is not None,
+            "cli_output_scale_override": output_scale is not None,
         },
     )
 
@@ -853,10 +876,14 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
         plan_mamba_checkpoint,
         save_mamba_checkpoint_bundle,
     )
-    from fhe_native_mamba3.mamba_reference import build_mamba_source_recurrence_problem
+    from fhe_native_mamba3.mamba_reference import (
+        build_mamba_source_recurrence_problem,
+        run_mamba_source_layer,
+    )
     from fhe_native_mamba3.openfhe_backend import (
         required_readout_rotations,
         run_static_mimo_recurrence_with_backend,
+        scale_recurrence_state_and_output,
     )
     from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
 
@@ -882,6 +909,7 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
     if max(seq_lens) > args.max_seq_len:
         msg = "max seq_len exceeds max_seq_len"
         raise ValueError(msg)
+    scale_plan = _load_recurrence_scale_plan(args.scale_plan_json)
 
     sources = args.recurrence_sources
     token_seed = _parse_int_list(args.prompt)
@@ -923,7 +951,9 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
         token_ids = _tokens_for_seq_len(token_seed, seq_len)
         with torch.inference_mode():
             input_ids = torch.tensor([token_ids], dtype=torch.long)
-            embedded = model.embed(input_ids) + model.pos[:seq_len].unsqueeze(0)
+            embedded = model.embed(input_ids)
+            if args.input_propagation == "prototype":
+                embedded = embedded + model.pos[:seq_len].unsqueeze(0)
 
         for layer_index in layer_indices:
             for source in sources:
@@ -938,8 +968,17 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
                 else:
                     with torch.inference_mode():
                         x = embedded
-                        for block in model.blocks[:layer_index]:
-                            x = block(x)
+                        for block_index, block in enumerate(model.blocks[:layer_index]):
+                            if args.input_propagation == "source":
+                                x = run_mamba_source_layer(
+                                    source_state_dict,
+                                    x,
+                                    layer_index=block_index,
+                                    d_state=d_state,
+                                    mimo_rank=mimo_rank,
+                                )
+                            else:
+                                x = block(x)
                         problem = build_mamba_source_recurrence_problem(
                             source_state_dict,
                             x,
@@ -955,7 +994,17 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
                         manifest=manifest,
                     )
                     input_mode = args.source_dynamic_input_mode
-                problem = extracted.problem
+                state_scale, output_scale, scale_plan_layer = _resolve_recurrence_layer_scales(
+                    layer_index,
+                    state_scale=args.state_scale,
+                    output_scale=args.output_scale,
+                    scale_plan=scale_plan,
+                )
+                problem = scale_recurrence_state_and_output(
+                    extracted.problem,
+                    state_scale=state_scale,
+                    output_scale=output_scale,
+                )
                 result = run_static_mimo_recurrence_with_backend(
                     problem,
                     backend=TrackingBackend(batch_size=problem.d_state * problem.mimo_rank),
@@ -971,7 +1020,14 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
                         "seq_len": seq_len,
                         "token_ids": list(token_ids),
                         "input_mode": input_mode,
+                        "input_propagation": (
+                            args.input_propagation if source == "source-dynamic" else None
+                        ),
                         "readout_strategy": args.readout_strategy,
+                        "state_scale": state_scale,
+                        "output_scale": output_scale,
+                        "c_scale_from_state": output_scale / state_scale,
+                        "scale_plan": scale_plan_layer,
                         "max_abs_error": result.max_abs_error,
                         "latency_sec_per_token": result.latency_sec_per_token,
                         "operation_counts": {
@@ -1016,6 +1072,10 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
             "layer_indices": list(layer_indices),
             "recurrence_sources": list(sources),
             "readout_strategy": args.readout_strategy,
+            "input_propagation": args.input_propagation,
+            "scale_plan_json": args.scale_plan_json,
+            "state_scale_override": args.state_scale,
+            "output_scale_override": args.output_scale,
         },
         "summary": _recurrence_sweep_summary(rows),
         "rows": rows,
@@ -2442,7 +2502,30 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["server-bx", "client-update", "encrypted-dynamic-bc"],
         default="encrypted-dynamic-bc",
     )
+    mamba_sweep_parser.add_argument(
+        "--input-propagation",
+        choices=["source", "prototype"],
+        default="source",
+        help="propagate source-dynamic layer inputs with source-style layers or prototype blocks",
+    )
     mamba_sweep_parser.add_argument("--multiplicative-depth", type=int, default=8)
+    mamba_sweep_parser.add_argument(
+        "--state-scale",
+        type=float,
+        default=None,
+        help="optional global recurrence state gauge override for every sweep row",
+    )
+    mamba_sweep_parser.add_argument(
+        "--output-scale",
+        type=float,
+        default=None,
+        help="optional global recurrence output scale override for every sweep row",
+    )
+    mamba_sweep_parser.add_argument(
+        "--scale-plan-json",
+        default="",
+        help="optional source-diagnostics-scale-plan JSON to supply per-layer scales",
+    )
     mamba_sweep_parser.add_argument("--scale-bits", type=int, default=40)
     mamba_sweep_parser.add_argument("--target-max-abs", type=float, default=1.0)
     mamba_sweep_parser.add_argument("--source-dtype", default="fp32")
