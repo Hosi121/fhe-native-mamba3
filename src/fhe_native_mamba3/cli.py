@@ -695,10 +695,11 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     else:
         msg = f"unsupported recurrence_source: {args.recurrence_source}"
         raise ValueError(msg)
+    state_scale, output_scale, scale_plan = _resolve_recurrence_smoke_scales(args)
     problem = scale_recurrence_state_and_output(
         extracted.problem,
-        state_scale=args.state_scale,
-        output_scale=args.output_scale,
+        state_scale=state_scale,
+        output_scale=output_scale,
     )
     rotations = required_readout_rotations(
         d_state=problem.d_state,
@@ -751,9 +752,10 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             "input_mode": args.input_mode,
             "recurrence_source": args.recurrence_source,
             "input_propagation": args.input_propagation,
-            "state_scale": args.state_scale,
-            "output_scale": args.output_scale,
-            "c_scale_from_state": args.output_scale / args.state_scale,
+            "state_scale": state_scale,
+            "output_scale": output_scale,
+            "c_scale_from_state": output_scale / state_scale,
+            "scale_plan": scale_plan,
         },
         "ckks": {
             "multiplicative_depth": args.multiplicative_depth,
@@ -792,6 +794,49 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     )
     _emit_json_payload(payload)
     return 0
+
+
+def _resolve_recurrence_smoke_scales(
+    args: argparse.Namespace,
+) -> tuple[float, float, dict[str, Any] | None]:
+    state_scale = args.state_scale if args.state_scale is not None else 1.0
+    output_scale = args.output_scale if args.output_scale is not None else 1.0
+    if not args.scale_plan_json:
+        return state_scale, output_scale, None
+
+    scale_plan_path = Path(args.scale_plan_json)
+    payload = json.loads(scale_plan_path.read_text(encoding="utf-8"))
+    scale_plan_payload = payload.get("scale_plan", payload)
+    layer_plan = _find_scale_plan_layer(scale_plan_payload, args.layer_index)
+    if args.state_scale is None:
+        state_scale = float(layer_plan["state_scale_to_target"])
+    if args.output_scale is None:
+        output_scale = float(layer_plan["output_scale"])
+    return (
+        state_scale,
+        output_scale,
+        {
+            "path": str(scale_plan_path),
+            "layer_index": int(layer_plan["layer_index"]),
+            "state_scale_to_target": float(layer_plan["state_scale_to_target"]),
+            "output_scale": float(layer_plan["output_scale"]),
+            "used_state_scale": state_scale,
+            "used_output_scale": output_scale,
+            "cli_state_scale_override": args.state_scale is not None,
+            "cli_output_scale_override": args.output_scale is not None,
+        },
+    )
+
+
+def _find_scale_plan_layer(
+    scale_plan_payload: dict[str, Any],
+    layer_index: int,
+) -> dict[str, Any]:
+    for layer in scale_plan_payload.get("layers", []):
+        if int(layer["layer_index"]) == layer_index:
+            return layer
+    msg = f"scale plan does not contain layer_index={layer_index}"
+    raise ValueError(msg)
 
 
 def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
@@ -2319,14 +2364,19 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_smoke_parser.add_argument(
         "--state-scale",
         type=float,
-        default=1.0,
+        default=None,
         help="apply an equivalent h' = state_scale * h recurrence gauge transform",
     )
     mamba_smoke_parser.add_argument(
         "--output-scale",
         type=float,
-        default=1.0,
+        default=None,
         help="scale the recurrence readout as y' = output_scale * y",
+    )
+    mamba_smoke_parser.add_argument(
+        "--scale-plan-json",
+        default="",
+        help="optional source-diagnostics-scale-plan JSON to supply layer scales",
     )
     mamba_smoke_parser.add_argument("--scale-bits", type=int, default=40)
     mamba_smoke_parser.add_argument("--target-max-abs", type=float, default=1.0)
