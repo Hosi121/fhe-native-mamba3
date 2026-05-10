@@ -7,15 +7,15 @@ import sys
 import torch
 
 
-def test_checkpoint_client_decode_smoke_script_runs(tmp_path) -> None:
+def test_checkpoint_source_profile_script_runs(tmp_path) -> None:
     checkpoint_path = tmp_path / "mamba.pt"
-    output_json = tmp_path / "decode.json"
+    output_json = tmp_path / "profile.json"
     torch.save({"model": _tiny_hf_mamba_state_dict()}, checkpoint_path)
 
     completed = subprocess.run(
         [
             sys.executable,
-            "scripts/run_checkpoint_client_decode_smoke.py",
+            "scripts/run_checkpoint_source_profile.py",
             str(checkpoint_path),
             "--d-state",
             "2",
@@ -25,8 +25,8 @@ def test_checkpoint_client_decode_smoke_script_runs(tmp_path) -> None:
             "1",
             "--prompt",
             "1,2",
-            "--steps",
-            "1",
+            "--position-buckets",
+            "2",
             "--output-json",
             str(output_json),
         ],
@@ -37,12 +37,11 @@ def test_checkpoint_client_decode_smoke_script_runs(tmp_path) -> None:
 
     payload = json.loads(completed.stdout)
     assert payload["version"] == "0.2.81"
-    assert payload["stage"] == "mamba-checkpoint-client-decode-smoke"
+    assert payload["stage"] == "mamba-checkpoint-source-profile"
     assert payload["passed"] is True
-    assert payload["measurement_scope"]["client_side_lm_head"] is True
-    assert payload["measurement_scope"]["client_side_argmax"] is True
-    assert payload["measurement_scope"]["encrypted_argmax"] is False
-    assert payload["result"]["new_token_ids"]
+    assert payload["measurement_scope"]["encrypted"] is False
+    assert payload["measurement_scope"]["full_model_correctness_claimed"] is False
+    assert payload["result"]["layers"][0]["recurrence"]["position_bucket_count"] == 2
     assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
 
 
