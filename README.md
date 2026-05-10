@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.79`. Future changes should bump
+The project is currently at SemVer `0.2.80`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -257,6 +257,12 @@ python3 scripts/run_checkpoint_visible_projection_sweep.py \
   --max-rotation-keys 256 \
   --prompt 1 \
   --output-json runs/mamba-visible-projection-sweep.json
+python3 scripts/run_checkpoint_client_decode_smoke.py \
+  runs/mamba/checkpoint.pt \
+  --all-layers \
+  --prompt 1,2,3 \
+  --steps 1 \
+  --output-json runs/mamba-client-decode-smoke.json
 python3 scripts/probe_official_mamba_parity.py \
   runs/mamba/checkpoint.pt \
   --d-state 2 \

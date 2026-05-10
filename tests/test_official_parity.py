@@ -52,7 +52,7 @@ def test_official_mamba_parity_probe_script_outputs_json(tmp_path) -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.79"
+    assert payload["version"] == "0.2.80"
     assert payload["stage"] == "official-mamba-parity-probe"
     assert payload["status"] == "skipped"
     assert payload["result"]["source_style_output_shape"] == [1, 2, 8]

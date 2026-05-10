@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.79"
+__version__ = "0.2.80"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -24,6 +24,10 @@ _LAZY_IMPORTS = {
     "CkksTrace": ("fhe_native_mamba3.ckks", "CkksTrace"),
     "CheckpointInspection": ("fhe_native_mamba3.checkpoint", "CheckpointInspection"),
     "CheckpointTensorSpec": ("fhe_native_mamba3.checkpoint", "CheckpointTensorSpec"),
+    "CheckpointClientDecodeSmoke": (
+        "fhe_native_mamba3.checkpoint_decode",
+        "CheckpointClientDecodeSmoke",
+    ),
     "CheckpointRecurrenceCorrectnessGate": (
         "fhe_native_mamba3.checkpoint_correctness",
         "CheckpointRecurrenceCorrectnessGate",
@@ -301,6 +305,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.profiling",
         "profile_recurrence_traces",
     ),
+    "run_checkpoint_client_decode_smoke": (
+        "fhe_native_mamba3.checkpoint_decode",
+        "run_checkpoint_client_decode_smoke",
+    ),
     "probe_official_mamba_parity": (
         "fhe_native_mamba3.official_parity",
         "probe_official_mamba_parity",
@@ -389,6 +397,7 @@ __all__ = [
     "BootstrapExecutionSchedule",
     "BootstrapExecutionScheduleStep",
     "BootstrapSchedule",
+    "CheckpointClientDecodeSmoke",
     "CheckpointFullLayerCiphertextGate",
     "CheckpointFullLayerSweepLayer",
     "CheckpointFullLayerSweepResult",
@@ -490,6 +499,7 @@ __all__ = [
     "profile_model_batch",
     "profile_recurrence_traces",
     "required_full_layer_visible_rotations",
+    "run_checkpoint_client_decode_smoke",
     "run_checkpoint_full_layer_ciphertext_gate",
     "run_checkpoint_full_layer_ciphertext_sweep",
     "run_checkpoint_recurrence_correctness_gate",
