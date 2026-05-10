@@ -101,6 +101,59 @@ class CheckpointFullLayerCiphertextGate:
         return payload
 
 
+@dataclass(frozen=True)
+class CheckpointFullLayerCiphertextTrace:
+    """Ciphertext trace for source-style full visible-layer arithmetic."""
+
+    layer_index: int
+    d_model: int
+    checked_visible_dim: int
+    full_visible_output_checked: bool
+    partial_visible_output_checked: bool
+    d_state: int
+    mimo_rank: int
+    seq_len: int
+    backend: str
+    encrypted: bool
+    input_mode: str
+    readout_strategy: str
+    output_slots: tuple[int, ...]
+    output_ciphertexts: tuple[Any, ...]
+    expected_outputs: tuple[tuple[float, ...], ...]
+    backend_handle: FHEBackend
+    recurrence_ciphertext: bool
+    visible_handoff_ciphertext: bool
+    decrypt_count_delta: int
+    plaintext_precomputed_stages: tuple[str, ...]
+    backend_stats: dict[str, Any]
+    notes: tuple[str, ...]
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "layer_index": self.layer_index,
+            "d_model": self.d_model,
+            "checked_visible_dim": self.checked_visible_dim,
+            "full_visible_output_checked": self.full_visible_output_checked,
+            "partial_visible_output_checked": self.partial_visible_output_checked,
+            "d_state": self.d_state,
+            "mimo_rank": self.mimo_rank,
+            "seq_len": self.seq_len,
+            "backend": self.backend,
+            "encrypted": self.encrypted,
+            "input_mode": self.input_mode,
+            "readout_strategy": self.readout_strategy,
+            "output_slots": list(self.output_slots),
+            "output_ciphertext_count": len(self.output_ciphertexts),
+            "expected_outputs": [list(row) for row in self.expected_outputs],
+            "recurrence_ciphertext": self.recurrence_ciphertext,
+            "visible_handoff_ciphertext": self.visible_handoff_ciphertext,
+            "decrypt_count_delta": self.decrypt_count_delta,
+            "plaintext_precomputed_stages": list(self.plaintext_precomputed_stages),
+            "backend_stats": self.backend_stats,
+            "notes": list(self.notes),
+        }
+
+
 def run_checkpoint_recurrence_correctness_gate(
     state_dict: dict[str, Tensor],
     layer_input: Tensor,
@@ -259,6 +312,83 @@ def run_checkpoint_full_layer_ciphertext_gate(
     if atol < 0:
         msg = "atol must be non-negative"
         raise ValueError(msg)
+    trace = run_checkpoint_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        layer_index=layer_index,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        backend=backend,
+        input_mode=input_mode,
+        readout_strategy=readout_strategy,
+        multiplicative_depth=multiplicative_depth,
+        norm_eps=norm_eps,
+        visible_dim_limit=visible_dim_limit,
+    )
+    resolved_backend = trace.backend_handle
+    started_decrypts = resolved_backend.stats().decrypt_count
+    decrypted_outputs = [
+        resolved_backend.decrypt(output_ct, length=trace.checked_visible_dim)
+        for output_ct in trace.output_ciphertexts
+    ]
+
+    actual_rows = tuple(tuple(row) for row in decrypted_outputs)
+    max_abs_error = max(
+        (
+            abs(actual - expected)
+            for actual_row, expected_row in zip(actual_rows, trace.expected_outputs, strict=True)
+            for actual, expected in zip(actual_row, expected_row, strict=True)
+        ),
+        default=0.0,
+    )
+    no_intermediate_decrypt = (
+        trace.decrypt_count_delta == 0
+        and resolved_backend.stats().decrypt_count - started_decrypts == trace.seq_len
+    )
+    return CheckpointFullLayerCiphertextGate(
+        layer_index=layer_index,
+        d_model=trace.d_model,
+        checked_visible_dim=trace.checked_visible_dim,
+        full_visible_output_checked=trace.full_visible_output_checked,
+        partial_visible_output_checked=trace.partial_visible_output_checked,
+        d_state=trace.d_state,
+        mimo_rank=trace.mimo_rank,
+        seq_len=trace.seq_len,
+        backend=resolved_backend.stats().backend,
+        encrypted=bool(resolved_backend.stats().encrypted),
+        input_mode=input_mode,
+        readout_strategy=readout_strategy,
+        max_abs_error=max_abs_error,
+        atol=atol,
+        passed=max_abs_error <= atol and no_intermediate_decrypt,
+        recurrence_ciphertext=True,
+        visible_handoff_ciphertext=True,
+        no_intermediate_decrypt=no_intermediate_decrypt,
+        full_layer_formula_checked=trace.full_visible_output_checked,
+        official_mamba_parity=False,
+        full_model_correctness_claimed=False,
+        plaintext_precomputed_stages=trace.plaintext_precomputed_stages,
+        backend_stats=resolved_backend.stats().to_json_dict(),
+        notes=trace.notes,
+    )
+
+
+def run_checkpoint_full_layer_ciphertexts_with_backend(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    backend: FHEBackend | None = None,
+    input_mode: InputMode = "encrypted-dynamic-bc",
+    readout_strategy: ReadoutStrategy = "rank-local",
+    multiplicative_depth: int = 12,
+    norm_eps: float = 1e-5,
+    visible_dim_limit: int | None = None,
+) -> CheckpointFullLayerCiphertextTrace:
+    """Return full-layer visible output ciphertexts without decrypting them."""
+
     problem = build_mamba_source_recurrence_problem(
         state_dict,
         layer_input,
@@ -296,7 +426,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
         readout_strategy=readout_strategy,
         input_mode=input_mode,
     )
-    decrypted_outputs = []
+    output_ciphertexts = []
     for token_index, recurrence_ct in enumerate(trace.output_ciphertexts):
         final_ct = _visible_output_ciphertext(
             backend=resolved_backend,
@@ -306,7 +436,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
             checked_visible_dim=checked_visible_dim,
             token_index=token_index,
         )
-        decrypted_outputs.append(resolved_backend.decrypt(final_ct, length=checked_visible_dim))
+        output_ciphertexts.append(final_ct)
 
     expected_rows = tuple(
         tuple(
@@ -316,18 +446,6 @@ def run_checkpoint_full_layer_ciphertext_gate(
             .cpu()
         )
         for token_index in range(visible.seq_len)
-    )
-    actual_rows = tuple(tuple(row) for row in decrypted_outputs)
-    max_abs_error = max(
-        (
-            abs(actual - expected)
-            for actual_row, expected_row in zip(actual_rows, expected_rows, strict=True)
-            for actual, expected in zip(actual_row, expected_row, strict=True)
-        ),
-        default=0.0,
-    )
-    no_intermediate_decrypt = (
-        resolved_backend.stats().decrypt_count - started_decrypts == visible.seq_len
     )
     full_visible_output_checked = checked_visible_dim == visible.d_model
     partial_visible_output_checked = checked_visible_dim < visible.d_model
@@ -341,7 +459,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
         )
     else:
         notes.append("visible output check covers the full d_model")
-    return CheckpointFullLayerCiphertextGate(
+    return CheckpointFullLayerCiphertextTrace(
         layer_index=layer_index,
         d_model=visible.d_model,
         checked_visible_dim=checked_visible_dim,
@@ -354,15 +472,13 @@ def run_checkpoint_full_layer_ciphertext_gate(
         encrypted=bool(resolved_backend.stats().encrypted),
         input_mode=input_mode,
         readout_strategy=readout_strategy,
-        max_abs_error=max_abs_error,
-        atol=atol,
-        passed=max_abs_error <= atol and no_intermediate_decrypt,
+        output_slots=tuple(range(checked_visible_dim)),
+        output_ciphertexts=tuple(output_ciphertexts),
+        expected_outputs=expected_rows,
+        backend_handle=resolved_backend,
         recurrence_ciphertext=True,
         visible_handoff_ciphertext=True,
-        no_intermediate_decrypt=no_intermediate_decrypt,
-        full_layer_formula_checked=full_visible_output_checked,
-        official_mamba_parity=False,
-        full_model_correctness_claimed=False,
+        decrypt_count_delta=resolved_backend.stats().decrypt_count - started_decrypts,
         plaintext_precomputed_stages=(
             "rms_norm",
             "causal_conv_silu",

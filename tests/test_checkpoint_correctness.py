@@ -7,6 +7,7 @@ from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_correctness import (
     required_full_layer_visible_rotations,
     run_checkpoint_full_layer_ciphertext_gate,
+    run_checkpoint_full_layer_ciphertexts_with_backend,
     run_checkpoint_recurrence_correctness_gate,
 )
 from fhe_native_mamba3.checkpoint_full_layer_sweep import (
@@ -162,6 +163,58 @@ def test_checkpoint_full_layer_ciphertext_gate_matches_source_visible_output() -
     ]
     assert payload["backend_stats"]["decrypt_count"] == 3
     assert payload["backend_stats"]["ct_ct_mul_count"] >= 12
+
+
+def test_checkpoint_full_layer_ciphertext_trace_does_not_decrypt_outputs() -> None:
+    class NoDecryptTrackingBackend(TrackingBackend):
+        def decrypt(self, value: object, *, length: int) -> tuple[float, ...]:
+            raise AssertionError("ciphertext trace must not decrypt")
+
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(16, dtype=torch.float32).view(1, 2, 8) / 20.0
+    backend = NoDecryptTrackingBackend(batch_size=8)
+
+    trace = run_checkpoint_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        input_mode="encrypted-dynamic-bc",
+        readout_strategy="rank-local",
+    )
+    payload = trace.to_json_dict()
+
+    assert trace.decrypt_count_delta == 0
+    assert len(trace.output_ciphertexts) == 2
+    assert trace.output_slots == tuple(range(trace.checked_visible_dim))
+    assert trace.visible_handoff_ciphertext is True
+    assert payload["output_ciphertext_count"] == 2
+    assert "output_ciphertexts" not in payload
+
+
+def test_checkpoint_full_layer_ciphertext_trace_outputs_match_source_when_decrypted() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(16, dtype=torch.float32).view(1, 2, 8) / 20.0
+    backend = TrackingBackend(batch_size=8)
+
+    trace = run_checkpoint_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        input_mode="encrypted-dynamic-bc",
+        readout_strategy="rank-local",
+    )
+    actual = tuple(
+        backend.decrypt(output_ct, length=trace.checked_visible_dim)
+        for output_ct in trace.output_ciphertexts
+    )
+
+    for actual_row, expected_row in zip(actual, trace.expected_outputs, strict=True):
+        assert actual_row == pytest.approx(expected_row)
+    assert backend.stats().decrypt_count == trace.seq_len
 
 
 def test_checkpoint_full_layer_ciphertext_gate_requires_visible_projection() -> None:
