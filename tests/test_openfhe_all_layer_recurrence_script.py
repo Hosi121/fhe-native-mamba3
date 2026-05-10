@@ -47,6 +47,23 @@ def test_all_layer_script_rejects_legacy_execution_schedule_mismatch() -> None:
         )
 
 
+def test_all_layer_script_marks_bootstrap_probe_as_not_full_chain() -> None:
+    module = _load_script()
+
+    scope = module._measurement_scope(
+        actual_bootstrap_probe={"available": True, "bootstrap_count": 11}
+    )
+
+    assert scope["recurrence_kernel_encrypted"] is True
+    assert scope["bootstrap_probe_only"] is True
+    assert scope["encrypted_chain"] is False
+    assert scope["inter_layer_ciphertext_handoff"] is False
+    assert scope["scheduled_bootstraps_applied_to_chain"] is False
+    assert scope["full_layer_correctness_claimed"] is False
+    assert scope["full_model_correctness_claimed"] is False
+    assert "not full encrypted Mamba" in scope["claim"]
+
+
 def _load_script() -> ModuleType:
     path = Path("scripts/run_openfhe_all_layer_recurrence.py").resolve()
     spec = importlib.util.spec_from_file_location("run_openfhe_all_layer_recurrence", path)

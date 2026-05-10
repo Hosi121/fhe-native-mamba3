@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.70`. Future changes should bump
+The project is currently at SemVer `0.2.71`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -272,6 +272,21 @@ scripts/run_ciphertext_handoff_smoke.py \
   --layers 4 \
   --bootstrap-after-layers 2,4
 ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,RUN_NAME=openfhe-ciphertext-handoff-v064,WIDTH=8,LAYERS=4 slurm/openfhe_ciphertext_handoff.sbatch'
+```
+
+Run a recurrence-only ciphertext chain smoke. This is narrower than full Mamba
+layer correctness: gate, convolution, out-projection, residual, lm_head, and
+decoding remain out of scope for this artifact.
+
+```bash
+scripts/run_openfhe_recurrence_chain_smoke.py \
+  --backend tracking \
+  --layers 4 \
+  --seq-len 2 \
+  --d-state 2 \
+  --rank 2 \
+  --bootstrap-after-layers 2
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,RUN_NAME=openfhe-recurrence-chain-v071,LAYERS=4,SEQ_LEN=2,D_STATE=2,RANK=2,BOOTSTRAP_AFTER_LAYERS=2 slurm/openfhe_recurrence_chain.sbatch'
 ```
 
 For the OpenFHE backend, keep `WIDTH` a power of two for this smoke. The

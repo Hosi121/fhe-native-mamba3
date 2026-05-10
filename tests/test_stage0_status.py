@@ -5,7 +5,7 @@ from fhe_native_mamba3.stage0_status import build_stage0_status_report
 
 def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> None:
     report = build_stage0_status_report(
-        version="0.2.70",
+        version="0.2.71",
         bootstrap_latency={
             "available": True,
             "mean_latency_sec": 14.5,
@@ -51,6 +51,14 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
             ],
         },
         all_layer_recurrence={
+            "measurement_scope": {
+                "encrypted_chain": False,
+                "bootstrap_probe_only": True,
+                "layer_inputs_plaintext_precomputed": True,
+                "full_layer_correctness_claimed": False,
+                "full_model_correctness_claimed": False,
+                "claim": "per-layer encrypted recurrence benchmark",
+            },
             "summary": {
                 "layer_count": 24,
                 "success_count": 24,
@@ -64,7 +72,7 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
                 "actual_scheduled_sec_per_token": 185.0,
                 "actual_bootstrap_max_abs_error": 1e-5,
                 "max_abs_error": 5e-7,
-            }
+            },
         },
         ciphertext_handoff={
             "backend": "openfhe-ckks",
@@ -83,22 +91,24 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
         },
     )
 
-    assert report["version"] == "0.2.70"
+    assert report["version"] == "0.2.71"
     assert report["stage0_complete"] is False
     assert report["measurements"]["bootstrap_latency"]["mean_latency_sec"] == 14.5
     assert report["measurements"]["stack_latency_estimate"]["bootstraps"] == 11
     assert report["measurements"]["segment_samples"]["bootstrap_enabled_sample_count"] == 1
     assert report["measurements"]["all_layer_recurrence"]["success_count"] == 24
     assert report["measurements"]["all_layer_recurrence"]["actual_scheduled_bootstraps"] == 11
+    assert report["measurements"]["all_layer_recurrence"]["encrypted_chain"] is False
+    assert report["measurements"]["all_layer_recurrence"]["bootstrap_probe_only"] is True
     assert report["measurements"]["ciphertext_handoff"]["decrypt_count"] == 1
     assert "bootstrap latency dominates" in report["next_bottleneck"]
-    assert any("gate/out-projection/residual" in item for item in report["remaining_items"])
-    assert any("scheduled boundary bootstraps" in item for item in report["completed_items"])
+    assert any("true inter-layer ciphertext chain" in item for item in report["remaining_items"])
+    assert any("scheduled bootstrap probe" in item for item in report["completed_items"])
     assert any("ciphertext handoff smoke" in item for item in report["completed_items"])
 
 
 def test_stage0_status_report_handles_missing_artifacts() -> None:
-    report = build_stage0_status_report(version="0.2.70")
+    report = build_stage0_status_report(version="0.2.71")
 
     assert report["measurements"]["bootstrap_latency"]["available"] is False
     assert report["measurements"]["segment_samples"]["available"] is False
@@ -109,7 +119,7 @@ def test_stage0_status_report_handles_missing_artifacts() -> None:
 
 def test_stage0_status_report_accepts_failed_bootstrap_artifact() -> None:
     report = build_stage0_status_report(
-        version="0.2.70",
+        version="0.2.71",
         bootstrap_latency={
             "available": False,
             "error_type": "RuntimeError",

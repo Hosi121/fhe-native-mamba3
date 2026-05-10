@@ -40,16 +40,16 @@ def build_stage0_status_report(
 
 def _remaining_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
     all_layer = measurements["all_layer_recurrence"]
-    first_item = (
-        "wire checkpoint gate/out-projection/residual into ciphertext handoff"
-        if measurements["ciphertext_handoff"].get("no_intermediate_decrypt")
-        else "connect scheduled boundary bootstrap smoke to true inter-layer ciphertext handoff"
-    )
-    first_item = (
-        first_item
-        if all_layer.get("actual_scheduled_bootstraps")
-        else "run 24-layer encrypted recurrence with scheduled inter-layer bootstraps"
-    )
+    if all_layer.get("actual_scheduled_bootstraps") and all_layer.get("bootstrap_probe_only"):
+        first_item = "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
+    elif all_layer.get("actual_scheduled_bootstraps"):
+        first_item = (
+            "wire checkpoint gate/out-projection/residual into ciphertext handoff"
+            if measurements["ciphertext_handoff"].get("no_intermediate_decrypt")
+            else "connect scheduled boundary bootstrap smoke to true inter-layer ciphertext handoff"
+        )
+    else:
+        first_item = "run 24-layer encrypted recurrence with scheduled inter-layer bootstraps"
     return [
         first_item,
         "measure 1024-token average latency or a documented smaller proxy if cost is too high",
@@ -133,6 +133,7 @@ def _all_layer_recurrence_summary(payload: dict[str, Any] | None) -> dict[str, A
     if not payload:
         return {"available": False}
     summary = payload.get("summary", {})
+    scope = payload.get("measurement_scope", {})
     return {
         "available": True,
         "layer_count": summary.get("layer_count"),
@@ -147,6 +148,14 @@ def _all_layer_recurrence_summary(payload: dict[str, Any] | None) -> dict[str, A
         "actual_scheduled_sec_per_token": summary.get("actual_scheduled_sec_per_token"),
         "actual_bootstrap_max_abs_error": summary.get("actual_bootstrap_max_abs_error"),
         "max_abs_error": summary.get("max_abs_error"),
+        "encrypted_chain": bool(scope.get("encrypted_chain", False)),
+        "bootstrap_probe_only": bool(scope.get("bootstrap_probe_only", False)),
+        "layer_inputs_plaintext_precomputed": bool(
+            scope.get("layer_inputs_plaintext_precomputed", False)
+        ),
+        "full_layer_correctness_claimed": bool(scope.get("full_layer_correctness_claimed", False)),
+        "full_model_correctness_claimed": bool(scope.get("full_model_correctness_claimed", False)),
+        "claim": scope.get("claim"),
     }
 
 
@@ -187,10 +196,19 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         "layer_count"
     ):
         items.append("measure OpenFHE recurrence arithmetic for every selected layer")
-    if all_layer.get("scheduled_bootstraps") is not None and all_layer.get(
-        "actual_scheduled_bootstraps"
-    ) == all_layer.get("scheduled_bootstraps"):
-        items.append("execute all scheduled boundary bootstraps in the 24-layer probe")
+    scheduled_bootstraps = all_layer.get("scheduled_bootstraps")
+    if (
+        scheduled_bootstraps
+        and all_layer.get("actual_scheduled_bootstraps") == scheduled_bootstraps
+    ):
+        if all_layer.get("bootstrap_probe_only"):
+            items.append("execute scheduled bootstrap probe for the 24-layer recurrence plan")
+        elif all_layer.get("encrypted_chain"):
+            items.append(
+                "execute all scheduled boundary bootstraps in the 24-layer encrypted chain"
+            )
+        else:
+            items.append("execute all scheduled boundary bootstraps in the 24-layer probe")
     handoff = measurements["ciphertext_handoff"]
     if handoff.get("encrypted") and handoff.get("no_intermediate_decrypt"):
         items.append("run encrypted ciphertext handoff smoke without intermediate decrypts")

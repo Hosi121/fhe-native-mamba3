@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
 from fhe_native_mamba3.backends.base import FHEBackend
@@ -98,6 +98,33 @@ class OpenFheRecurrenceCiphertextTrace:
     input_mode: str
     client_plaintext_public_weight_multiplies: int = 0
     bootstrap_after_tokens: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class OpenFheRecurrenceCiphertextChainResult:
+    """Result for a recurrence chain with ciphertext handoff between layers."""
+
+    decrypted_outputs: tuple[tuple[float, ...], ...]
+    expected_outputs: tuple[tuple[float, ...], ...]
+    max_abs_error: float
+    layer_count: int
+    seq_len: int
+    ring_dimension: int
+    batch_size: int
+    multiplicative_depth: int
+    rotations: tuple[int, ...]
+    backend_stats: dict[str, Any]
+    latency_sec_per_token: float
+    readout_strategy: str
+    input_mode: str
+    bootstrap_after_layers: tuple[int, ...] = ()
+    intermediate_decrypt_count: int = 0
+    ciphertext_chain: bool = True
+    encrypted_chain: bool = False
+    full_layer_correctness_claimed: bool = False
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -421,6 +448,31 @@ def required_readout_rotations(
     )
 
 
+def required_recurrence_chain_rotations(
+    *,
+    d_state: int,
+    mimo_rank: int,
+    readout_strategy: ReadoutStrategy = "rank-local",
+) -> tuple[int, ...]:
+    """Rotations needed for recurrence readout plus inter-layer input expansion."""
+
+    rotations = set(
+        required_readout_rotations(
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            readout_strategy=readout_strategy,
+        )
+    )
+    rotations.update(
+        _expanded_rank_input_rotations(
+            d_state=d_state,
+            rank=mimo_rank,
+            readout_strategy=readout_strategy,
+        )
+    )
+    return tuple(sorted(rotations))
+
+
 def readout_output_slots(
     *,
     d_state: int,
@@ -434,6 +486,27 @@ def readout_output_slots(
         mimo_rank=mimo_rank,
         readout_strategy=readout_strategy,
     )
+
+
+def _expanded_rank_input_rotations(
+    *,
+    d_state: int,
+    rank: int,
+    readout_strategy: ReadoutStrategy,
+) -> tuple[int, ...]:
+    output_slots = readout_output_slots(
+        d_state=d_state,
+        mimo_rank=rank,
+        readout_strategy=readout_strategy,
+    )
+    rotations: set[int] = set()
+    for r, source in enumerate(output_slots):
+        for n in range(d_state):
+            target = r * d_state + n
+            shift = source - target
+            if shift:
+                rotations.add(shift)
+    return tuple(sorted(rotations))
 
 
 def _readout_ciphertext(
@@ -628,6 +701,155 @@ def run_static_mimo_recurrence_with_backend(
         client_plaintext_public_weight_multiplies=(trace.client_plaintext_public_weight_multiplies),
         bootstrap_after_tokens=trace.bootstrap_after_tokens,
     )
+
+
+def run_static_mimo_recurrence_ciphertext_chain_with_backend(
+    problems: tuple[OpenFheRecurrenceProblem, ...],
+    *,
+    backend: FHEBackend,
+    multiplicative_depth: int,
+    readout_strategy: ReadoutStrategy = "rank-local",
+    input_mode: InputMode = "server-bx",
+    bootstrap_after_layers: tuple[int, ...] = (),
+) -> OpenFheRecurrenceCiphertextChainResult:
+    """Run recurrence layers as a ciphertext handoff chain.
+
+    This helper is intentionally narrower than a full Mamba layer: it chains the
+    recurrence readout of layer ``i`` into the rank input slots of layer
+    ``i + 1`` without decrypting intermediate outputs. It is the low-level
+    contract needed before wiring gate/out-projection/residual handoff for real
+    checkpoint layers.
+    """
+
+    _validate_recurrence_chain(problems)
+    if input_mode not in {"server-bx", "encrypted-dynamic-bc"}:
+        msg = "ciphertext recurrence chain requires server-bx or encrypted-dynamic-bc input_mode"
+        raise ValueError(msg)
+    bootstrap_after = _validate_bootstrap_after_layers(
+        bootstrap_after_layers,
+        layer_count=len(problems),
+    )
+    chain_rotations = required_recurrence_chain_rotations(
+        d_state=problems[0].d_state,
+        mimo_rank=problems[0].mimo_rank,
+        readout_strategy=readout_strategy,
+    )
+
+    started_decrypts = backend.stats().decrypt_count
+    started = time.perf_counter()
+    trace: OpenFheRecurrenceCiphertextTrace | None = None
+    rank_input_ciphertexts: tuple[Any, ...] | None = None
+    for layer_index, problem in enumerate(problems):
+        is_last = layer_index == len(problems) - 1
+        trace = run_static_mimo_recurrence_ciphertexts_with_backend(
+            problem,
+            backend=backend,
+            multiplicative_depth=multiplicative_depth,
+            readout_strategy=readout_strategy,
+            input_mode=input_mode,
+            rank_input_ciphertexts=rank_input_ciphertexts,
+            output_layout="readout" if is_last else "expanded-rank-input",
+        )
+        rank_input_ciphertexts = trace.output_ciphertexts
+        if layer_index + 1 in bootstrap_after:
+            rank_input_ciphertexts = tuple(backend.bootstrap(ct) for ct in rank_input_ciphertexts)
+    if trace is None:
+        msg = "problems must not be empty"
+        raise ValueError(msg)
+
+    eval_seconds = time.perf_counter() - started
+    decrypted_output_rows: list[tuple[float, ...]] = []
+    for output_ct in trace.output_ciphertexts:
+        output_values = backend.decrypt(output_ct, length=backend.batch_size)
+        decrypted_output_rows.append(tuple(output_values[slot] for slot in trace.output_slots))
+    decrypted_outputs = tuple(decrypted_output_rows)
+    expected_outputs = _plaintext_recurrence_chain_outputs(problems)
+    max_abs_error = max(
+        (
+            abs(actual - expected)
+            for actual_token, expected_token in zip(
+                decrypted_outputs,
+                expected_outputs,
+                strict=True,
+            )
+            for actual, expected in zip(actual_token, expected_token, strict=True)
+        ),
+        default=0.0,
+    )
+    return OpenFheRecurrenceCiphertextChainResult(
+        decrypted_outputs=decrypted_outputs,
+        expected_outputs=expected_outputs,
+        max_abs_error=max_abs_error,
+        layer_count=len(problems),
+        seq_len=problems[0].seq_len,
+        ring_dimension=trace.ring_dimension,
+        batch_size=trace.batch_size,
+        multiplicative_depth=multiplicative_depth,
+        rotations=chain_rotations,
+        backend_stats=backend.stats().to_json_dict(),
+        latency_sec_per_token=eval_seconds / problems[0].seq_len,
+        readout_strategy=readout_strategy,
+        input_mode=input_mode,
+        bootstrap_after_layers=bootstrap_after,
+        intermediate_decrypt_count=backend.stats().decrypt_count
+        - started_decrypts
+        - len(decrypted_outputs),
+        ciphertext_chain=True,
+        encrypted_chain=backend.encrypted,
+    )
+
+
+def _validate_recurrence_chain(problems: tuple[OpenFheRecurrenceProblem, ...]) -> None:
+    if not problems:
+        msg = "problems must not be empty"
+        raise ValueError(msg)
+    seq_len = problems[0].seq_len
+    rank = problems[0].mimo_rank
+    d_state = problems[0].d_state
+    if seq_len <= 0:
+        msg = "recurrence chain problems must have positive seq_len"
+        raise ValueError(msg)
+    if rank <= 0:
+        msg = "recurrence chain problems must have positive mimo_rank"
+        raise ValueError(msg)
+    for index, problem in enumerate(problems):
+        if problem.seq_len != seq_len:
+            msg = "all recurrence chain problems must share seq_len"
+            raise ValueError(msg)
+        if problem.mimo_rank != rank:
+            msg = "all recurrence chain problems must share mimo_rank"
+            raise ValueError(msg)
+        if problem.d_state != d_state:
+            msg = "all recurrence chain problems must share d_state"
+            raise ValueError(msg)
+        if any(len(rank_input) != rank for rank_input in problem.rank_inputs):
+            msg = f"problem {index} rank_inputs rows must match mimo_rank={rank}"
+            raise ValueError(msg)
+
+
+def _validate_bootstrap_after_layers(
+    bootstrap_after_layers: tuple[int, ...],
+    *,
+    layer_count: int,
+) -> tuple[int, ...]:
+    bootstrap_after = tuple(sorted(set(bootstrap_after_layers)))
+    if any(layer <= 0 or layer >= layer_count for layer in bootstrap_after):
+        msg = f"bootstrap_after_layers must be in [1, {layer_count - 1}]"
+        raise ValueError(msg)
+    return bootstrap_after
+
+
+def _plaintext_recurrence_chain_outputs(
+    problems: tuple[OpenFheRecurrenceProblem, ...],
+) -> tuple[tuple[float, ...], ...]:
+    _validate_recurrence_chain(problems)
+    rank_inputs = problems[0].rank_inputs
+    outputs: tuple[tuple[float, ...], ...] = ()
+    for problem in problems:
+        bound_problem = replace(problem, rank_inputs=rank_inputs)
+        outputs = plaintext_static_recurrence(bound_problem)
+        rank_inputs = outputs
+    return outputs
 
 
 def run_static_mimo_recurrence_ciphertexts_with_backend(

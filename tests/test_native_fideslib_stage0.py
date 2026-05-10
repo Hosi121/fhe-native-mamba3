@@ -13,6 +13,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     segment_openfhe_slurm = ROOT / "slurm" / "openfhe_segment_samples.sbatch"
     all_layer_openfhe_slurm = ROOT / "slurm" / "openfhe_all_layer_recurrence.sbatch"
     handoff_openfhe_slurm = ROOT / "slurm" / "openfhe_ciphertext_handoff.sbatch"
+    recurrence_chain_openfhe_slurm = ROOT / "slurm" / "openfhe_recurrence_chain.sbatch"
 
     assert source.exists()
     assert cmake.exists()
@@ -23,6 +24,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert segment_openfhe_slurm.exists()
     assert all_layer_openfhe_slurm.exists()
     assert handoff_openfhe_slurm.exists()
+    assert recurrence_chain_openfhe_slurm.exists()
 
     source_text = source.read_text()
     assert "fideslib-static-mimo-recurrence" in source_text
@@ -79,3 +81,8 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "run_ciphertext_handoff_smoke.py" in handoff_openfhe_text
     assert "BOOTSTRAP_AFTER_LAYERS" in handoff_openfhe_text
     assert "no_intermediate_decrypt" in handoff_openfhe_text
+
+    recurrence_chain_openfhe_text = recurrence_chain_openfhe_slurm.read_text()
+    assert "run_openfhe_recurrence_chain_smoke.py" in recurrence_chain_openfhe_text
+    assert "BOOTSTRAP_AFTER_LAYERS" in recurrence_chain_openfhe_text
+    assert "ciphertext_chain" in recurrence_chain_openfhe_text

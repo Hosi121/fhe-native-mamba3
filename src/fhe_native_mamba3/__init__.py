@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.70"
+__version__ = "0.2.71"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -108,6 +108,10 @@ _LAZY_IMPORTS = {
     "OpenFheRecurrenceCiphertextTrace": (
         "fhe_native_mamba3.openfhe_backend",
         "OpenFheRecurrenceCiphertextTrace",
+    ),
+    "OpenFheRecurrenceCiphertextChainResult": (
+        "fhe_native_mamba3.openfhe_backend",
+        "OpenFheRecurrenceCiphertextChainResult",
     ),
     "OpenFheBootstrapConfig": ("fhe_native_mamba3.backends.openfhe", "OpenFheBootstrapConfig"),
     "OpenFheBootstrapLatencyConfig": (
@@ -275,6 +279,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "run_static_mimo_recurrence_ciphertexts_with_backend",
     ),
+    "run_static_mimo_recurrence_ciphertext_chain_with_backend": (
+        "fhe_native_mamba3.openfhe_backend",
+        "run_static_mimo_recurrence_ciphertext_chain_with_backend",
+    ),
     "scale_recurrence_state": (
         "fhe_native_mamba3.openfhe_backend",
         "scale_recurrence_state",
@@ -346,6 +354,7 @@ __all__ = [
     "OpenFheBootstrapConfig",
     "OpenFheBootstrapLatencyConfig",
     "OpenFheCkksBackend",
+    "OpenFheRecurrenceCiphertextChainResult",
     "OpenFheRecurrenceCiphertextTrace",
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
@@ -414,6 +423,7 @@ __all__ = [
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
+    "run_static_mimo_recurrence_ciphertext_chain_with_backend",
     "run_static_mimo_recurrence_ciphertexts_with_backend",
     "save_mamba_checkpoint_bundle",
     "save_mapping_draft",

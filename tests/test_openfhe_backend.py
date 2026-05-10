@@ -16,7 +16,9 @@ from fhe_native_mamba3.openfhe_backend import (
     plaintext_recurrence_trace,
     readout_output_slots,
     required_readout_rotations,
+    required_recurrence_chain_rotations,
     run_openfhe_static_recurrence,
+    run_static_mimo_recurrence_ciphertext_chain_with_backend,
     run_static_mimo_recurrence_ciphertexts_with_backend,
     run_static_mimo_recurrence_with_backend,
     scale_recurrence_state,
@@ -89,6 +91,11 @@ def test_readout_layout_metadata_distinguishes_dense_and_rank_local() -> None:
         mimo_rank=4,
         readout_strategy="rank-local",
     ) == (0, 4, 8, 12)
+    assert required_recurrence_chain_rotations(
+        d_state=4,
+        mimo_rank=4,
+        readout_strategy="rank-local",
+    ) == (-3, -2, -1, 1, 2)
 
 
 def test_dynamic_decay_uses_ciphertext_multiply_path() -> None:
@@ -238,6 +245,73 @@ def test_rank_local_handoff_expands_readout_slots_for_d_state_greater_than_one()
 
     assert second.decrypted_outputs == ((4.0, 8.0),)
     assert second.max_abs_error == 0
+
+
+def test_ciphertext_recurrence_chain_runs_without_intermediate_decrypts() -> None:
+    backend = TrackingBackend(batch_size=4)
+    first_problem = OpenFheRecurrenceProblem(
+        rank_inputs=((2.0, 4.0), (1.5, -2.0)),
+        decay=(0.0, 0.0),
+        b=((1.0, 1.0), (0.0, 0.0)),
+        c=((1.0, 1.0), (0.0, 0.0)),
+    )
+    second_problem = OpenFheRecurrenceProblem(
+        rank_inputs=((0.0, 0.0), (0.0, 0.0)),
+        decay=(0.0, 0.0),
+        b=((1.0, 1.0), (1.0, 1.0)),
+        c=((1.0, 1.0), (1.0, 1.0)),
+    )
+
+    result = run_static_mimo_recurrence_ciphertext_chain_with_backend(
+        (first_problem, second_problem),
+        backend=backend,
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="server-bx",
+        bootstrap_after_layers=(1,),
+    )
+
+    assert result.decrypted_outputs == ((4.0, 8.0), (3.0, -4.0))
+    assert result.expected_outputs == result.decrypted_outputs
+    assert result.max_abs_error == 0
+    assert result.ciphertext_chain is True
+    assert result.encrypted_chain is False
+    assert result.full_layer_correctness_claimed is False
+    assert result.intermediate_decrypt_count == 0
+    assert result.bootstrap_after_layers == (1,)
+    assert result.backend_stats["decrypt_count"] == first_problem.seq_len
+    assert result.backend_stats["bootstrap_count"] == first_problem.seq_len
+
+
+def test_ciphertext_recurrence_chain_rejects_invalid_contracts() -> None:
+    problem = make_demo_problem(seq_len=2, d_state=2, mimo_rank=2, seed=11)
+
+    with pytest.raises(ValueError, match="problems must not be empty"):
+        run_static_mimo_recurrence_ciphertext_chain_with_backend(
+            (),
+            backend=TrackingBackend(batch_size=4),
+            multiplicative_depth=8,
+        )
+    with pytest.raises(ValueError, match="server-bx or encrypted-dynamic-bc"):
+        run_static_mimo_recurrence_ciphertext_chain_with_backend(
+            (problem,),
+            backend=TrackingBackend(batch_size=4),
+            multiplicative_depth=8,
+            input_mode="client-update",
+        )
+    with pytest.raises(ValueError, match="bootstrap_after_layers"):
+        run_static_mimo_recurrence_ciphertext_chain_with_backend(
+            (problem, problem),
+            backend=TrackingBackend(batch_size=4),
+            multiplicative_depth=8,
+            bootstrap_after_layers=(2,),
+        )
+    with pytest.raises(ValueError, match="share seq_len"):
+        run_static_mimo_recurrence_ciphertext_chain_with_backend(
+            (problem, make_demo_problem(seq_len=1, d_state=2, mimo_rank=2, seed=12)),
+            backend=TrackingBackend(batch_size=4),
+            multiplicative_depth=8,
+        )
 
 
 def test_client_update_trace_keeps_client_side_update_statistics() -> None:

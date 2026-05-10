@@ -340,6 +340,7 @@ def _payload(
         if actual_bootstrap_sec_per_token is not None
         else None
     )
+    measurement_scope = _measurement_scope(actual_bootstrap_probe=actual_bootstrap_probe)
     return {
         "version": version,
         "stage": "openfhe-all-layer-recurrence",
@@ -363,6 +364,7 @@ def _payload(
             "execute_scheduled_bootstraps": args.execute_scheduled_bootstraps,
             "execution_schedule_available": execution_schedule_available,
         },
+        "measurement_scope": measurement_scope,
         "summary": {
             "layer_count": len(rows),
             "success_count": len(successful_rows),
@@ -396,6 +398,30 @@ def _payload(
         },
         "actual_scheduled_bootstrap_probe": actual_bootstrap_probe,
         "rows": rows,
+    }
+
+
+def _measurement_scope(*, actual_bootstrap_probe: dict[str, Any] | None) -> dict[str, Any]:
+    bootstrap_probe_only = bool(
+        actual_bootstrap_probe
+        and actual_bootstrap_probe.get("available")
+        and actual_bootstrap_probe.get("bootstrap_count", 0)
+    )
+    return {
+        "recurrence_kernel_encrypted": True,
+        "layer_inputs_plaintext_precomputed": True,
+        "per_layer_independent_runs": True,
+        "encrypted_chain": False,
+        "inter_layer_ciphertext_handoff": False,
+        "scheduled_bootstraps_applied_to_chain": False,
+        "bootstrap_probe_only": bootstrap_probe_only,
+        "full_layer_correctness_claimed": False,
+        "full_model_correctness_claimed": False,
+        "client_side_decoding_included": False,
+        "claim": (
+            "per-layer encrypted recurrence benchmark with optional state-sized bootstrap "
+            "probe; not full encrypted Mamba or LLM inference"
+        ),
     }
 
 
