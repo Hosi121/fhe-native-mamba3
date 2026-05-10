@@ -183,9 +183,18 @@ def _parse_readout_list(value: str) -> tuple[str, ...]:
     return strategies
 
 
+def _parse_recurrence_source_list(value: str) -> tuple[str, ...]:
+    sources = tuple(part for part in value.split(",") if part)
+    unsupported = sorted(set(sources) - {"adapter-static", "source-dynamic"})
+    if unsupported:
+        msg = f"unsupported recurrence sources: {unsupported}"
+        raise argparse.ArgumentTypeError(msg)
+    return sources
+
+
 def _parse_input_mode_list(value: str) -> tuple[str, ...]:
     modes = tuple(part for part in value.split(",") if part)
-    unsupported = sorted(set(modes) - {"server-bx", "client-update"})
+    unsupported = sorted(set(modes) - {"server-bx", "client-update", "encrypted-dynamic-bc"})
     if unsupported:
         msg = f"unsupported input modes: {unsupported}"
         raise argparse.ArgumentTypeError(msg)
@@ -251,32 +260,36 @@ def _recurrence_problem_summary(extracted: Any) -> dict[str, Any]:
         "bundle_dir": extracted.bundle_dir,
         "layer_index": extracted.layer_index,
         "token_ids": list(extracted.token_ids),
-        "problem": {
-            "seq_len": problem.seq_len,
-            "d_state": problem.d_state,
-            "mimo_rank": problem.mimo_rank,
-            "state_slots": problem.d_state * problem.mimo_rank,
-            "rank_inputs_abs_max": _matrix_abs_max(problem.rank_inputs),
-            "b_abs_max": _matrix_abs_max(problem.b),
-            "c_abs_max": _matrix_abs_max(problem.c),
-            "b_by_token_abs_max": _nested_abs_max(problem.b_by_token)
-            if problem.b_by_token is not None
-            else None,
-            "c_by_token_abs_max": _nested_abs_max(problem.c_by_token)
-            if problem.c_by_token is not None
-            else None,
-            "decay_by_token_abs_max": _matrix_abs_max(problem.decay_by_token)
-            if problem.decay_by_token is not None
-            else None,
-            "decay_state_by_token_abs_max": _nested_abs_max(problem.decay_state_by_token)
-            if problem.decay_state_by_token is not None
-            else None,
-            "d_skip_abs_max": max((abs(value) for value in problem.d_skip), default=0.0)
-            if problem.d_skip is not None
-            else None,
-            "decay_min": min(problem.decay) if problem.decay else None,
-            "decay_max": max(problem.decay) if problem.decay else None,
-        },
+        "problem": _recurrence_problem_stats(problem),
+    }
+
+
+def _recurrence_problem_stats(problem: Any) -> dict[str, Any]:
+    return {
+        "seq_len": problem.seq_len,
+        "d_state": problem.d_state,
+        "mimo_rank": problem.mimo_rank,
+        "state_slots": problem.d_state * problem.mimo_rank,
+        "rank_inputs_abs_max": _matrix_abs_max(problem.rank_inputs),
+        "b_abs_max": _matrix_abs_max(problem.b),
+        "c_abs_max": _matrix_abs_max(problem.c),
+        "b_by_token_abs_max": _nested_abs_max(problem.b_by_token)
+        if problem.b_by_token is not None
+        else None,
+        "c_by_token_abs_max": _nested_abs_max(problem.c_by_token)
+        if problem.c_by_token is not None
+        else None,
+        "decay_by_token_abs_max": _matrix_abs_max(problem.decay_by_token)
+        if problem.decay_by_token is not None
+        else None,
+        "decay_state_by_token_abs_max": _nested_abs_max(problem.decay_state_by_token)
+        if problem.decay_state_by_token is not None
+        else None,
+        "d_skip_abs_max": max((abs(value) for value in problem.d_skip), default=0.0)
+        if problem.d_skip is not None
+        else None,
+        "decay_min": min(problem.decay) if problem.decay else None,
+        "decay_max": max(problem.decay) if problem.decay else None,
     }
 
 
@@ -752,6 +765,207 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     )
     _emit_json_payload(payload)
     return 0
+
+
+def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.backends.tracking import TrackingBackend
+    from fhe_native_mamba3.bundle_recurrence import (
+        WeightBundleRecurrenceProblem,
+        build_weight_bundle_recurrence_problem,
+    )
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.mamba_checkpoint import (
+        adapt_mamba_state_dict_to_model,
+        save_mamba_checkpoint_bundle,
+    )
+    from fhe_native_mamba3.mamba_reference import build_mamba_source_recurrence_problem
+    from fhe_native_mamba3.openfhe_backend import (
+        required_readout_rotations,
+        run_static_mimo_recurrence_with_backend,
+    )
+    from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
+
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    d_state, mimo_rank, adapter_shape = _resolve_mamba_adapter_shape(args, source_state_dict)
+    seq_lens = tuple(sorted(set(args.seq_lens)))
+    layer_indices = tuple(sorted(set(args.layer_indices)))
+    if not seq_lens or min(seq_lens) <= 0:
+        msg = "seq_lens must contain positive lengths"
+        raise ValueError(msg)
+    if not layer_indices or min(layer_indices) < 0:
+        msg = "layer_indices must contain non-negative indices"
+        raise ValueError(msg)
+    if max(seq_lens) > args.max_seq_len:
+        msg = "max seq_len exceeds max_seq_len"
+        raise ValueError(msg)
+
+    sources = args.recurrence_sources
+    token_seed = _parse_int_list(args.prompt)
+    if not token_seed:
+        msg = "prompt must contain at least one token id"
+        raise ValueError(msg)
+
+    required_layers = max(args.n_layers, max(layer_indices) + 1)
+    manifest, report = save_mamba_checkpoint_bundle(
+        source_state_dict,
+        args.output_dir,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        n_layers=required_layers,
+        max_seq_len=args.max_seq_len,
+        seed=args.seed,
+        encoding_config=WeightEncodingConfig(
+            scale_bits=args.scale_bits,
+            target_max_abs=args.target_max_abs,
+            source_dtype=args.source_dtype,
+        ),
+    )
+    model, _source_report = adapt_mamba_state_dict_to_model(
+        source_state_dict,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        n_layers=required_layers,
+        max_seq_len=args.max_seq_len,
+        seed=args.seed,
+    )
+    invalid = [token for token in token_seed if token < 0 or token >= model.config.vocab_size]
+    if invalid:
+        msg = f"token ids out of range for vocab_size={model.config.vocab_size}: {invalid}"
+        raise ValueError(msg)
+    model.eval()
+
+    rows: list[dict[str, Any]] = []
+    for seq_len in seq_lens:
+        token_ids = _tokens_for_seq_len(token_seed, seq_len)
+        with torch.inference_mode():
+            input_ids = torch.tensor([token_ids], dtype=torch.long)
+            embedded = model.embed(input_ids) + model.pos[:seq_len].unsqueeze(0)
+
+        for layer_index in layer_indices:
+            for source in sources:
+                if source == "adapter-static":
+                    extracted = build_weight_bundle_recurrence_problem(
+                        args.output_dir,
+                        token_ids=token_ids,
+                        layer_index=layer_index,
+                        bc_mode="static",
+                    )
+                    input_mode = args.adapter_input_mode
+                else:
+                    with torch.inference_mode():
+                        x = embedded
+                        for block in model.blocks[:layer_index]:
+                            x = block(x)
+                        problem = build_mamba_source_recurrence_problem(
+                            source_state_dict,
+                            x,
+                            layer_index=layer_index,
+                            d_state=d_state,
+                            mimo_rank=mimo_rank,
+                        )
+                    extracted = WeightBundleRecurrenceProblem(
+                        bundle_dir=args.output_dir,
+                        layer_index=layer_index,
+                        token_ids=token_ids,
+                        problem=problem,
+                        manifest=manifest,
+                    )
+                    input_mode = args.source_dynamic_input_mode
+                problem = extracted.problem
+                result = run_static_mimo_recurrence_with_backend(
+                    problem,
+                    backend=TrackingBackend(batch_size=problem.d_state * problem.mimo_rank),
+                    multiplicative_depth=args.multiplicative_depth,
+                    readout_strategy=args.readout_strategy,
+                    input_mode=input_mode,
+                )
+                stats = result.backend_stats
+                rows.append(
+                    {
+                        "recurrence_source": source,
+                        "layer_index": layer_index,
+                        "seq_len": seq_len,
+                        "token_ids": list(token_ids),
+                        "input_mode": input_mode,
+                        "readout_strategy": args.readout_strategy,
+                        "max_abs_error": result.max_abs_error,
+                        "latency_sec_per_token": result.latency_sec_per_token,
+                        "operation_counts": {
+                            "ct_ct_mul": stats["ct_ct_mul_count"],
+                            "ct_pt_mul": stats["ct_pt_mul_count"],
+                            "add": stats["add_count"],
+                            "rotations": stats["rotation_count"],
+                            "bootstraps": stats["bootstrap_count"],
+                            "encrypt": stats["encrypt_count"],
+                            "decrypt": stats["decrypt_count"],
+                            "encode": stats["encode_count"],
+                            "client_plaintext_public_weight_multiplies": (
+                                result.client_plaintext_public_weight_multiplies
+                            ),
+                        },
+                        "problem": _recurrence_problem_stats(problem),
+                        "rotations": list(
+                            required_readout_rotations(
+                                d_state=problem.d_state,
+                                mimo_rank=problem.mimo_rank,
+                                readout_strategy=args.readout_strategy,
+                            )
+                        ),
+                    }
+                )
+
+    payload = {
+        "version": __version__,
+        "stage": "mamba-checkpoint-recurrence-sweep",
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "output_dir": args.output_dir,
+        "adapter_shape": adapter_shape,
+        "mamba_checkpoint_plan": _mamba_checkpoint_plan_payload(
+            source_state_dict,
+            max_layers=args.max_plan_layers,
+        ),
+        "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
+        "summary": _recurrence_sweep_summary(rows),
+        "rows": rows,
+    }
+    _emit_json_payload(payload, output_json=args.output_json)
+    return 0
+
+
+def _tokens_for_seq_len(token_seed: tuple[int, ...], seq_len: int) -> tuple[int, ...]:
+    if len(token_seed) >= seq_len:
+        return token_seed[:seq_len]
+    return tuple(token_seed[index % len(token_seed)] for index in range(seq_len))
+
+
+def _recurrence_sweep_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {"row_count": 0}
+    latency_row = max(rows, key=lambda row: row["latency_sec_per_token"])
+    ct_ct_row = max(rows, key=lambda row: row["operation_counts"]["ct_ct_mul"])
+    return {
+        "row_count": len(rows),
+        "max_abs_error": max(row["max_abs_error"] for row in rows),
+        "max_latency_sec_per_token": latency_row["latency_sec_per_token"],
+        "max_latency_case": {
+            "recurrence_source": latency_row["recurrence_source"],
+            "layer_index": latency_row["layer_index"],
+            "seq_len": latency_row["seq_len"],
+        },
+        "max_ct_ct_mul": ct_ct_row["operation_counts"]["ct_ct_mul"],
+        "max_ct_ct_case": {
+            "recurrence_source": ct_ct_row["recurrence_source"],
+            "layer_index": ct_ct_row["layer_index"],
+            "seq_len": ct_ct_row["seq_len"],
+        },
+    }
 
 
 def mamba_checkpoint_compare_reference_cmd(args: argparse.Namespace) -> int:
@@ -1601,6 +1815,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional path for the full recurrence smoke JSON payload",
     )
     mamba_smoke_parser.set_defaults(func=mamba_checkpoint_recurrence_smoke_cmd)
+
+    mamba_sweep_parser = subparsers.add_parser(
+        "mamba-checkpoint-recurrence-sweep",
+        help="run tracking recurrence sweeps over Mamba checkpoint layers and prompt lengths",
+    )
+    mamba_sweep_parser.add_argument("checkpoint")
+    mamba_sweep_parser.add_argument("--output-dir", required=True)
+    mamba_sweep_parser.add_argument("--state-dict-key", default="")
+    mamba_sweep_parser.add_argument("--map-location", default="cpu")
+    mamba_sweep_parser.add_argument("--d-state", type=int, default=1)
+    mamba_sweep_parser.add_argument("--mimo-rank", type=int, default=1)
+    mamba_sweep_parser.add_argument(
+        "--infer-shape",
+        action="store_true",
+        help="derive d_state and mimo_rank from the detected checkpoint tensors",
+    )
+    mamba_sweep_parser.add_argument("--n-layers", type=int, default=1)
+    mamba_sweep_parser.add_argument("--max-seq-len", type=int, default=8)
+    mamba_sweep_parser.add_argument("--seed", type=int, default=0)
+    mamba_sweep_parser.add_argument("--prompt", default="1,2,3,4")
+    mamba_sweep_parser.add_argument("--seq-lens", type=_parse_int_list, default=(1, 2, 4))
+    mamba_sweep_parser.add_argument("--layer-indices", type=_parse_int_list, default=(0,))
+    mamba_sweep_parser.add_argument(
+        "--recurrence-sources",
+        type=_parse_recurrence_source_list,
+        default=("adapter-static", "source-dynamic"),
+    )
+    mamba_sweep_parser.add_argument(
+        "--readout-strategy",
+        choices=["slotwise", "rank-reduce", "rank-local"],
+        default="rank-local",
+    )
+    mamba_sweep_parser.add_argument(
+        "--adapter-input-mode",
+        choices=["server-bx", "client-update"],
+        default="client-update",
+    )
+    mamba_sweep_parser.add_argument(
+        "--source-dynamic-input-mode",
+        choices=["server-bx", "client-update", "encrypted-dynamic-bc"],
+        default="encrypted-dynamic-bc",
+    )
+    mamba_sweep_parser.add_argument("--multiplicative-depth", type=int, default=8)
+    mamba_sweep_parser.add_argument("--scale-bits", type=int, default=40)
+    mamba_sweep_parser.add_argument("--target-max-abs", type=float, default=1.0)
+    mamba_sweep_parser.add_argument("--source-dtype", default="fp32")
+    mamba_sweep_parser.add_argument("--max-plan-layers", type=int, default=8)
+    mamba_sweep_parser.add_argument("--max-statuses", type=int, default=50)
+    mamba_sweep_parser.add_argument("--output-json", default="")
+    mamba_sweep_parser.set_defaults(func=mamba_checkpoint_recurrence_sweep_cmd)
 
     mamba_compare_parser = subparsers.add_parser(
         "mamba-checkpoint-compare-reference",
