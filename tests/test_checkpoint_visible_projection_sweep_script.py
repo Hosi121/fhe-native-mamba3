@@ -6,6 +6,8 @@ import sys
 
 import torch
 
+from fhe_native_mamba3 import __version__
+
 
 def test_checkpoint_visible_projection_sweep_script_runs_tracking_backend(tmp_path) -> None:
     checkpoint_path = tmp_path / "mamba.pt"
@@ -38,7 +40,7 @@ def test_checkpoint_visible_projection_sweep_script_runs_tracking_backend(tmp_pa
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.88"
+    assert payload["version"] == __version__
     assert payload["stage"] == "mamba-checkpoint-visible-projection-sweep"
     assert payload["backend"] == "tracking"
     assert payload["passed"] is True

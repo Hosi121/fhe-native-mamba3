@@ -85,3 +85,18 @@ def test_apply_lora_to_linear_modules_matches_suffix_names() -> None:
     replaced = apply_lora_to_linear_modules(model, target_names=("proj",), config=LoRAConfig())
 
     assert replaced == ("proj", "inner.proj")
+
+
+def test_top_level_lora_linear_parameters_are_trainable_and_counted() -> None:
+    module = LoRALinear(
+        nn.Linear(4, 3),
+        LoRAConfig(rank=2, alpha=4.0, freeze_base=True),
+    )
+
+    trainable = mark_only_lora_trainable(module)
+
+    assert trainable == ("lora_a.weight", "lora_b.weight")
+    assert (
+        lora_parameter_count(module) == module.lora_a.weight.numel() + module.lora_b.weight.numel()
+    )
+    assert module.base.weight.requires_grad is False

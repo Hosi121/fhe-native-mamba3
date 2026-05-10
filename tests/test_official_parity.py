@@ -6,6 +6,7 @@ import sys
 
 import torch
 
+from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.official_parity import probe_official_mamba_parity
 
 
@@ -52,7 +53,7 @@ def test_official_mamba_parity_probe_script_outputs_json(tmp_path) -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.88"
+    assert payload["version"] == __version__
     assert payload["stage"] == "official-mamba-parity-probe"
     assert payload["status"] == "skipped"
     assert payload["result"]["source_style_output_shape"] == [1, 2, 8]

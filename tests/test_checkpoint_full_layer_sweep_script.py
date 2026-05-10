@@ -6,6 +6,8 @@ import sys
 
 import torch
 
+from fhe_native_mamba3 import __version__
+
 
 def test_checkpoint_full_layer_sweep_script_runs_tracking_backend(tmp_path) -> None:
     checkpoint_path = tmp_path / "mamba.pt"
@@ -42,7 +44,7 @@ def test_checkpoint_full_layer_sweep_script_runs_tracking_backend(tmp_path) -> N
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.88"
+    assert payload["version"] == __version__
     assert payload["repo_commit"]
     assert payload["stage"] == "mamba-checkpoint-full-layer-sweep"
     assert payload["backend"] == "tracking"

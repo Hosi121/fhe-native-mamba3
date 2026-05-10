@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.artifact_validation import (
     current_git_commit,
     validate_artifact_file,
@@ -104,7 +105,7 @@ def test_validate_artifacts_script_reports_valid_payload(tmp_path: Path) -> None
     )
     payload = json.loads(completed.stdout)
 
-    assert payload["version"] == "0.2.88"
+    assert payload["version"] == __version__
     assert payload["valid"] is True
     assert payload["results"][0]["success_predicate_passed"] is True
 

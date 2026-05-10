@@ -1,6 +1,13 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.88"
+from importlib.metadata import PackageNotFoundError, version
+
+_PACKAGE_NAME = "fhe-native-mamba3"
+
+try:
+    __version__ = version(_PACKAGE_NAME)
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),

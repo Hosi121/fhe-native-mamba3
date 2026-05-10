@@ -4,6 +4,8 @@ import json
 import subprocess
 import sys
 
+from fhe_native_mamba3 import __version__
+
 
 def test_recurrence_chain_smoke_script_runs_tracking_backend() -> None:
     completed = subprocess.run(
@@ -29,7 +31,7 @@ def test_recurrence_chain_smoke_script_runs_tracking_backend() -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.88"
+    assert payload["version"] == __version__
     assert payload["stage"] == "openfhe-recurrence-ciphertext-chain-smoke"
     assert payload["no_intermediate_decrypt"] is True
     assert payload["measurement_scope"]["encrypted_chain"] is False

@@ -221,7 +221,7 @@ def mark_only_lora_trainable(model: nn.Module) -> tuple[str, ...]:
 
     trainable: list[str] = []
     for name, parameter in model.named_parameters():
-        keep = ".lora_a." in name or ".lora_b." in name
+        keep = _is_lora_parameter_name(name)
         parameter.requires_grad_(keep)
         if keep:
             trainable.append(name)
@@ -234,7 +234,16 @@ def lora_parameter_count(model: nn.Module) -> int:
     return sum(
         parameter.numel()
         for name, parameter in model.named_parameters()
-        if (".lora_a." in name or ".lora_b." in name) and parameter.requires_grad
+        if _is_lora_parameter_name(name) and parameter.requires_grad
+    )
+
+
+def _is_lora_parameter_name(name: str) -> bool:
+    return (
+        name.startswith("lora_a.")
+        or name.startswith("lora_b.")
+        or ".lora_a." in name
+        or ".lora_b." in name
     )
 
 

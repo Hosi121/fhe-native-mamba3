@@ -6,6 +6,8 @@ import sys
 
 import torch
 
+from fhe_native_mamba3 import __version__
+
 
 def test_checkpoint_client_decode_smoke_script_runs(tmp_path) -> None:
     checkpoint_path = tmp_path / "mamba.pt"
@@ -36,7 +38,7 @@ def test_checkpoint_client_decode_smoke_script_runs(tmp_path) -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.88"
+    assert payload["version"] == __version__
     assert payload["stage"] == "mamba-checkpoint-client-decode-smoke"
     assert payload["passed"] is True
     assert payload["measurement_scope"]["client_side_lm_head"] is True

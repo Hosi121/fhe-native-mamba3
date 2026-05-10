@@ -4,6 +4,8 @@ import json
 import subprocess
 import sys
 
+from fhe_native_mamba3 import __version__
+
 
 def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(tmp_path) -> None:
     profile_json = tmp_path / "profile.json"
@@ -72,7 +74,7 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.88"
+    assert payload["version"] == __version__
     assert payload["repo_commit"]
     assert payload["measurements"]["checkpoint_source_profile"]["range_score_layer"] == 7
     assert payload["measurements"]["client_decode_smoke"]["new_token_ids"] == [42]

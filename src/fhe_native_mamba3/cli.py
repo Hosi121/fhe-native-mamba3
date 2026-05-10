@@ -134,7 +134,7 @@ def inspect_cmd(args: argparse.Namespace) -> int:
         "config": asdict(config),
         "cost_per_block": asdict(estimate),
     }
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    emit_json_payload(payload)
     return 0
 
 
@@ -175,7 +175,7 @@ def cost_model_cmd(args: argparse.Namespace) -> int:
         "ckks": asdict(ckks),
         "integrated_cost": estimate_payload,
     }
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    emit_json_payload(payload)
     return 0
 
 
@@ -202,7 +202,7 @@ def openfhe_recurrence_cmd(args: argparse.Namespace) -> int:
         "operation": "encrypted static scalar MIMO recurrence",
         **result.to_json_dict(),
     }
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    emit_json_payload(payload)
     return 0
 
 
@@ -226,7 +226,7 @@ def stage0_mimo_cmd(args: argparse.Namespace) -> int:
         "version": __version__,
         **result,
     }
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    emit_json_payload(payload)
     return 0
 
 
