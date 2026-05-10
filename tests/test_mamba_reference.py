@@ -4,6 +4,7 @@ import torch
 
 from fhe_native_mamba3.mamba_reference import (
     build_mamba_source_recurrence_problem,
+    build_mamba_source_visible_handoff_tensors,
     compare_mamba_layer_reference,
     compare_mamba_source_delta,
     diagnose_mamba_source_layer,
@@ -150,6 +151,35 @@ def test_run_mamba_source_layer_returns_final_block_output() -> None:
     assert output.shape == layer_input.shape
     assert torch.isfinite(output).all()
     assert not torch.equal(output, layer_input)
+
+
+def test_mamba_source_visible_handoff_tensors_match_full_layer_output_shape() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    tensors = build_mamba_source_visible_handoff_tensors(
+        state_dict,
+        layer_input,
+        layer_index=0,
+        d_state=2,
+        mimo_rank=4,
+    )
+
+    assert tensors.gate.shape == (1, 3, 4)
+    assert tensors.skip_update.shape == (1, 3, 4)
+    assert tensors.out_proj_weight.shape == (8, 4)
+    assert tensors.residual.shape == (1, 3, 8)
+    assert tensors.expected_final_output.shape == (1, 3, 8)
+    assert torch.equal(
+        tensors.expected_final_output,
+        run_mamba_source_layer(
+            state_dict,
+            layer_input,
+            layer_index=0,
+            d_state=2,
+            mimo_rank=4,
+        ),
+    )
 
 
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:

@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.71"
+__version__ = "0.2.72"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -27,6 +27,10 @@ _LAZY_IMPORTS = {
     "CheckpointRecurrenceCorrectnessGate": (
         "fhe_native_mamba3.checkpoint_correctness",
         "CheckpointRecurrenceCorrectnessGate",
+    ),
+    "CheckpointFullLayerCiphertextGate": (
+        "fhe_native_mamba3.checkpoint_correctness",
+        "CheckpointFullLayerCiphertextGate",
     ),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
     "CiphertextHandoffLayer": (
@@ -62,6 +66,10 @@ _LAZY_IMPORTS = {
     "MambaSourceLayerDiagnostics": (
         "fhe_native_mamba3.mamba_reference",
         "MambaSourceLayerDiagnostics",
+    ),
+    "MambaSourceVisibleHandoffTensors": (
+        "fhe_native_mamba3.mamba_reference",
+        "MambaSourceVisibleHandoffTensors",
     ),
     "MambaStageRange": (
         "fhe_native_mamba3.mamba_reference",
@@ -150,6 +158,10 @@ _LAZY_IMPORTS = {
     "build_mamba_source_recurrence_problem": (
         "fhe_native_mamba3.mamba_reference",
         "build_mamba_source_recurrence_problem",
+    ),
+    "build_mamba_source_visible_handoff_tensors": (
+        "fhe_native_mamba3.mamba_reference",
+        "build_mamba_source_visible_handoff_tensors",
     ),
     "calibrate_weight_values": (
         "fhe_native_mamba3.weight_encoding",
@@ -275,6 +287,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_correctness",
         "run_checkpoint_recurrence_correctness_gate",
     ),
+    "run_checkpoint_full_layer_ciphertext_gate": (
+        "fhe_native_mamba3.checkpoint_correctness",
+        "run_checkpoint_full_layer_ciphertext_gate",
+    ),
+    "required_full_layer_visible_rotations": (
+        "fhe_native_mamba3.checkpoint_correctness",
+        "required_full_layer_visible_rotations",
+    ),
     "run_static_mimo_recurrence_ciphertexts_with_backend": (
         "fhe_native_mamba3.openfhe_backend",
         "run_static_mimo_recurrence_ciphertexts_with_backend",
@@ -330,6 +350,7 @@ __all__ = [
     "BootstrapExecutionSchedule",
     "BootstrapExecutionScheduleStep",
     "BootstrapSchedule",
+    "CheckpointFullLayerCiphertextGate",
     "CheckpointInspection",
     "CheckpointRecurrenceCorrectnessGate",
     "CheckpointTensorSpec",
@@ -351,6 +372,8 @@ __all__ = [
     "MambaLayerPlan",
     "MambaLayerReferenceResult",
     "MambaSourceDeltaResult",
+    "MambaSourceLayerDiagnostics",
+    "MambaSourceVisibleHandoffTensors",
     "OpenFheBootstrapConfig",
     "OpenFheBootstrapLatencyConfig",
     "OpenFheCkksBackend",
@@ -380,6 +403,7 @@ __all__ = [
     "backend_capability_matrix",
     "build_bootstrap_execution_schedule",
     "build_mamba_source_recurrence_problem",
+    "build_mamba_source_visible_handoff_tensors",
     "build_prefix_scan_metadata",
     "build_recurrence_bootstrap_plan",
     "build_rotation_inventory",
@@ -419,6 +443,8 @@ __all__ = [
     "prefix_decay_products",
     "profile_model_batch",
     "profile_recurrence_traces",
+    "required_full_layer_visible_rotations",
+    "run_checkpoint_full_layer_ciphertext_gate",
     "run_checkpoint_recurrence_correctness_gate",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",

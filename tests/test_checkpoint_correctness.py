@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_correctness import (
+    required_full_layer_visible_rotations,
+    run_checkpoint_full_layer_ciphertext_gate,
     run_checkpoint_recurrence_correctness_gate,
 )
 
@@ -116,6 +119,70 @@ def test_checkpoint_correctness_gate_does_not_claim_full_layer_when_out_proj_mis
     assert metadata["ready_for_gate_out_residual"] is False
     assert metadata["missing"] == ["out_projection"]
     assert metadata["full_layer_correctness_claimed"] is False
+
+
+def test_checkpoint_full_layer_ciphertext_gate_matches_source_visible_output() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+    backend = TrackingBackend(batch_size=8)
+
+    gate = run_checkpoint_full_layer_ciphertext_gate(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        input_mode="encrypted-dynamic-bc",
+        readout_strategy="rank-local",
+        atol=1e-6,
+    )
+    payload = gate.to_json_dict()
+
+    assert gate.passed is True
+    assert gate.full_layer_formula_checked is True
+    assert gate.official_mamba_parity is False
+    assert gate.full_model_correctness_claimed is False
+    assert gate.recurrence_ciphertext is True
+    assert gate.visible_handoff_ciphertext is True
+    assert gate.no_intermediate_decrypt is True
+    assert gate.max_abs_error < 1e-6
+    assert payload["plaintext_precomputed_stages"] == [
+        "rms_norm",
+        "causal_conv_silu",
+        "dynamic_b",
+        "dynamic_c",
+        "state_rank_decay",
+        "gate_values",
+    ]
+    assert payload["backend_stats"]["decrypt_count"] == 3
+    assert payload["backend_stats"]["ct_ct_mul_count"] >= 12
+
+
+def test_checkpoint_full_layer_ciphertext_gate_requires_visible_projection() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    state_dict.pop("backbone.layers.0.mixer.out_proj.weight")
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    with pytest.raises(ValueError, match="out_proj or gate"):
+        run_checkpoint_full_layer_ciphertext_gate(
+            state_dict,
+            layer_input,
+            d_state=2,
+            mimo_rank=4,
+        )
+
+
+def test_full_layer_visible_rotation_inventory_covers_rank_projection() -> None:
+    rotations = required_full_layer_visible_rotations(
+        d_model=8,
+        d_state=2,
+        mimo_rank=4,
+        readout_strategy="rank-local",
+    )
+
+    assert -7 in rotations
+    assert 6 in rotations
+    assert 1 in rotations
 
 
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:

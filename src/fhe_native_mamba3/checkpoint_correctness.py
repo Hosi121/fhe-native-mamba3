@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from torch import Tensor
@@ -18,10 +18,18 @@ from fhe_native_mamba3.ciphertext_handoff import (
 from fhe_native_mamba3.layout import ReadoutStrategy
 from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint
 from fhe_native_mamba3.mamba_reference import (
+    MambaSourceVisibleHandoffTensors,
     build_mamba_source_recurrence_problem,
+    build_mamba_source_visible_handoff_tensors,
     compare_mamba_layer_reference,
 )
-from fhe_native_mamba3.openfhe_backend import InputMode, run_static_mimo_recurrence_with_backend
+from fhe_native_mamba3.openfhe_backend import (
+    InputMode,
+    readout_output_slots,
+    required_readout_rotations,
+    run_static_mimo_recurrence_ciphertexts_with_backend,
+    run_static_mimo_recurrence_with_backend,
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,39 @@ class CheckpointRecurrenceCorrectnessGate:
 
     def to_json_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload["notes"] = list(self.notes)
+        return payload
+
+
+@dataclass(frozen=True)
+class CheckpointFullLayerCiphertextGate:
+    """Pass/fail gate for checkpoint-derived full visible-layer arithmetic."""
+
+    layer_index: int
+    d_model: int
+    d_state: int
+    mimo_rank: int
+    seq_len: int
+    backend: str
+    encrypted: bool
+    input_mode: str
+    readout_strategy: str
+    max_abs_error: float
+    atol: float
+    passed: bool
+    recurrence_ciphertext: bool
+    visible_handoff_ciphertext: bool
+    no_intermediate_decrypt: bool
+    full_layer_formula_checked: bool
+    official_mamba_parity: bool
+    full_model_correctness_claimed: bool
+    plaintext_precomputed_stages: tuple[str, ...]
+    backend_stats: dict[str, Any]
+    notes: tuple[str, ...]
+
+    def to_json_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["plaintext_precomputed_stages"] = list(self.plaintext_precomputed_stages)
         payload["notes"] = list(self.notes)
         return payload
 
@@ -186,6 +227,254 @@ def run_checkpoint_recurrence_correctness_gate(
         backend_stats=result.backend_stats,
         notes=tuple(notes),
     )
+
+
+def run_checkpoint_full_layer_ciphertext_gate(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    backend: FHEBackend | None = None,
+    input_mode: InputMode = "encrypted-dynamic-bc",
+    readout_strategy: ReadoutStrategy = "rank-local",
+    multiplicative_depth: int = 12,
+    atol: float = 1e-6,
+    norm_eps: float = 1e-5,
+) -> CheckpointFullLayerCiphertextGate:
+    """Check source-style full-layer output through encrypted rank handoff.
+
+    This is still a Stage 0 gate: RMSNorm, convolution, dynamic B/C, decay, and
+    gate values are produced by the transparent PyTorch source-style reference.
+    The encrypted path covers recurrence, skip addition, gate multiply,
+    out-projection, and residual addition, then decrypts only final visible
+    token outputs.
+    """
+
+    if atol < 0:
+        msg = "atol must be non-negative"
+        raise ValueError(msg)
+    problem = build_mamba_source_recurrence_problem(
+        state_dict,
+        layer_input,
+        layer_index=layer_index,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        norm_eps=norm_eps,
+    )
+    visible = build_mamba_source_visible_handoff_tensors(
+        state_dict,
+        layer_input,
+        layer_index=layer_index,
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        norm_eps=norm_eps,
+    )
+    batch_size = max(problem.d_state * problem.mimo_rank, visible.d_model)
+    resolved_backend = backend or TrackingBackend(batch_size=batch_size)
+    if resolved_backend.batch_size < batch_size:
+        msg = (
+            "full-layer ciphertext gate backend batch_size must cover recurrence and visible "
+            f"slots; need at least {batch_size}, got {resolved_backend.batch_size}"
+        )
+        raise ValueError(msg)
+
+    started_decrypts = resolved_backend.stats().decrypt_count
+    trace = run_static_mimo_recurrence_ciphertexts_with_backend(
+        replace(problem, d_skip=None),
+        backend=resolved_backend,
+        multiplicative_depth=multiplicative_depth,
+        readout_strategy=readout_strategy,
+        input_mode=input_mode,
+    )
+    decrypted_outputs = []
+    for token_index, recurrence_ct in enumerate(trace.output_ciphertexts):
+        final_ct = _visible_output_ciphertext(
+            backend=resolved_backend,
+            recurrence_ct=recurrence_ct,
+            output_slots=trace.output_slots,
+            visible=visible,
+            token_index=token_index,
+        )
+        decrypted_outputs.append(resolved_backend.decrypt(final_ct, length=visible.d_model))
+
+    expected_rows = tuple(
+        tuple(
+            float(value) for value in visible.expected_final_output[0, token_index].detach().cpu()
+        )
+        for token_index in range(visible.seq_len)
+    )
+    actual_rows = tuple(tuple(row) for row in decrypted_outputs)
+    max_abs_error = max(
+        (
+            abs(actual - expected)
+            for actual_row, expected_row in zip(actual_rows, expected_rows, strict=True)
+            for actual, expected in zip(actual_row, expected_row, strict=True)
+        ),
+        default=0.0,
+    )
+    no_intermediate_decrypt = (
+        resolved_backend.stats().decrypt_count - started_decrypts == visible.seq_len
+    )
+    return CheckpointFullLayerCiphertextGate(
+        layer_index=layer_index,
+        d_model=visible.d_model,
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        seq_len=problem.seq_len,
+        backend=resolved_backend.stats().backend,
+        encrypted=bool(resolved_backend.stats().encrypted),
+        input_mode=input_mode,
+        readout_strategy=readout_strategy,
+        max_abs_error=max_abs_error,
+        atol=atol,
+        passed=max_abs_error <= atol and no_intermediate_decrypt,
+        recurrence_ciphertext=True,
+        visible_handoff_ciphertext=True,
+        no_intermediate_decrypt=no_intermediate_decrypt,
+        full_layer_formula_checked=True,
+        official_mamba_parity=False,
+        full_model_correctness_claimed=False,
+        plaintext_precomputed_stages=(
+            "rms_norm",
+            "causal_conv_silu",
+            "dynamic_b",
+            "dynamic_c",
+            "state_rank_decay",
+            "gate_values",
+        ),
+        backend_stats=resolved_backend.stats().to_json_dict(),
+        notes=(
+            "checks source-style full-layer visible output, not official fused kernel parity",
+            "input-dependent pre-recurrence tensors are still plaintext-precomputed in Stage 0",
+        ),
+    )
+
+
+def _visible_output_ciphertext(
+    *,
+    backend: FHEBackend,
+    recurrence_ct: Any,
+    output_slots: tuple[int, ...],
+    visible: MambaSourceVisibleHandoffTensors,
+    token_index: int,
+) -> Any:
+    rank_ct = backend.add(
+        recurrence_ct,
+        backend.encrypt(
+            _rank_slot_vector(
+                visible.skip_update[0, token_index],
+                output_slots=output_slots,
+                batch_size=backend.batch_size,
+            )
+        ),
+    )
+    gated_ct = backend.mul_ct(
+        rank_ct,
+        backend.encrypt(
+            _rank_slot_vector(
+                visible.gate[0, token_index],
+                output_slots=output_slots,
+                batch_size=backend.batch_size,
+            )
+        ),
+    )
+    projected_ct = _project_rank_slots_to_visible(
+        backend=backend,
+        rank_ct=gated_ct,
+        output_slots=output_slots,
+        out_proj_weight=visible.out_proj_weight,
+        d_model=visible.d_model,
+    )
+    return backend.add(
+        projected_ct,
+        backend.encrypt(
+            [float(value) for value in visible.residual[0, token_index].detach().cpu()]
+        ),
+    )
+
+
+def _rank_slot_vector(
+    values: Tensor,
+    *,
+    output_slots: tuple[int, ...],
+    batch_size: int,
+) -> list[float]:
+    if len(output_slots) != int(values.numel()):
+        msg = "output_slots length must match rank values"
+        raise ValueError(msg)
+    vector = [0.0] * batch_size
+    for slot, value in zip(output_slots, values.detach().cpu(), strict=True):
+        vector[slot] = float(value)
+    return vector
+
+
+def _project_rank_slots_to_visible(
+    *,
+    backend: FHEBackend,
+    rank_ct: Any,
+    output_slots: tuple[int, ...],
+    out_proj_weight: Tensor,
+    d_model: int,
+) -> Any:
+    if backend.batch_size < d_model:
+        msg = f"backend batch_size={backend.batch_size} is smaller than d_model={d_model}"
+        raise ValueError(msg)
+    if int(out_proj_weight.shape[0]) != d_model:
+        msg = "out_proj_weight first dimension must match d_model"
+        raise ValueError(msg)
+    if int(out_proj_weight.shape[1]) != len(output_slots):
+        msg = "out_proj_weight second dimension must match recurrence rank"
+        raise ValueError(msg)
+
+    output_ct = backend.encrypt([0.0] * backend.batch_size)
+    weights = out_proj_weight.detach().cpu()
+    for visible_index in range(d_model):
+        for rank_index, source in enumerate(output_slots):
+            weight = float(weights[visible_index, rank_index])
+            if weight == 0.0:
+                continue
+            mask = [0.0] * backend.batch_size
+            mask[source] = weight
+            term = backend.mul_plain(rank_ct, backend.encode(mask))
+            shift = source - visible_index
+            if shift:
+                term = backend.rotate(term, shift)
+            output_ct = backend.add(output_ct, term)
+    return output_ct
+
+
+def required_full_layer_visible_rotations(
+    *,
+    d_model: int,
+    d_state: int,
+    mimo_rank: int,
+    readout_strategy: ReadoutStrategy = "rank-local",
+) -> tuple[int, ...]:
+    """Rotations for recurrence readout plus rank-to-visible projection."""
+
+    if d_model <= 0:
+        msg = "d_model must be positive"
+        raise ValueError(msg)
+    output_slots = readout_output_slots(
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        readout_strategy=readout_strategy,
+    )
+    rotations = set(
+        required_readout_rotations(
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            readout_strategy=readout_strategy,
+        )
+    )
+    for visible_index in range(d_model):
+        for source in output_slots:
+            shift = source - visible_index
+            if shift:
+                rotations.add(shift)
+    return tuple(sorted(rotations))
 
 
 def _validate_visible_handoff_readiness(

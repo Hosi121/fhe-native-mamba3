@@ -105,6 +105,22 @@ class MambaSourceLayerDiagnostics:
 
 
 @dataclass(frozen=True)
+class MambaSourceVisibleHandoffTensors:
+    """Source-style tensors needed to lift recurrence output to visible output."""
+
+    layer_index: int
+    d_model: int
+    d_state: int
+    mimo_rank: int
+    seq_len: int
+    gate: Tensor
+    skip_update: Tensor
+    out_proj_weight: Tensor
+    residual: Tensor
+    expected_final_output: Tensor
+
+
+@dataclass(frozen=True)
 class _LayerTensors:
     norm_weight: Tensor
     in_rank_weight: Tensor
@@ -601,6 +617,81 @@ def run_mamba_source_layer(
         msg = f"layer {layer_index} is missing out_proj or gate tensors needed for propagation"
         raise ValueError(msg)
     return stages.final_block_output
+
+
+def build_mamba_source_visible_handoff_tensors(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    norm_eps: float = 1e-5,
+) -> MambaSourceVisibleHandoffTensors:
+    """Build source-style tensors for encrypted visible-output handoff.
+
+    The returned tensors are intentionally input-dependent. They let the Stage 0
+    encrypted recurrence path validate the remaining rank-output -> gate ->
+    out-projection -> residual arithmetic while the earlier RMSNorm/conv/B/C/
+    decay stages are still produced by the transparent PyTorch reference.
+    """
+
+    if layer_input.ndim != 3:
+        msg = "layer_input must have shape [batch, seq_len, d_model]"
+        raise ValueError(msg)
+    if layer_input.shape[0] != 1:
+        msg = "visible handoff tensor extraction currently supports batch size 1"
+        raise ValueError(msg)
+
+    plan = plan_mamba_checkpoint(state_dict)
+    if layer_index >= len(plan.layers):
+        msg = f"layer_index {layer_index} is not present in the state_dict"
+        raise ValueError(msg)
+    layer = plan.layers[layer_index]
+    resolved_d_state = d_state if d_state is not None else layer.source_d_state
+    resolved_rank = mimo_rank if mimo_rank is not None else layer.source_inner_dim
+    if resolved_d_state is None or resolved_rank is None:
+        msg = "d_state and mimo_rank must be provided when they cannot be inferred"
+        raise ValueError(msg)
+
+    tensors = _build_layer_tensors(
+        state_dict,
+        layer_index=layer_index,
+        d_model=int(layer_input.shape[-1]),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        include_gate=True,
+    )
+    stages = _run_source_dynamic_formula(layer_input, tensors, norm_eps=norm_eps)
+    if (
+        tensors.gate_weight is None
+        or tensors.out_rank_weight is None
+        or stages.final_block_output is None
+    ):
+        msg = f"layer {layer_index} is missing out_proj or gate tensors needed for handoff"
+        raise ValueError(msg)
+
+    dtype = layer_input.dtype
+    device = layer_input.device
+    gate = functional.silu(
+        functional.linear(
+            stages.rms_norm_output,
+            tensors.gate_weight.to(device=device, dtype=dtype),
+        )
+    )
+    skip_update = stages.causal_conv_post_silu * tensors.d_skip.to(device=device, dtype=dtype)
+    return MambaSourceVisibleHandoffTensors(
+        layer_index=layer_index,
+        d_model=int(layer_input.shape[-1]),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        seq_len=int(layer_input.shape[1]),
+        gate=gate,
+        skip_update=skip_update,
+        out_proj_weight=tensors.out_rank_weight.to(device=device, dtype=dtype),
+        residual=layer_input,
+        expected_final_output=stages.final_block_output,
+    )
 
 
 def _build_layer_tensors(
