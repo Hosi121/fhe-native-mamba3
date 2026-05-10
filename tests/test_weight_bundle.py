@@ -57,13 +57,23 @@ def test_weight_bundle_manifest_can_be_loaded_without_weights(tmp_path) -> None:
 
 
 def test_weight_bundle_loader_fills_legacy_missing_recurrence_extras(tmp_path) -> None:
-    config = FheMamba3Config(vocab_size=16, d_model=8, n_layers=1, d_state=2, mimo_rank=2)
+    config = FheMamba3Config(
+        vocab_size=16,
+        d_model=8,
+        n_layers=1,
+        d_state=2,
+        mimo_rank=2,
+        dt_rank=2,
+    )
     model = FheMamba3ForCausalLM(config)
     manifest = save_weight_bundle(model, tmp_path)
     weights_path = tmp_path / manifest.weights_file
     state_dict = torch.load(weights_path, weights_only=True)
     del state_dict["blocks.0.conv1d_weight"]
     del state_dict["blocks.0.conv1d_bias"]
+    del state_dict["blocks.0.dt_in_weight"]
+    del state_dict["blocks.0.dt_proj_weight"]
+    del state_dict["blocks.0.dt_proj_bias"]
     del state_dict["blocks.0.d_skip"]
     torch.save(state_dict, weights_path)
 
@@ -73,6 +83,13 @@ def test_weight_bundle_loader_fills_legacy_missing_recurrence_extras(tmp_path) -
     expected_conv[:, -1] = 1.0
     assert torch.equal(restored.blocks[0].conv1d_weight, expected_conv)
     assert torch.equal(restored.blocks[0].conv1d_bias, torch.zeros(config.mimo_rank))
+    assert torch.equal(
+        restored.blocks[0].dt_in_weight, torch.zeros(config.dt_rank, config.mimo_rank)
+    )
+    assert torch.equal(
+        restored.blocks[0].dt_proj_weight, torch.zeros(config.mimo_rank, config.dt_rank)
+    )
+    assert torch.equal(restored.blocks[0].dt_proj_bias, torch.zeros(config.mimo_rank))
     assert torch.equal(restored.blocks[0].d_skip, torch.ones(config.mimo_rank))
 
 

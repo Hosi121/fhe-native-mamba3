@@ -226,6 +226,7 @@ def adapt_mamba_state_dict_to_model(
     vocab_size, d_model = (int(embedding.shape[0]), int(embedding.shape[1]))
     inferred_layers = _infer_layer_count(source_state_dict)
     adapted_layers = n_layers if n_layers is not None else max(1, inferred_layers)
+    dt_rank = _infer_dt_rank(source_state_dict)
     if adapted_layers <= 0:
         msg = "n_layers must be positive when provided"
         raise ValueError(msg)
@@ -239,6 +240,7 @@ def adapt_mamba_state_dict_to_model(
             n_layers=adapted_layers,
             d_state=d_state,
             mimo_rank=mimo_rank,
+            dt_rank=dt_rank,
             max_seq_len=max_seq_len,
             bc_mode="static",
             decay_mode="scalar",
@@ -380,6 +382,47 @@ def _adapt_layer(
         )
     else:
         statuses.append(_initialized_status(f"blocks.{layer_index}.conv1d_bias", block.conv1d_bias))
+    dt_source = _extract_dt_source(
+        source_state_dict,
+        x_proj_key=x_proj_key,
+        dt_rank=block.config.dt_rank,
+    )
+    if dt_source is not None:
+        _copy_exact_or_fit(
+            block.dt_in_weight,
+            dt_source[1],
+            target=f"blocks.{layer_index}.dt_in_weight",
+            source=dt_source[0],
+            statuses=statuses,
+        )
+    else:
+        statuses.append(
+            _initialized_status(f"blocks.{layer_index}.dt_in_weight", block.dt_in_weight)
+        )
+    if dt_proj_weight_key is not None and block.dt_proj_weight is not None:
+        _copy_exact_or_fit(
+            block.dt_proj_weight,
+            source_state_dict[dt_proj_weight_key],
+            target=f"blocks.{layer_index}.dt_proj_weight",
+            source=dt_proj_weight_key,
+            statuses=statuses,
+        )
+    else:
+        statuses.append(
+            _initialized_status(f"blocks.{layer_index}.dt_proj_weight", block.dt_proj_weight)
+        )
+    if dt_proj_bias_key is not None and block.dt_proj_bias is not None:
+        _copy_exact_or_fit(
+            block.dt_proj_bias,
+            source_state_dict[dt_proj_bias_key],
+            target=f"blocks.{layer_index}.dt_proj_bias",
+            source=dt_proj_bias_key,
+            statuses=statuses,
+        )
+    else:
+        statuses.append(
+            _initialized_status(f"blocks.{layer_index}.dt_proj_bias", block.dt_proj_bias)
+        )
 
     if out_proj_key is not None:
         _copy_exact_or_fit(
@@ -463,20 +506,6 @@ def _adapt_layer(
             _initialized_status(f"blocks.{layer_index}.decay_logits", block.decay_logits)
         )
 
-    for key, target_name in (
-        (dt_proj_weight_key, "dt_proj.weight"),
-        (dt_proj_bias_key if a_log_key is None else None, "dt_proj.bias"),
-    ):
-        if key is not None:
-            statuses.append(
-                _skipped_status(
-                    target=f"blocks.{layer_index}.{target_name}",
-                    source=key,
-                    tensor=source_state_dict[key],
-                    message=("not represented in the current FHE-native static recurrence adapter"),
-                )
-            )
-
 
 def _extract_bc_sources(
     source_state_dict: dict[str, torch.Tensor],
@@ -499,6 +528,18 @@ def _extract_bc_sources(
     b = x_proj[b_start : b_start + d_state]
     c = x_proj[c_start : c_start + d_state]
     return (f"{x_proj_key}[B]", b), (f"{x_proj_key}[C]", c)
+
+
+def _extract_dt_source(
+    source_state_dict: dict[str, torch.Tensor],
+    *,
+    x_proj_key: str | None,
+    dt_rank: int,
+) -> tuple[str, torch.Tensor] | None:
+    if x_proj_key is None or dt_rank <= 0:
+        return None
+    x_proj = _require_matrix(source_state_dict[x_proj_key], x_proj_key).detach().float().cpu()
+    return (f"{x_proj_key}[dt]", x_proj[:dt_rank])
 
 
 def _decay_logits_from_a_log(
@@ -699,6 +740,14 @@ def _infer_layer_count(state_dict: dict[str, torch.Tensor]) -> int:
     if not layer_indices:
         return 0
     return max(layer_indices) + 1
+
+
+def _infer_dt_rank(state_dict: dict[str, torch.Tensor]) -> int:
+    for layer_index in range(_infer_layer_count(state_dict)):
+        dt_rank = _plan_layer(state_dict, layer_index=layer_index).inferred_dt_rank
+        if dt_rank is not None:
+            return max(0, dt_rank)
+    return 0
 
 
 def _plan_layer(

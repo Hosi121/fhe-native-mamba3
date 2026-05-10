@@ -22,6 +22,7 @@ class OpenFheRecurrenceProblem:
     decay: tuple[float, ...]
     b: tuple[tuple[float, ...], ...]
     c: tuple[tuple[float, ...], ...]
+    decay_by_token: tuple[tuple[float, ...], ...] | None = None
     d_skip: tuple[float, ...] | None = None
 
     @property
@@ -95,10 +96,11 @@ def plaintext_static_recurrence(
 
     state = [[0.0 for _ in range(problem.mimo_rank)] for _ in range(problem.d_state)]
     outputs: list[tuple[float, ...]] = []
-    for rank_input in problem.rank_inputs:
+    for t, rank_input in enumerate(problem.rank_inputs):
+        decay = problem.decay_by_token[t] if problem.decay_by_token is not None else problem.decay
         for n in range(problem.d_state):
             for r in range(problem.mimo_rank):
-                state[n][r] = problem.decay[r] * state[n][r] + problem.b[n][r] * rank_input[r]
+                state[n][r] = decay[r] * state[n][r] + problem.b[n][r] * rank_input[r]
         outputs.append(
             tuple(
                 sum(problem.c[n][r] * state[n][r] for n in range(problem.d_state))
@@ -327,6 +329,14 @@ def run_static_mimo_recurrence_with_backend(
     if problem.d_skip is not None and len(problem.d_skip) != rank:
         msg = f"d_skip length must match mimo_rank={rank}"
         raise ValueError(msg)
+    if problem.decay_by_token is not None:
+        if len(problem.decay_by_token) != problem.seq_len:
+            msg = "decay_by_token length must match seq_len"
+            raise ValueError(msg)
+        bad_rows = [len(row) for row in problem.decay_by_token if len(row) != rank]
+        if bad_rows:
+            msg = f"each decay_by_token row must match mimo_rank={rank}"
+            raise ValueError(msg)
 
     started = time.perf_counter()
     state_ct = backend.encrypt([0.0] * backend.batch_size)
@@ -341,7 +351,7 @@ def run_static_mimo_recurrence_with_backend(
         readout_strategy=readout_strategy,
     )
     client_plaintext_public_weight_multiplies = 0
-    for rank_input in problem.rank_inputs:
+    for t, rank_input in enumerate(problem.rank_inputs):
         input_ct = None
         if input_mode == "server-bx":
             input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
@@ -349,8 +359,15 @@ def run_static_mimo_recurrence_with_backend(
         else:
             update_ct = backend.encrypt(_expanded_update(rank_input, problem.b, d_state, rank))
             client_plaintext_public_weight_multiplies += slots
+        if problem.decay_by_token is None:
+            decayed_state_ct = backend.mul_plain(state_ct, decay_pt)
+        else:
+            decay_ct = backend.encrypt(
+                [problem.decay_by_token[t][r] for r in range(rank) for _ in range(d_state)]
+            )
+            decayed_state_ct = backend.mul_ct(state_ct, decay_ct)
         state_ct = backend.add(
-            backend.mul_plain(state_ct, decay_pt),
+            decayed_state_ct,
             update_ct,
         )
         contrib_ct = backend.mul_plain(state_ct, c_pt)

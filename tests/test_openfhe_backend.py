@@ -6,11 +6,14 @@ from fhe_native_mamba3.backends.openfhe import (
     ckks_batch_size_for_slots,
     ckks_ring_dimension_for_batch_size,
 )
+from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.openfhe_backend import (
+    OpenFheRecurrenceProblem,
     make_demo_problem,
     readout_output_slots,
     required_readout_rotations,
     run_openfhe_static_recurrence,
+    run_static_mimo_recurrence_with_backend,
 )
 
 
@@ -55,3 +58,23 @@ def test_readout_layout_metadata_distinguishes_dense_and_rank_local() -> None:
         mimo_rank=4,
         readout_strategy="rank-local",
     ) == (0, 4, 8, 12)
+
+
+def test_dynamic_decay_uses_ciphertext_multiply_path() -> None:
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((1.0, -2.0), (0.5, 0.25)),
+        decay=(0.1, 0.2),
+        decay_by_token=((0.5, 0.6), (0.7, 0.8)),
+        b=((0.25, -0.5),),
+        c=((2.0, -1.0),),
+    )
+
+    result = run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=TrackingBackend(batch_size=2),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+    )
+
+    assert result.max_abs_error == 0
+    assert result.backend_stats["ct_ct_mul_count"] == problem.seq_len

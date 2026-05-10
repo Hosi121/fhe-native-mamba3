@@ -230,8 +230,16 @@ def _migrate_state_dict_for_model(
 
     model_state = model.state_dict()
     migrated = dict(state_dict)
+    recurrent_extra_suffixes = (
+        ".conv1d_weight",
+        ".conv1d_bias",
+        ".dt_in_weight",
+        ".dt_proj_weight",
+        ".dt_proj_bias",
+        ".d_skip",
+    )
     for name, tensor in model_state.items():
-        if name.endswith((".conv1d_weight", ".conv1d_bias", ".d_skip")) and name not in migrated:
+        if name.endswith(recurrent_extra_suffixes) and name not in migrated:
             migrated[name] = tensor.detach().clone()
     return migrated
 

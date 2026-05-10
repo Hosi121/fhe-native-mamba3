@@ -103,6 +103,7 @@ def test_mamba_checkpoint_bundle_adapts_huggingface_mamba_keys(tmp_path) -> None
     assert plan.complete_layer_count == 1
     assert plan.inferred_d_state == 3
     assert plan.inferred_mimo_rank == 6
+    assert model.config.dt_rank == 2
     assert plan.layers[0].dt_proj_weight_key == "backbone.layers.0.mixer.dt_proj.weight"
     assert plan.layers[0].dt_proj_bias_key == "backbone.layers.0.mixer.dt_proj.bias"
     assert plan.layers[0].out_proj_key == "backbone.layers.0.mixer.out_proj.weight"
@@ -119,6 +120,13 @@ def test_mamba_checkpoint_bundle_adapts_huggingface_mamba_keys(tmp_path) -> None
         source["backbone.layers.0.mixer.conv1d.weight"][:, 0, :],
     )
     assert torch.equal(model.blocks[0].conv1d_bias, source["backbone.layers.0.mixer.conv1d.bias"])
+    assert torch.equal(
+        model.blocks[0].dt_in_weight, source["backbone.layers.0.mixer.x_proj.weight"][:2]
+    )
+    assert torch.equal(
+        model.blocks[0].dt_proj_weight, source["backbone.layers.0.mixer.dt_proj.weight"]
+    )
+    assert torch.equal(model.blocks[0].dt_proj_bias, source["backbone.layers.0.mixer.dt_proj.bias"])
     dt = torch.nn.functional.softplus(source["backbone.layers.0.mixer.dt_proj.bias"])
     decay = torch.exp(-dt).clamp(min=1e-4, max=1 - 1e-4)
     assert torch.allclose(model.blocks[0].decay_logits, torch.log(decay / (1 - decay)))
@@ -128,7 +136,7 @@ def test_mamba_checkpoint_bundle_adapts_huggingface_mamba_keys(tmp_path) -> None
     assert torch.equal(
         model.blocks[0].c_static, source["backbone.layers.0.mixer.x_proj.weight"][5:8]
     )
-    assert report.skipped_count == 1
+    assert report.skipped_count == 0
 
 
 def _fake_mamba_state_dict() -> dict[str, torch.Tensor]:

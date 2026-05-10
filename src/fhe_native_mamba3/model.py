@@ -32,6 +32,7 @@ class FheMamba3Config:
     n_layers: int = 2
     d_state: int = 16
     mimo_rank: int = 8
+    dt_rank: int = 0
     max_seq_len: int = 256
     bc_mode: BcMode = "static"
     decay_mode: DecayMode = "scalar"
@@ -52,6 +53,9 @@ class FheMamba3Config:
             raise ValueError(msg)
         if self.mimo_rank <= 0:
             msg = "mimo_rank must be positive"
+            raise ValueError(msg)
+        if self.dt_rank < 0:
+            msg = "dt_rank must be non-negative"
             raise ValueError(msg)
         if self.bc_mode not in {"static", "dynamic"}:
             msg = f"unsupported bc_mode: {self.bc_mode}"
@@ -132,6 +136,14 @@ class FheMamba3Block(nn.Module):
         self.in_rank = nn.Linear(config.d_model, config.mimo_rank)
         self.conv1d_weight = nn.Parameter(torch.empty(config.mimo_rank, config.conv_kernel_size))
         self.conv1d_bias = nn.Parameter(torch.zeros(config.mimo_rank))
+        if config.dt_rank > 0:
+            self.dt_in_weight = nn.Parameter(torch.empty(config.dt_rank, config.mimo_rank))
+            self.dt_proj_weight = nn.Parameter(torch.empty(config.mimo_rank, config.dt_rank))
+            self.dt_proj_bias = nn.Parameter(torch.zeros(config.mimo_rank))
+        else:
+            self.register_parameter("dt_in_weight", None)
+            self.register_parameter("dt_proj_weight", None)
+            self.register_parameter("dt_proj_bias", None)
         self.skip = nn.Linear(config.d_model, config.d_model)
         self.out_rank = nn.Linear(config.mimo_rank, config.d_model, bias=False)
         self.d_skip = nn.Parameter(torch.ones(config.mimo_rank))
@@ -163,6 +175,12 @@ class FheMamba3Block(nn.Module):
         with torch.no_grad():
             self.conv1d_weight[:, -1] = 1.0
         nn.init.zeros_(self.conv1d_bias)
+        if self.dt_in_weight is not None:
+            nn.init.zeros_(self.dt_in_weight)
+        if self.dt_proj_weight is not None:
+            nn.init.zeros_(self.dt_proj_weight)
+        if self.dt_proj_bias is not None:
+            nn.init.zeros_(self.dt_proj_bias)
         nn.init.xavier_uniform_(self.skip.weight)
         nn.init.zeros_(self.skip.bias)
         nn.init.xavier_uniform_(self.out_rank.weight)
@@ -191,6 +209,36 @@ class FheMamba3Block(nn.Module):
             groups=self.config.mimo_rank,
         )
         return convolved.transpose(1, 2)
+
+    def _decay_by_token(self, rank_input: Tensor, base_decay: Tensor) -> Tensor | None:
+        if (
+            self.config.dt_rank == 0
+            or self.dt_in_weight is None
+            or self.dt_proj_weight is None
+            or self.dt_proj_bias is None
+        ):
+            return None
+
+        dt_hidden = functional.linear(
+            rank_input,
+            self.dt_in_weight.to(dtype=rank_input.dtype, device=rank_input.device),
+        )
+        dt = functional.softplus(
+            functional.linear(
+                dt_hidden,
+                self.dt_proj_weight.to(dtype=rank_input.dtype, device=rank_input.device),
+                self.dt_proj_bias.to(dtype=rank_input.dtype, device=rank_input.device),
+            )
+        )
+        base = base_decay.view(self.config.mimo_rank).clamp(min=1e-4, max=1 - 1e-4)
+        dt0 = functional.softplus(
+            self.dt_proj_bias.to(dtype=rank_input.dtype, device=rank_input.device)
+        ).clamp(min=1e-6)
+        a_pos = (-torch.log(base) / dt0).clamp(min=0.0)
+        return torch.exp(-a_pos.view(1, 1, self.config.mimo_rank) * dt).clamp(
+            min=1e-4,
+            max=1 - 1e-4,
+        )
 
     def _forward_static_windowed(
         self,
@@ -241,6 +289,7 @@ class FheMamba3Block(nn.Module):
         x = self.in_norm(x)
         rank_input = self._causal_rank_conv(self.in_rank(x))
         decay = self._decay(dtype=x.dtype, device=x.device)
+        decay_by_token = self._decay_by_token(rank_input, decay)
         state = x.new_zeros(batch, self.config.d_state, self.config.mimo_rank)
         outputs: list[Tensor] = []
         state_abs_max = 0.0
@@ -259,7 +308,10 @@ class FheMamba3Block(nn.Module):
             else:
                 for t in range(seq_len):
                     update_term = b_terms.unsqueeze(0) * rank_input[:, t].unsqueeze(1)
-                    state = decay * state + update_term
+                    step_decay = (
+                        decay if decay_by_token is None else decay_by_token[:, t].unsqueeze(1)
+                    )
+                    state = step_decay * state + update_term
                     state_abs_max = max(state_abs_max, float(state.detach().abs().max().cpu()))
                     update_abs_max = max(
                         update_abs_max,
@@ -281,7 +333,8 @@ class FheMamba3Block(nn.Module):
             c_terms = self.c_dynamic(x).view(shape)
             for t in range(seq_len):
                 update_term = b_terms[:, t] * rank_input[:, t].unsqueeze(1)
-                state = decay * state + update_term
+                step_decay = decay if decay_by_token is None else decay_by_token[:, t].unsqueeze(1)
+                state = step_decay * state + update_term
                 state_abs_max = max(state_abs_max, float(state.detach().abs().max().cpu()))
                 update_abs_max = max(update_abs_max, float(update_term.detach().abs().max().cpu()))
                 y_rank = (c_terms[:, t] * state).sum(dim=1)

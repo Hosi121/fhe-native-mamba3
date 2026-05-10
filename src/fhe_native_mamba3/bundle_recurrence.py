@@ -29,6 +29,9 @@ class WeightBundleRecurrenceProblem:
             "problem": {
                 "rank_inputs": [list(row) for row in self.problem.rank_inputs],
                 "decay": list(self.problem.decay),
+                "decay_by_token": [list(row) for row in self.problem.decay_by_token]
+                if self.problem.decay_by_token is not None
+                else None,
                 "b": [list(row) for row in self.problem.b],
                 "c": [list(row) for row in self.problem.c],
                 "d_skip": list(self.problem.d_skip) if self.problem.d_skip is not None else None,
@@ -79,6 +82,10 @@ def build_weight_bundle_recurrence_problem(
         x_norm = block.in_norm(x)
         rank_input = block._causal_rank_conv(block.in_rank(x_norm))[0].detach().cpu()
         decay = block._decay(dtype=rank_input.dtype, device=rank_input.device).view(-1)
+        decay_by_token_tensor = block._decay_by_token(rank_input.unsqueeze(0), decay)
+        decay_by_token = (
+            decay_by_token_tensor[0].detach().cpu() if decay_by_token_tensor is not None else None
+        )
         b_static = block.b_static.detach().cpu()
         c_static = block.c_static.detach().cpu()
         d_skip = block.d_skip.detach().cpu()
@@ -86,6 +93,7 @@ def build_weight_bundle_recurrence_problem(
     problem = OpenFheRecurrenceProblem(
         rank_inputs=_tensor_rows(rank_input),
         decay=_tensor_vector(decay),
+        decay_by_token=_tensor_rows(decay_by_token) if decay_by_token is not None else None,
         b=_tensor_rows(b_static),
         c=_tensor_rows(c_static),
         d_skip=_tensor_vector(d_skip),
