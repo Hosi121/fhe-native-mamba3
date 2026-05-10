@@ -435,6 +435,7 @@ def _adapt_layer(
         decay_logits = _decay_logits_from_a_log(
             source_state_dict[a_log_key],
             target_rank=block.config.mimo_rank,
+            dt_bias=source_state_dict[dt_proj_bias_key] if dt_proj_bias_key is not None else None,
         )
         _copy_exact_or_fit(
             block.decay_logits,
@@ -443,6 +444,19 @@ def _adapt_layer(
             source=a_log_key,
             statuses=statuses,
         )
+        if dt_proj_bias_key is not None:
+            statuses.append(
+                AdapterTensorStatus(
+                    target=f"blocks.{layer_index}.decay_logits",
+                    source=dt_proj_bias_key,
+                    status="adapted",
+                    target_shape=tuple(int(dim) for dim in block.decay_logits.shape),
+                    source_shape=tuple(
+                        int(dim) for dim in source_state_dict[dt_proj_bias_key].shape
+                    ),
+                    message="folded dt_proj.bias into static decay_logits",
+                )
+            )
     else:
         block.decay_logits.zero_()
         statuses.append(
@@ -451,7 +465,7 @@ def _adapt_layer(
 
     for key, target_name in (
         (dt_proj_weight_key, "dt_proj.weight"),
-        (dt_proj_bias_key, "dt_proj.bias"),
+        (dt_proj_bias_key if a_log_key is None else None, "dt_proj.bias"),
     ):
         if key is not None:
             statuses.append(
@@ -487,7 +501,12 @@ def _extract_bc_sources(
     return (f"{x_proj_key}[B]", b), (f"{x_proj_key}[C]", c)
 
 
-def _decay_logits_from_a_log(a_log: torch.Tensor, *, target_rank: int) -> torch.Tensor:
+def _decay_logits_from_a_log(
+    a_log: torch.Tensor,
+    *,
+    target_rank: int,
+    dt_bias: torch.Tensor | None = None,
+) -> torch.Tensor:
     raw = a_log.detach().float().cpu()
     if raw.ndim >= 2:
         raw = raw.mean(dim=-1)
@@ -495,7 +514,13 @@ def _decay_logits_from_a_log(a_log: torch.Tensor, *, target_rank: int) -> torch.
     if raw.numel() == 0:
         return torch.zeros(target_rank)
     fitted = _fit_tensor(raw, (target_rank,))
-    decay = torch.exp(-torch.exp(fitted)).clamp(min=1e-4, max=1 - 1e-4)
+    if dt_bias is None:
+        dt = torch.ones(target_rank)
+    else:
+        dt = torch.nn.functional.softplus(
+            _fit_tensor(dt_bias.detach().float().cpu(), (target_rank,))
+        )
+    decay = torch.exp(-torch.exp(fitted) * dt).clamp(min=1e-4, max=1 - 1e-4)
     return torch.log(decay / (1 - decay))
 
 

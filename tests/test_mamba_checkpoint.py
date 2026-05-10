@@ -119,13 +119,16 @@ def test_mamba_checkpoint_bundle_adapts_huggingface_mamba_keys(tmp_path) -> None
         source["backbone.layers.0.mixer.conv1d.weight"][:, 0, :],
     )
     assert torch.equal(model.blocks[0].conv1d_bias, source["backbone.layers.0.mixer.conv1d.bias"])
+    dt = torch.nn.functional.softplus(source["backbone.layers.0.mixer.dt_proj.bias"])
+    decay = torch.exp(-dt).clamp(min=1e-4, max=1 - 1e-4)
+    assert torch.allclose(model.blocks[0].decay_logits, torch.log(decay / (1 - decay)))
     assert torch.equal(
         model.blocks[0].b_static, source["backbone.layers.0.mixer.x_proj.weight"][2:5]
     )
     assert torch.equal(
         model.blocks[0].c_static, source["backbone.layers.0.mixer.x_proj.weight"][5:8]
     )
-    assert report.skipped_count == 2
+    assert report.skipped_count == 1
 
 
 def _fake_mamba_state_dict() -> dict[str, torch.Tensor]:
