@@ -687,7 +687,10 @@ def mamba_checkpoint_compare_reference_cmd(args: argparse.Namespace) -> int:
 
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model
-    from fhe_native_mamba3.mamba_reference import compare_mamba_layer_reference
+    from fhe_native_mamba3.mamba_reference import (
+        compare_mamba_layer_reference,
+        compare_mamba_source_delta,
+    )
 
     source_state_dict, resolved_key = load_checkpoint_state_dict(
         args.checkpoint,
@@ -732,6 +735,19 @@ def mamba_checkpoint_compare_reference_cmd(args: argparse.Namespace) -> int:
             final_block_output=final_block_output,
             norm_eps=args.norm_eps,
         )
+        source_delta = (
+            compare_mamba_source_delta(
+                source_state_dict,
+                x,
+                layer_index=args.layer_index,
+                d_state=d_state,
+                mimo_rank=mimo_rank,
+                final_block_output=final_block_output,
+                norm_eps=args.norm_eps,
+            )
+            if args.include_source_delta
+            else None
+        )
 
     exact_errors = _mamba_reference_exact_errors(comparison)
     max_exact_error = max(exact_errors.values(), default=0.0)
@@ -768,9 +784,20 @@ def mamba_checkpoint_compare_reference_cmd(args: argparse.Namespace) -> int:
             "dt_rank": model.config.dt_rank,
             "n_layers": required_layers,
             "include_final": args.include_final,
+            "include_source_delta": args.include_source_delta,
         },
         "comparison": comparison_payload,
     }
+    if source_delta is not None:
+        source_delta_payload = source_delta.to_json_dict()
+        source_delta_payload.update(
+            {
+                "scope": "source-style-delta",
+                "reference_formula": "source-style-dynamic-bc-state-rank-decay",
+                "official_mamba_parity": False,
+            }
+        )
+        payload["source_delta"] = source_delta_payload
     _emit_json_payload(payload, output_json=args.output_json)
     return 0
 
@@ -1520,6 +1547,11 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_compare_parser.add_argument("--atol", type=float, default=1e-6)
     mamba_compare_parser.add_argument("--rtol", type=float, default=1e-5)
     mamba_compare_parser.add_argument("--include-final", action="store_true")
+    mamba_compare_parser.add_argument(
+        "--include-source-delta",
+        action="store_true",
+        help="also report a diagnostic source-style dynamic B/C delta",
+    )
     mamba_compare_parser.add_argument("--max-plan-layers", type=int, default=8)
     mamba_compare_parser.add_argument("--max-statuses", type=int, default=50)
     mamba_compare_parser.add_argument("--output-json", default="")

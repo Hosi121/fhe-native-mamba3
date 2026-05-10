@@ -45,9 +45,37 @@ class MambaLayerReferenceResult:
 
 
 @dataclass(frozen=True)
+class MambaSourceDeltaResult:
+    """Deltas between the FHE-native adapter path and a source-style Mamba layer."""
+
+    layer_index: int
+    d_model: int
+    d_state: int
+    mimo_rank: int
+    dt_rank: int
+    fixed_norm_vs_rms_norm_max_abs_delta: float
+    projected_rank_input_max_abs_delta: float
+    causal_conv_pre_silu_max_abs_delta: float
+    source_conv_silu_vs_adapter_conv_max_abs_delta: float
+    dynamic_b_mean_vs_static_b_mean_max_abs_delta: float
+    dynamic_c_mean_vs_static_c_mean_max_abs_delta: float
+    decay_state_mean_vs_adapter_max_abs_delta: float | None
+    recurrence_rank_output_max_abs_delta: float
+    final_block_output_max_abs_delta: float | None
+    final_block_output_approximate: bool
+    notes: tuple[str, ...] = ()
+
+    def to_json_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["notes"] = list(self.notes)
+        return payload
+
+
+@dataclass(frozen=True)
 class _LayerTensors:
     norm_weight: Tensor
     in_rank_weight: Tensor
+    x_proj_weight: Tensor | None
     conv1d_weight: Tensor
     conv1d_bias: Tensor
     dt_in_weight: Tensor | None
@@ -59,6 +87,7 @@ class _LayerTensors:
     out_rank_weight: Tensor | None
     gate_weight: Tensor | None
     decay: Tensor
+    a_log: Tensor
 
 
 @dataclass(frozen=True)
@@ -67,6 +96,19 @@ class _LayerStages:
     causal_conv_output: Tensor
     dt_hidden: Tensor | None
     dt: Tensor | None
+    decay_by_token: Tensor | None
+    recurrence_rank_output: Tensor
+    final_block_output: Tensor | None
+
+
+@dataclass(frozen=True)
+class _SourceLayerStages:
+    rms_norm_output: Tensor
+    projected_rank_input: Tensor
+    causal_conv_pre_silu: Tensor
+    causal_conv_post_silu: Tensor
+    dynamic_b_terms: Tensor
+    dynamic_c_terms: Tensor
     decay_by_token: Tensor | None
     recurrence_rank_output: Tensor
     final_block_output: Tensor | None
@@ -191,6 +233,139 @@ def compare_mamba_layer_reference(
     )
 
 
+def compare_mamba_source_delta(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    final_block_output: Tensor | None = None,
+    norm_eps: float = 1e-5,
+) -> MambaSourceDeltaResult:
+    """Measure the gap from the FHE-native adapter path to source-style Mamba.
+
+    This is not an official kernel parity test. It intentionally keeps a
+    transparent PyTorch formula for the major source-side operations we removed
+    or approximated for FHE: RMSNorm, SiLU after the causal convolution,
+    token-dependent B/C, and state-rank decay.
+    """
+
+    if layer_input.ndim != 3:
+        msg = "layer_input must have shape [batch, seq_len, d_model]"
+        raise ValueError(msg)
+
+    plan = plan_mamba_checkpoint(state_dict)
+    if layer_index >= len(plan.layers):
+        msg = f"layer_index {layer_index} is not present in the state_dict"
+        raise ValueError(msg)
+    layer = plan.layers[layer_index]
+    if layer.in_proj_key is None or layer.x_proj_key is None or layer.a_log_key is None:
+        msg = f"layer {layer_index} is missing required in_proj, x_proj, or A_log tensors"
+        raise ValueError(msg)
+
+    resolved_d_state = d_state if d_state is not None else layer.source_d_state
+    resolved_rank = mimo_rank if mimo_rank is not None else layer.source_inner_dim
+    if resolved_d_state is None or resolved_rank is None:
+        msg = "d_state and mimo_rank must be provided when they cannot be inferred"
+        raise ValueError(msg)
+
+    source = _build_layer_tensors(
+        state_dict,
+        layer_index=layer_index,
+        d_model=int(layer_input.shape[-1]),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        include_gate=True,
+    )
+    adapter_stages = _run_layer_formula(
+        layer_input,
+        source,
+        use_rms_norm_for_final=False,
+        norm_eps=norm_eps,
+    )
+    source_stages = _run_source_dynamic_formula(
+        layer_input,
+        source,
+        norm_eps=norm_eps,
+    )
+
+    fixed_norm = _fixed_scale_norm(
+        layer_input,
+        source.norm_weight.to(device=layer_input.device, dtype=layer_input.dtype),
+    )
+    dynamic_b_mean = source_stages.dynamic_b_terms.mean(dim=(0, 1))
+    dynamic_c_mean = source_stages.dynamic_c_terms.mean(dim=(0, 1))
+    static_b_mean = source.b_static.to(
+        device=layer_input.device,
+        dtype=layer_input.dtype,
+    ).mean(dim=-1)
+    static_c_mean = source.c_static.to(
+        device=layer_input.device,
+        dtype=layer_input.dtype,
+    ).mean(dim=-1)
+
+    adapter_decay = adapter_stages.decay_by_token
+    decay_delta = None
+    if source_stages.decay_by_token is not None:
+        source_decay_mean = source_stages.decay_by_token.mean(dim=-1)
+        if adapter_decay is None:
+            adapter_decay = source.decay.to(
+                device=layer_input.device,
+                dtype=layer_input.dtype,
+            ).expand_as(source_decay_mean)
+        decay_delta = _max_abs_error(source_decay_mean, adapter_decay)
+
+    final_error: float | None = None
+    final_approximate = False
+    if final_block_output is not None and source_stages.final_block_output is not None:
+        final_error = _max_abs_error(source_stages.final_block_output, final_block_output)
+        final_approximate = True
+
+    return MambaSourceDeltaResult(
+        layer_index=layer_index,
+        d_model=int(layer_input.shape[-1]),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        dt_rank=0 if source.dt_in_weight is None else int(source.dt_in_weight.shape[0]),
+        fixed_norm_vs_rms_norm_max_abs_delta=_max_abs_error(
+            fixed_norm,
+            source_stages.rms_norm_output,
+        ),
+        projected_rank_input_max_abs_delta=_max_abs_error(
+            adapter_stages.projected_rank_input,
+            source_stages.projected_rank_input,
+        ),
+        causal_conv_pre_silu_max_abs_delta=_max_abs_error(
+            adapter_stages.causal_conv_output,
+            source_stages.causal_conv_pre_silu,
+        ),
+        source_conv_silu_vs_adapter_conv_max_abs_delta=_max_abs_error(
+            adapter_stages.causal_conv_output,
+            source_stages.causal_conv_post_silu,
+        ),
+        dynamic_b_mean_vs_static_b_mean_max_abs_delta=_max_abs_error(
+            dynamic_b_mean,
+            static_b_mean,
+        ),
+        dynamic_c_mean_vs_static_c_mean_max_abs_delta=_max_abs_error(
+            dynamic_c_mean,
+            static_c_mean,
+        ),
+        decay_state_mean_vs_adapter_max_abs_delta=decay_delta,
+        recurrence_rank_output_max_abs_delta=_max_abs_error(
+            adapter_stages.recurrence_rank_output,
+            source_stages.recurrence_rank_output,
+        ),
+        final_block_output_max_abs_delta=final_error,
+        final_block_output_approximate=final_approximate,
+        notes=(
+            "source-style delta is a diagnostic formula, not official kernel parity",
+            "source path uses RMSNorm, SiLU causal conv, dynamic B/C, and state-rank decay",
+        ),
+    )
+
+
 def _build_layer_tensors(
     state_dict: dict[str, Tensor],
     *,
@@ -216,6 +391,10 @@ def _build_layer_tensors(
 
     in_proj = state_dict[layer.in_proj_key]
     in_rank_weight = _fit_tensor(in_proj, (mimo_rank, d_model)).to(device=device, dtype=dtype)
+    x_proj_weight = _fit_tensor(
+        state_dict[layer.x_proj_key],
+        (max(0, layer.inferred_dt_rank or 0) + 2 * d_state, mimo_rank),
+    ).to(device=device, dtype=dtype)
     gate_weight = None
     if include_gate and int(in_proj.shape[0]) >= 2 * mimo_rank:
         gate_weight = _fit_tensor(in_proj[mimo_rank : 2 * mimo_rank], (mimo_rank, d_model)).to(
@@ -294,6 +473,7 @@ def _build_layer_tensors(
     return _LayerTensors(
         norm_weight=norm_weight,
         in_rank_weight=in_rank_weight,
+        x_proj_weight=x_proj_weight,
         conv1d_weight=conv1d_weight,
         conv1d_bias=conv1d_bias,
         dt_in_weight=dt_in_weight,
@@ -305,6 +485,7 @@ def _build_layer_tensors(
         out_rank_weight=out_rank_weight,
         gate_weight=gate_weight,
         decay=decay,
+        a_log=state_dict[layer.a_log_key].detach().float().cpu(),
     )
 
 
@@ -397,6 +578,101 @@ def _rms_norm(x: Tensor, weight: Tensor, eps: float) -> Tensor:
     return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps) * weight
 
 
+def _run_source_dynamic_formula(
+    layer_input: Tensor,
+    tensors: _LayerTensors,
+    *,
+    norm_eps: float,
+) -> _SourceLayerStages:
+    if tensors.x_proj_weight is None:
+        msg = "source-style delta requires an x_proj weight"
+        raise ValueError(msg)
+
+    dtype = layer_input.dtype
+    device = layer_input.device
+    rms = _rms_norm(
+        layer_input,
+        tensors.norm_weight.to(device=device, dtype=dtype),
+        norm_eps,
+    )
+    projected = functional.linear(
+        rms,
+        tensors.in_rank_weight.to(device=device, dtype=dtype),
+    )
+    conv_pre = _causal_rank_conv(
+        projected,
+        tensors.conv1d_weight.to(device=device, dtype=dtype),
+        tensors.conv1d_bias.to(device=device, dtype=dtype),
+    )
+    conv_post = functional.silu(conv_pre)
+    x_proj = functional.linear(
+        conv_post,
+        tensors.x_proj_weight.to(device=device, dtype=dtype),
+    )
+
+    dt_rank = 0 if tensors.dt_in_weight is None else int(tensors.dt_in_weight.shape[0])
+    dt_hidden = _fit_last_dim(x_proj[..., :dt_rank], dt_rank) if dt_rank > 0 else None
+    b_terms = _fit_last_dim(
+        x_proj[..., dt_rank : dt_rank + tensors.b_static.shape[0]], tensors.b_static.shape[0]
+    )
+    c_terms = _fit_last_dim(
+        x_proj[..., dt_rank + tensors.b_static.shape[0] : dt_rank + 2 * tensors.b_static.shape[0]],
+        tensors.b_static.shape[0],
+    )
+
+    dt = None
+    decay_by_token = None
+    if (
+        dt_hidden is not None
+        and tensors.dt_proj_weight is not None
+        and tensors.dt_proj_bias is not None
+    ):
+        dt = functional.softplus(
+            functional.linear(
+                dt_hidden,
+                tensors.dt_proj_weight.to(device=device, dtype=dtype),
+                tensors.dt_proj_bias.to(device=device, dtype=dtype),
+            )
+        )
+        decay_by_token = _source_state_rank_decay_by_token(
+            dt,
+            tensors.a_log.to(device=device, dtype=dtype),
+            d_state=tensors.b_static.shape[0],
+            mimo_rank=tensors.b_static.shape[1],
+        )
+
+    recurrence = _source_dynamic_recurrence(
+        conv_post,
+        b_terms,
+        c_terms,
+        tensors.decay.to(device=device, dtype=dtype),
+        decay_by_token,
+        d_state=tensors.b_static.shape[0],
+    )
+    final = None
+    if tensors.out_rank_weight is not None and tensors.gate_weight is not None:
+        gate = functional.silu(
+            functional.linear(rms, tensors.gate_weight.to(device=device, dtype=dtype))
+        )
+        rank_output = recurrence + conv_post * tensors.d_skip.to(device=device, dtype=dtype)
+        final = layer_input + functional.linear(
+            rank_output * gate,
+            tensors.out_rank_weight.to(device=device, dtype=dtype),
+        )
+
+    return _SourceLayerStages(
+        rms_norm_output=rms,
+        projected_rank_input=projected,
+        causal_conv_pre_silu=conv_pre,
+        causal_conv_post_silu=conv_post,
+        dynamic_b_terms=b_terms,
+        dynamic_c_terms=c_terms,
+        decay_by_token=decay_by_token,
+        recurrence_rank_output=recurrence,
+        final_block_output=final,
+    )
+
+
 def _causal_rank_conv(rank_input: Tensor, weight: Tensor, bias: Tensor) -> Tensor:
     transposed = rank_input.transpose(1, 2)
     padded = functional.pad(transposed, (weight.shape[-1] - 1, 0))
@@ -414,6 +690,55 @@ def _decay_by_token(dt: Tensor, base_decay: Tensor, dt_proj_bias: Tensor) -> Ten
     dt0 = functional.softplus(dt_proj_bias).clamp(min=1e-6)
     a_pos = (-torch.log(base) / dt0).clamp(min=0.0)
     return torch.exp(-a_pos.view(1, 1, -1) * dt).clamp(min=1e-4, max=1 - 1e-4)
+
+
+def _source_state_rank_decay_by_token(
+    dt: Tensor,
+    a_log: Tensor,
+    *,
+    d_state: int,
+    mimo_rank: int,
+) -> Tensor:
+    if a_log.ndim == 1:
+        a_fitted = _fit_tensor(a_log.reshape(-1, 1), (mimo_rank, 1)).expand(mimo_rank, d_state)
+    else:
+        a_fitted = _fit_tensor(a_log, (mimo_rank, d_state))
+    a_pos = torch.exp(a_fitted.to(device=dt.device, dtype=dt.dtype))
+    return torch.exp(-dt.unsqueeze(-1) * a_pos.view(1, 1, mimo_rank, d_state)).clamp(
+        min=1e-4,
+        max=1 - 1e-4,
+    )
+
+
+def _source_dynamic_recurrence(
+    rank_input: Tensor,
+    b_terms: Tensor,
+    c_terms: Tensor,
+    scalar_decay: Tensor,
+    decay_by_token: Tensor | None,
+    *,
+    d_state: int,
+) -> Tensor:
+    batch, seq_len, rank = rank_input.shape
+    state = rank_input.new_zeros(batch, rank, d_state)
+    outputs: list[Tensor] = []
+    for t in range(seq_len):
+        update_term = rank_input[:, t].unsqueeze(-1) * b_terms[:, t].unsqueeze(1)
+        if decay_by_token is None:
+            step_decay = scalar_decay.view(1, rank, 1)
+        else:
+            step_decay = decay_by_token[:, t]
+        state = step_decay * state + update_term
+        outputs.append((state * c_terms[:, t].unsqueeze(1)).sum(dim=-1))
+    return torch.stack(outputs, dim=1)
+
+
+def _fit_last_dim(x: Tensor, target_dim: int) -> Tensor:
+    target = x.new_zeros(*x.shape[:-1], target_dim)
+    keep = min(int(x.shape[-1]), target_dim)
+    if keep > 0:
+        target[..., :keep] = x[..., :keep]
+    return target
 
 
 def _static_recurrence(

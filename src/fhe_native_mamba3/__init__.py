@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.37"
+__version__ = "0.2.38"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -22,6 +22,10 @@ _LAZY_IMPORTS = {
     "MambaLayerReferenceResult": (
         "fhe_native_mamba3.mamba_reference",
         "MambaLayerReferenceResult",
+    ),
+    "MambaSourceDeltaResult": (
+        "fhe_native_mamba3.mamba_reference",
+        "MambaSourceDeltaResult",
     ),
     "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
@@ -64,6 +68,10 @@ _LAZY_IMPORTS = {
     "compare_mamba_layer_reference": (
         "fhe_native_mamba3.mamba_reference",
         "compare_mamba_layer_reference",
+    ),
+    "compare_mamba_source_delta": (
+        "fhe_native_mamba3.mamba_reference",
+        "compare_mamba_source_delta",
     ),
     "build_weight_bundle_manifest": (
         "fhe_native_mamba3.weight_bundle",
@@ -148,6 +156,7 @@ __all__ = [
     "MambaCheckpointPlan",
     "MambaLayerPlan",
     "MambaLayerReferenceResult",
+    "MambaSourceDeltaResult",
     "OpenFheCkksBackend",
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
@@ -174,6 +183,7 @@ __all__ = [
     "ckks_ring_dimension_for_batch_size",
     "client_side_argmax",
     "compare_mamba_layer_reference",
+    "compare_mamba_source_delta",
     "decoding_policies",
     "draft_mapping_rules",
     "estimate_block_cost",

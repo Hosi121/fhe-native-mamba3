@@ -2,7 +2,10 @@ import json
 
 import torch
 
-from fhe_native_mamba3.mamba_reference import compare_mamba_layer_reference
+from fhe_native_mamba3.mamba_reference import (
+    compare_mamba_layer_reference,
+    compare_mamba_source_delta,
+)
 
 
 def test_mamba_reference_matches_adapter_compatible_hf_stages() -> None:
@@ -61,6 +64,27 @@ def test_mamba_reference_supports_slice_pad_adapter_shapes() -> None:
     assert result.dt_max_abs_error == 0.0
     assert result.decay_by_token_max_abs_error == 0.0
     assert result.recurrence_rank_output_max_abs_error == 0.0
+
+
+def test_mamba_source_delta_reports_fhe_native_approximation_gap() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    result = compare_mamba_source_delta(
+        state_dict,
+        layer_input,
+        layer_index=0,
+        d_state=2,
+        mimo_rank=4,
+    )
+
+    assert result.fixed_norm_vs_rms_norm_max_abs_delta > 0
+    assert result.source_conv_silu_vs_adapter_conv_max_abs_delta > 0
+    assert result.dynamic_b_mean_vs_static_b_mean_max_abs_delta >= 0
+    assert result.dynamic_c_mean_vs_static_c_mean_max_abs_delta >= 0
+    assert result.recurrence_rank_output_max_abs_delta >= 0
+    assert result.final_block_output_max_abs_delta is None
+    json.dumps(result.to_json_dict())
 
 
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:
