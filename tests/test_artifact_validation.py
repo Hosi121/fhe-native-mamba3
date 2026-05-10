@@ -104,7 +104,7 @@ def test_validate_artifacts_script_reports_valid_payload(tmp_path: Path) -> None
     )
     payload = json.loads(completed.stdout)
 
-    assert payload["version"] == "0.2.87"
+    assert payload["version"] == "0.2.88"
     assert payload["valid"] is True
     assert payload["results"][0]["success_predicate_passed"] is True
 

@@ -17,6 +17,7 @@ def main() -> int:
     from torch.nn import functional
 
     from fhe_native_mamba3 import __version__
+    from fhe_native_mamba3.artifact_validation import current_git_commit
     from fhe_native_mamba3.backends.openfhe import OpenFheBootstrapConfig, OpenFheCkksBackend
     from fhe_native_mamba3.backends.tracking import TrackingBackend
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
@@ -111,6 +112,7 @@ def main() -> int:
     )
     payload = {
         "version": __version__,
+        "repo_commit": current_git_commit(ROOT),
         "stage": "mamba-checkpoint-full-layer-sweep",
         "checkpoint": args.checkpoint,
         "state_dict_key": resolved_key,

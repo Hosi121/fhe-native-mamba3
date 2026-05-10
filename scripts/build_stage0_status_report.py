@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 def main() -> int:
     from fhe_native_mamba3 import __version__
+    from fhe_native_mamba3.artifact_validation import current_git_commit
     from fhe_native_mamba3.stage0_status import build_stage0_status_report
 
     args = _parse_args()
@@ -29,6 +30,7 @@ def main() -> int:
         all_layer_recurrence=_read_optional_json(args.all_layer_recurrence_json),
         ciphertext_handoff=_read_optional_json(args.ciphertext_handoff_json),
     )
+    payload["repo_commit"] = current_git_commit(ROOT)
     if args.output_json:
         Path(args.output_json).write_text(
             json.dumps(payload, indent=2, sort_keys=True),
