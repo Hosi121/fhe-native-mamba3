@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.86`. Future changes should bump
+The project is currently at SemVer `0.2.87`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -374,6 +374,7 @@ scripts/build_stage0_status_report.py \
   --all-layer-recurrence-json runs/openfhe-all-layer-recurrence-v063.json \
   --ciphertext-handoff-json runs/openfhe-ciphertext-handoff-v064b.json \
   --output-json runs/stage0-status-report.json
+scripts/validate_artifacts.py runs/stage0-status-report.json
 ```
 
 Measure the current OpenFHE Python bootstrap setup directly when the backend

@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.86"
+__version__ = "0.2.87"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -59,6 +59,14 @@ _LAZY_IMPORTS = {
     "CheckpointVisibleProjectionSweepRow": (
         "fhe_native_mamba3.checkpoint_visible_projection_sweep",
         "CheckpointVisibleProjectionSweepRow",
+    ),
+    "ArtifactValidationIssue": (
+        "fhe_native_mamba3.artifact_validation",
+        "ArtifactValidationIssue",
+    ),
+    "ArtifactValidationResult": (
+        "fhe_native_mamba3.artifact_validation",
+        "ArtifactValidationResult",
     ),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
     "CiphertextHandoffLayer": (
@@ -240,6 +248,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.weight_encoding",
         "calibrate_weight_tensor",
     ),
+    "current_git_commit": (
+        "fhe_native_mamba3.artifact_validation",
+        "current_git_commit",
+    ),
     "ckks_batch_size_for_slots": (
         "fhe_native_mamba3.backends.openfhe",
         "ckks_batch_size_for_slots",
@@ -403,6 +415,14 @@ _LAZY_IMPORTS = {
     ),
     "run_stage0_mimo": ("fhe_native_mamba3.benchmarks.stage0_mimo", "run_stage0_mimo"),
     "run_stage0_sweep": ("fhe_native_mamba3.benchmarks.stage0_sweep", "run_stage0_sweep"),
+    "validate_artifact_file": (
+        "fhe_native_mamba3.artifact_validation",
+        "validate_artifact_file",
+    ),
+    "validate_benchmark_artifact": (
+        "fhe_native_mamba3.artifact_validation",
+        "validate_benchmark_artifact",
+    ),
     "load_weight_bundle_model": ("fhe_native_mamba3.weight_bundle", "load_weight_bundle_model"),
     "save_weight_bundle": ("fhe_native_mamba3.weight_bundle", "save_weight_bundle"),
     "save_weight_bundle_from_checkpoint": (
@@ -421,6 +441,8 @@ _LAZY_IMPORTS = {
 }
 
 __all__ = [
+    "ArtifactValidationIssue",
+    "ArtifactValidationResult",
     "BackendCapability",
     "BackendStats",
     "BootstrapExecutionBlockCost",
@@ -514,6 +536,7 @@ __all__ = [
     "client_side_decode_scores",
     "compare_mamba_layer_reference",
     "compare_mamba_source_delta",
+    "current_git_commit",
     "decoding_policies",
     "draft_mapping_rules",
     "estimate_block_cost",
@@ -566,6 +589,8 @@ __all__ = [
     "ssd_prefix_scan",
     "ssd_prefix_scan_prefill",
     "sweep_head_pack_candidates",
+    "validate_artifact_file",
+    "validate_benchmark_artifact",
 ]
 
 

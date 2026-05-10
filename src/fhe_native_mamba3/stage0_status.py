@@ -36,6 +36,16 @@ def build_stage0_status_report(
         "version": version,
         "stage": "stage0-status-report",
         "stage0_complete": False,
+        "measurement_scope": {
+            "stage0_status_report": True,
+            "encrypted": False,
+            "full_model_correctness_claimed": False,
+            "non_success_probe": True,
+            "claim": (
+                "aggregated Stage 0 status and bottleneck report; not a benchmark success "
+                "claim and not full encrypted model correctness"
+            ),
+        },
         "completed_items": completed_items,
         "remaining_items": remaining_items,
         "measurements": measurements,
