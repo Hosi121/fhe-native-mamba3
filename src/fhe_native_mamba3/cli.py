@@ -778,6 +778,7 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.mamba_checkpoint import (
         adapt_mamba_state_dict_to_model,
+        plan_mamba_checkpoint,
         save_mamba_checkpoint_bundle,
     )
     from fhe_native_mamba3.mamba_reference import build_mamba_source_recurrence_problem
@@ -792,9 +793,14 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
         state_dict_key=args.state_dict_key or None,
         map_location=args.map_location,
     )
+    plan = plan_mamba_checkpoint(source_state_dict)
     d_state, mimo_rank, adapter_shape = _resolve_mamba_adapter_shape(args, source_state_dict)
     seq_lens = tuple(sorted(set(args.seq_lens)))
-    layer_indices = tuple(sorted(set(args.layer_indices)))
+    layer_indices = (
+        tuple(range(plan.complete_layer_count))
+        if args.all_layers
+        else tuple(sorted(set(args.layer_indices)))
+    )
     if not seq_lens or min(seq_lens) <= 0:
         msg = "seq_lens must contain positive lengths"
         raise ValueError(msg)
@@ -932,6 +938,13 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
             max_layers=args.max_plan_layers,
         ),
         "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
+        "sweep_config": {
+            "all_layers": args.all_layers,
+            "seq_lens": list(seq_lens),
+            "layer_indices": list(layer_indices),
+            "recurrence_sources": list(sources),
+            "readout_strategy": args.readout_strategy,
+        },
         "summary": _recurrence_sweep_summary(rows),
         "rows": rows,
     }
@@ -952,6 +965,9 @@ def _recurrence_sweep_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ct_ct_row = max(rows, key=lambda row: row["operation_counts"]["ct_ct_mul"])
     return {
         "row_count": len(rows),
+        "layer_count": len({row["layer_index"] for row in rows}),
+        "seq_lens": sorted({row["seq_len"] for row in rows}),
+        "recurrence_sources": sorted({row["recurrence_source"] for row in rows}),
         "max_abs_error": max(row["max_abs_error"] for row in rows),
         "max_latency_sec_per_token": latency_row["latency_sec_per_token"],
         "max_latency_case": {
@@ -965,7 +981,70 @@ def _recurrence_sweep_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "layer_index": ct_ct_row["layer_index"],
             "seq_len": ct_ct_row["seq_len"],
         },
+        "by_layer": _recurrence_sweep_by_layer(rows),
+        "top_range_cases": _recurrence_sweep_top_range_cases(rows),
     }
+
+
+def _recurrence_sweep_by_layer(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_layer: list[dict[str, Any]] = []
+    for layer_index in sorted({row["layer_index"] for row in rows}):
+        layer_rows = [row for row in rows if row["layer_index"] == layer_index]
+        ct_row = max(layer_rows, key=lambda row: row["operation_counts"]["ct_ct_mul"])
+        latency_row = max(layer_rows, key=lambda row: row["latency_sec_per_token"])
+        by_layer.append(
+            {
+                "layer_index": layer_index,
+                "row_count": len(layer_rows),
+                "max_ct_ct_mul": ct_row["operation_counts"]["ct_ct_mul"],
+                "max_ct_ct_case": {
+                    "recurrence_source": ct_row["recurrence_source"],
+                    "seq_len": ct_row["seq_len"],
+                },
+                "max_latency_sec_per_token": latency_row["latency_sec_per_token"],
+                "max_latency_case": {
+                    "recurrence_source": latency_row["recurrence_source"],
+                    "seq_len": latency_row["seq_len"],
+                },
+                "max_rank_inputs_abs": max(
+                    row["problem"]["rank_inputs_abs_max"] or 0.0 for row in layer_rows
+                ),
+                "max_b_by_token_abs": max(
+                    row["problem"]["b_by_token_abs_max"] or 0.0 for row in layer_rows
+                ),
+                "max_c_by_token_abs": max(
+                    row["problem"]["c_by_token_abs_max"] or 0.0 for row in layer_rows
+                ),
+                "max_decay_state_by_token_abs": max(
+                    row["problem"]["decay_state_by_token_abs_max"] or 0.0 for row in layer_rows
+                ),
+            }
+        )
+    return by_layer
+
+
+def _recurrence_sweep_top_range_cases(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def score(row: dict[str, Any]) -> float:
+        problem = row["problem"]
+        return max(
+            problem["rank_inputs_abs_max"] or 0.0,
+            problem["b_by_token_abs_max"] or problem["b_abs_max"] or 0.0,
+            problem["c_by_token_abs_max"] or problem["c_abs_max"] or 0.0,
+        )
+
+    top_rows = sorted(rows, key=score, reverse=True)[:5]
+    return [
+        {
+            "recurrence_source": row["recurrence_source"],
+            "layer_index": row["layer_index"],
+            "seq_len": row["seq_len"],
+            "range_score": score(row),
+            "rank_inputs_abs_max": row["problem"]["rank_inputs_abs_max"],
+            "b_abs_max": row["problem"]["b_by_token_abs_max"] or row["problem"]["b_abs_max"],
+            "c_abs_max": row["problem"]["c_by_token_abs_max"] or row["problem"]["c_abs_max"],
+        }
+        for row in top_rows
+    ]
 
 
 def mamba_checkpoint_compare_reference_cmd(args: argparse.Namespace) -> int:
@@ -1837,6 +1916,11 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_sweep_parser.add_argument("--prompt", default="1,2,3,4")
     mamba_sweep_parser.add_argument("--seq-lens", type=_parse_int_list, default=(1, 2, 4))
     mamba_sweep_parser.add_argument("--layer-indices", type=_parse_int_list, default=(0,))
+    mamba_sweep_parser.add_argument(
+        "--all-layers",
+        action="store_true",
+        help="sweep every complete Mamba layer detected in the checkpoint",
+    )
     mamba_sweep_parser.add_argument(
         "--recurrence-sources",
         type=_parse_recurrence_source_list,
