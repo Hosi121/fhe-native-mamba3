@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.76"
+__version__ = "0.2.77"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -143,6 +143,10 @@ _LAZY_IMPORTS = {
         "OpenFheBootstrapLatencyConfig",
     ),
     "OpenFheCkksBackend": ("fhe_native_mamba3.backends.openfhe", "OpenFheCkksBackend"),
+    "OfficialMambaParityResult": (
+        "fhe_native_mamba3.official_parity",
+        "OfficialMambaParityResult",
+    ),
     "PackingPlan": ("fhe_native_mamba3.ckks", "PackingPlan"),
     "Stage0MimoConfig": ("fhe_native_mamba3.benchmarks.stage0_mimo", "Stage0MimoConfig"),
     "Stage0SweepConfig": ("fhe_native_mamba3.benchmarks.stage0_sweep", "Stage0SweepConfig"),
@@ -290,6 +294,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.profiling",
         "profile_recurrence_traces",
     ),
+    "probe_official_mamba_parity": (
+        "fhe_native_mamba3.official_parity",
+        "probe_official_mamba_parity",
+    ),
     "apply_srht_sketch": ("fhe_native_mamba3.srht_sketch", "apply_srht_sketch"),
     "plan_mamba_checkpoint": (
         "fhe_native_mamba3.mamba_checkpoint",
@@ -402,6 +410,7 @@ __all__ = [
     "MambaSourceDeltaResult",
     "MambaSourceLayerDiagnostics",
     "MambaSourceVisibleHandoffTensors",
+    "OfficialMambaParityResult",
     "OpenFheBootstrapConfig",
     "OpenFheBootstrapLatencyConfig",
     "OpenFheCkksBackend",
@@ -469,6 +478,7 @@ __all__ = [
     "plaintext_static_recurrence",
     "plan_mamba_checkpoint",
     "prefix_decay_products",
+    "probe_official_mamba_parity",
     "profile_model_batch",
     "profile_recurrence_traces",
     "required_full_layer_visible_rotations",

@@ -6,29 +6,43 @@ import sys
 
 import torch
 
+from fhe_native_mamba3.official_parity import probe_official_mamba_parity
 
-def test_checkpoint_visible_projection_sweep_script_runs_tracking_backend(tmp_path) -> None:
+
+def test_official_mamba_parity_probe_records_missing_config_blocker(tmp_path) -> None:
     checkpoint_path = tmp_path / "mamba.pt"
-    output_json = tmp_path / "visible-projection-sweep.json"
+    torch.save({"model": _fake_mamba_state_dict()}, checkpoint_path)
+
+    result = probe_official_mamba_parity(
+        checkpoint_path,
+        token_ids=(1, 2),
+        d_state=2,
+        mimo_rank=2,
+    )
+
+    assert result.status == "skipped"
+    assert result.passed is False
+    assert "config.json" in result.reason
+    assert result.source_style_output_shape == (1, 2, 8)
+    assert result.official_output_shape is None
+
+
+def test_official_mamba_parity_probe_script_outputs_json(tmp_path) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_json = tmp_path / "parity.json"
     torch.save({"model": _fake_mamba_state_dict()}, checkpoint_path)
 
     completed = subprocess.run(
         [
             sys.executable,
-            "scripts/run_checkpoint_visible_projection_sweep.py",
+            "scripts/probe_official_mamba_parity.py",
             str(checkpoint_path),
-            "--backend",
-            "tracking",
             "--d-state",
             "2",
             "--mimo-rank",
             "2",
-            "--visible-dim-limits",
-            "2,4,full",
             "--prompt",
             "1,2",
-            "--max-seq-len",
-            "8",
             "--output-json",
             str(output_json),
         ],
@@ -39,15 +53,10 @@ def test_checkpoint_visible_projection_sweep_script_runs_tracking_backend(tmp_pa
 
     payload = json.loads(completed.stdout)
     assert payload["version"] == "0.2.77"
-    assert payload["stage"] == "mamba-checkpoint-visible-projection-sweep"
-    assert payload["backend"] == "tracking"
-    assert payload["passed"] is True
-    assert payload["result"]["row_count"] == 3
-    assert payload["result"]["max_checked_visible_dim_passed"] == 8
-    assert payload["result"]["bottleneck"] == "none_observed"
-    assert payload["result"]["measurement_scope"]["full_model_correctness_claimed"] is False
-    assert payload["result"]["rows"][-1]["full_visible_output"] is True
-    assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
+    assert payload["stage"] == "official-mamba-parity-probe"
+    assert payload["status"] == "skipped"
+    assert payload["result"]["source_style_output_shape"] == [1, 2, 8]
+    assert json.loads(output_json.read_text(encoding="utf-8"))["status"] == "skipped"
 
 
 def _fake_mamba_state_dict() -> dict[str, torch.Tensor]:
