@@ -142,6 +142,7 @@ def test_checkpoint_full_layer_ciphertext_gate_matches_source_visible_output() -
     payload = gate.to_json_dict()
 
     assert gate.passed is True
+    assert gate.checked_visible_dim == gate.d_model
     assert gate.full_layer_formula_checked is True
     assert gate.official_mamba_parity is False
     assert gate.full_model_correctness_claimed is False
@@ -175,6 +176,26 @@ def test_checkpoint_full_layer_ciphertext_gate_requires_visible_projection() -> 
         )
 
 
+def test_checkpoint_full_layer_ciphertext_gate_can_check_partial_visible_output() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    gate = run_checkpoint_full_layer_ciphertext_gate(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        visible_dim_limit=3,
+        atol=1e-6,
+    )
+
+    assert gate.passed is True
+    assert gate.d_model == 8
+    assert gate.checked_visible_dim == 3
+    assert gate.max_abs_error < 1e-6
+    assert gate.backend_stats["decrypt_count"] == 3
+
+
 def test_checkpoint_full_layer_ciphertext_sweep_covers_multiple_source_layers() -> None:
     state_dict = _tiny_hf_mamba_state_dict(layer_count=2)
     layer_input = torch.arange(16, dtype=torch.float32).view(1, 2, 8) / 20.0
@@ -193,6 +214,7 @@ def test_checkpoint_full_layer_ciphertext_sweep_covers_multiple_source_layers() 
 
     assert result.passed is True
     assert result.layer_count == 2
+    assert result.layers[0].checked_visible_dim == 8
     assert result.failing_layers == ()
     assert result.measurement_scope["inter_layer_ciphertext_handoff"] is False
     assert result.measurement_scope["layer_inputs_plaintext_propagated"] is True
@@ -220,6 +242,16 @@ def test_full_layer_visible_rotation_inventory_covers_rank_projection() -> None:
     assert -7 in rotations
     assert 6 in rotations
     assert 1 in rotations
+
+    partial_rotations = required_full_layer_visible_rotations(
+        d_model=8,
+        d_state=2,
+        mimo_rank=4,
+        readout_strategy="rank-local",
+        visible_dim_limit=3,
+    )
+    assert len(partial_rotations) < len(rotations)
+    assert -7 not in partial_rotations
 
 
 def _tiny_hf_mamba_state_dict(layer_count: int = 1) -> dict[str, torch.Tensor]:

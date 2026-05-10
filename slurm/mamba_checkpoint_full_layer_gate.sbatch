@@ -34,6 +34,7 @@ MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-12}"
 SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-40}"
 RING_DIM="${RING_DIM:-}"
 MAX_ROTATION_KEYS="${MAX_ROTATION_KEYS:-512}"
+VISIBLE_DIM_LIMIT="${VISIBLE_DIM_LIMIT:-0}"
 ATOL="${ATOL:-1e-5}"
 NORM_EPS="${NORM_EPS:-1e-5}"
 ENABLE_BOOTSTRAP="${ENABLE_BOOTSTRAP:-0}"
@@ -124,6 +125,7 @@ fi
   --multiplicative-depth "${MULTIPLICATIVE_DEPTH}" \
   --scaling-mod-size "${SCALING_MOD_SIZE}" \
   --max-rotation-keys "${MAX_ROTATION_KEYS}" \
+  --visible-dim-limit "${VISIBLE_DIM_LIMIT}" \
   --atol "${ATOL}" \
   --norm-eps "${NORM_EPS}" \
   --max-plan-layers 4 \
@@ -145,6 +147,7 @@ summary = {
     "layer_index": payload["model"]["layer_index"],
     "seq_len": payload["model"]["seq_len"],
     "d_model": payload["model"]["d_model"],
+    "checked_visible_dim": payload["model"]["checked_visible_dim"],
     "d_state": payload["model"]["d_state"],
     "mimo_rank": payload["model"]["mimo_rank"],
     "rotation_count": payload["ckks"]["rotation_count"],

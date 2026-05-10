@@ -71,6 +71,7 @@ class CheckpointFullLayerCiphertextGate:
 
     layer_index: int
     d_model: int
+    checked_visible_dim: int
     d_state: int
     mimo_rank: int
     seq_len: int
@@ -242,6 +243,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
     multiplicative_depth: int = 12,
     atol: float = 1e-6,
     norm_eps: float = 1e-5,
+    visible_dim_limit: int | None = None,
 ) -> CheckpointFullLayerCiphertextGate:
     """Check source-style full-layer output through encrypted rank handoff.
 
@@ -271,7 +273,11 @@ def run_checkpoint_full_layer_ciphertext_gate(
         mimo_rank=problem.mimo_rank,
         norm_eps=norm_eps,
     )
-    batch_size = max(problem.d_state * problem.mimo_rank, visible.d_model)
+    checked_visible_dim = _resolve_visible_dim_limit(
+        d_model=visible.d_model,
+        visible_dim_limit=visible_dim_limit,
+    )
+    batch_size = max(problem.d_state * problem.mimo_rank, checked_visible_dim)
     resolved_backend = backend or TrackingBackend(batch_size=batch_size)
     if resolved_backend.batch_size < batch_size:
         msg = (
@@ -295,13 +301,17 @@ def run_checkpoint_full_layer_ciphertext_gate(
             recurrence_ct=recurrence_ct,
             output_slots=trace.output_slots,
             visible=visible,
+            checked_visible_dim=checked_visible_dim,
             token_index=token_index,
         )
-        decrypted_outputs.append(resolved_backend.decrypt(final_ct, length=visible.d_model))
+        decrypted_outputs.append(resolved_backend.decrypt(final_ct, length=checked_visible_dim))
 
     expected_rows = tuple(
         tuple(
-            float(value) for value in visible.expected_final_output[0, token_index].detach().cpu()
+            float(value)
+            for value in visible.expected_final_output[0, token_index, :checked_visible_dim]
+            .detach()
+            .cpu()
         )
         for token_index in range(visible.seq_len)
     )
@@ -320,6 +330,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
     return CheckpointFullLayerCiphertextGate(
         layer_index=layer_index,
         d_model=visible.d_model,
+        checked_visible_dim=checked_visible_dim,
         d_state=problem.d_state,
         mimo_rank=problem.mimo_rank,
         seq_len=problem.seq_len,
@@ -348,6 +359,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
         notes=(
             "checks source-style full-layer visible output, not official fused kernel parity",
             "input-dependent pre-recurrence tensors are still plaintext-precomputed in Stage 0",
+            "visible output may be truncated when visible_dim_limit is set",
         ),
     )
 
@@ -358,6 +370,7 @@ def _visible_output_ciphertext(
     recurrence_ct: Any,
     output_slots: tuple[int, ...],
     visible: MambaSourceVisibleHandoffTensors,
+    checked_visible_dim: int,
     token_index: int,
 ) -> Any:
     rank_ct = backend.add(
@@ -385,12 +398,15 @@ def _visible_output_ciphertext(
         rank_ct=gated_ct,
         output_slots=output_slots,
         out_proj_weight=visible.out_proj_weight,
-        d_model=visible.d_model,
+        checked_visible_dim=checked_visible_dim,
     )
     return backend.add(
         projected_ct,
         backend.encrypt(
-            [float(value) for value in visible.residual[0, token_index].detach().cpu()]
+            [
+                float(value)
+                for value in visible.residual[0, token_index, :checked_visible_dim].detach().cpu()
+            ]
         ),
     )
 
@@ -416,13 +432,16 @@ def _project_rank_slots_to_visible(
     rank_ct: Any,
     output_slots: tuple[int, ...],
     out_proj_weight: Tensor,
-    d_model: int,
+    checked_visible_dim: int,
 ) -> Any:
-    if backend.batch_size < d_model:
-        msg = f"backend batch_size={backend.batch_size} is smaller than d_model={d_model}"
+    if backend.batch_size < checked_visible_dim:
+        msg = (
+            f"backend batch_size={backend.batch_size} is smaller than "
+            f"checked_visible_dim={checked_visible_dim}"
+        )
         raise ValueError(msg)
-    if int(out_proj_weight.shape[0]) != d_model:
-        msg = "out_proj_weight first dimension must match d_model"
+    if int(out_proj_weight.shape[0]) < checked_visible_dim:
+        msg = "out_proj_weight first dimension must cover checked_visible_dim"
         raise ValueError(msg)
     if int(out_proj_weight.shape[1]) != len(output_slots):
         msg = "out_proj_weight second dimension must match recurrence rank"
@@ -430,7 +449,7 @@ def _project_rank_slots_to_visible(
 
     output_ct = backend.encrypt([0.0] * backend.batch_size)
     weights = out_proj_weight.detach().cpu()
-    for visible_index in range(d_model):
+    for visible_index in range(checked_visible_dim):
         for rank_index, source in enumerate(output_slots):
             weight = float(weights[visible_index, rank_index])
             if weight == 0.0:
@@ -451,12 +470,17 @@ def required_full_layer_visible_rotations(
     d_state: int,
     mimo_rank: int,
     readout_strategy: ReadoutStrategy = "rank-local",
+    visible_dim_limit: int | None = None,
 ) -> tuple[int, ...]:
     """Rotations for recurrence readout plus rank-to-visible projection."""
 
     if d_model <= 0:
         msg = "d_model must be positive"
         raise ValueError(msg)
+    checked_visible_dim = _resolve_visible_dim_limit(
+        d_model=d_model,
+        visible_dim_limit=visible_dim_limit,
+    )
     output_slots = readout_output_slots(
         d_state=d_state,
         mimo_rank=mimo_rank,
@@ -469,12 +493,24 @@ def required_full_layer_visible_rotations(
             readout_strategy=readout_strategy,
         )
     )
-    for visible_index in range(d_model):
+    for visible_index in range(checked_visible_dim):
         for source in output_slots:
             shift = source - visible_index
             if shift:
                 rotations.add(shift)
     return tuple(sorted(rotations))
+
+
+def _resolve_visible_dim_limit(*, d_model: int, visible_dim_limit: int | None) -> int:
+    if d_model <= 0:
+        msg = "d_model must be positive"
+        raise ValueError(msg)
+    if visible_dim_limit is None:
+        return d_model
+    if visible_dim_limit <= 0:
+        msg = "visible_dim_limit must be positive"
+        raise ValueError(msg)
+    return min(d_model, visible_dim_limit)
 
 
 def _validate_visible_handoff_readiness(

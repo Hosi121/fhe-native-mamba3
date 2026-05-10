@@ -84,11 +84,13 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     full_layer_gate_text = full_layer_gate_slurm.read_text()
     assert "mamba-checkpoint-full-layer-gate" in full_layer_gate_text
     assert "MAX_ROTATION_KEYS" in full_layer_gate_text
+    assert "VISIBLE_DIM_LIMIT" in full_layer_gate_text
     assert "full-layer gate" in full_layer_gate_text
 
     full_layer_sweep_text = full_layer_sweep_slurm.read_text()
     assert "run_checkpoint_full_layer_sweep.py" in full_layer_sweep_text
     assert "LAYER_COUNT" in full_layer_sweep_text
+    assert "VISIBLE_DIM_LIMIT" in full_layer_sweep_text
     assert "full-layer sweep" in full_layer_sweep_text
 
     handoff_openfhe_text = handoff_openfhe_slurm.read_text()

@@ -944,6 +944,7 @@ def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
         d_state=d_state,
         mimo_rank=mimo_rank,
         readout_strategy=args.readout_strategy,
+        visible_dim_limit=args.visible_dim_limit or None,
     )
     if args.backend == "openfhe" and len(rotations) > args.max_rotation_keys:
         msg = (
@@ -953,7 +954,10 @@ def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
         )
         raise ValueError(msg)
 
-    batch_size = max(d_state * mimo_rank, d_model)
+    checked_visible_dim = (
+        min(d_model, args.visible_dim_limit) if args.visible_dim_limit else d_model
+    )
+    batch_size = max(d_state * mimo_rank, checked_visible_dim)
     if args.backend == "openfhe":
         backend = OpenFheCkksBackend(
             batch_size=batch_size,
@@ -981,6 +985,7 @@ def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
         multiplicative_depth=args.multiplicative_depth,
         atol=args.atol,
         norm_eps=args.norm_eps,
+        visible_dim_limit=args.visible_dim_limit or None,
     )
     stats = result.backend_stats
     payload = {
@@ -1000,11 +1005,13 @@ def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
             "layer_index": args.layer_index,
             "seq_len": result.seq_len,
             "d_model": result.d_model,
+            "checked_visible_dim": result.checked_visible_dim,
             "d_state": result.d_state,
             "mimo_rank": result.mimo_rank,
             "readout_strategy": args.readout_strategy,
             "input_mode": args.input_mode,
             "input_propagation": args.input_propagation,
+            "visible_dim_limit": args.visible_dim_limit or None,
         },
         "ckks": {
             "multiplicative_depth": args.multiplicative_depth,
@@ -2745,6 +2752,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=512,
         help="fail early when the full-layer visible projection needs too many rotations",
+    )
+    mamba_full_layer_parser.add_argument(
+        "--visible-dim-limit",
+        type=int,
+        default=0,
+        help="check only the first N visible output dimensions; 0 checks all dimensions",
     )
     mamba_full_layer_parser.add_argument("--max-plan-layers", type=int, default=8)
     mamba_full_layer_parser.add_argument("--max-statuses", type=int, default=50)

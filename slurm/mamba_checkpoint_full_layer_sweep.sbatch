@@ -32,6 +32,7 @@ MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-12}"
 SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-40}"
 RING_DIM="${RING_DIM:-}"
 MAX_ROTATION_KEYS="${MAX_ROTATION_KEYS:-1024}"
+VISIBLE_DIM_LIMIT="${VISIBLE_DIM_LIMIT:-0}"
 ATOL="${ATOL:-1e-5}"
 NORM_EPS="${NORM_EPS:-1e-5}"
 ENABLE_BOOTSTRAP="${ENABLE_BOOTSTRAP:-0}"
@@ -86,6 +87,7 @@ fi
   --multiplicative-depth "${MULTIPLICATIVE_DEPTH}" \
   --scaling-mod-size "${SCALING_MOD_SIZE}" \
   --max-rotation-keys "${MAX_ROTATION_KEYS}" \
+  --visible-dim-limit "${VISIBLE_DIM_LIMIT}" \
   --atol "${ATOL}" \
   --norm-eps "${NORM_EPS}" \
   --max-plan-layers 4 \
@@ -106,6 +108,8 @@ summary = {
     "layer_count": result["layer_count"],
     "seq_len": result["seq_len"],
     "d_model": result["d_model"],
+    "checked_visible_dim_first_layer": result["layers"][0]["checked_visible_dim"]
+    if result["layers"] else None,
     "d_state": result["d_state"],
     "mimo_rank": result["mimo_rank"],
     "passed": result["passed"],

@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.74`. Future changes should bump
+The project is currently at SemVer `0.2.75`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -236,6 +236,15 @@ python3 scripts/run_checkpoint_full_layer_sweep.py \
   --input-mode encrypted-dynamic-bc \
   --prompt 1 \
   --output-json runs/mamba-full-layer-sweep.json
+python3 -m fhe_native_mamba3.cli mamba-checkpoint-full-layer-gate \
+  runs/mamba/checkpoint.pt \
+  --backend openfhe \
+  --d-state 2 \
+  --mimo-rank 4 \
+  --visible-dim-limit 8 \
+  --max-rotation-keys 64 \
+  --prompt 1 \
+  --output-json runs/mamba-full-layer-openfhe-partial.json
 python3 -m fhe_native_mamba3.cli mamba-checkpoint-recurrence-sweep \
   runs/mamba/checkpoint.pt \
   --output-dir runs/mamba-recurrence-sweep-bundle \

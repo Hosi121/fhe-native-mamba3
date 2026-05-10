@@ -32,6 +32,7 @@ class CheckpointFullLayerSweepLayer:
     passed: bool
     max_abs_error: float
     d_model: int
+    checked_visible_dim: int
     d_state: int
     mimo_rank: int
     seq_len: int
@@ -85,6 +86,7 @@ def run_checkpoint_full_layer_ciphertext_sweep(
     multiplicative_depth: int = 12,
     atol: float = 1e-6,
     norm_eps: float = 1e-5,
+    visible_dim_limit: int | None = None,
 ) -> CheckpointFullLayerSweepResult:
     """Sweep source-style full visible-layer gates over consecutive layers.
 
@@ -124,8 +126,15 @@ def run_checkpoint_full_layer_ciphertext_sweep(
                 d_state=resolved_d_state,
                 mimo_rank=resolved_rank,
                 readout_strategy=readout_strategy,
+                visible_dim_limit=visible_dim_limit,
             )
-            backend = factory(max(resolved_d_state * resolved_rank, int(x.shape[-1])), rotations)
+            backend = factory(
+                max(
+                    resolved_d_state * resolved_rank,
+                    _resolve_checked_visible_dim(int(x.shape[-1]), visible_dim_limit),
+                ),
+                rotations,
+            )
             gate = run_checkpoint_full_layer_ciphertext_gate(
                 state_dict,
                 x,
@@ -138,6 +147,7 @@ def run_checkpoint_full_layer_ciphertext_sweep(
                 multiplicative_depth=multiplicative_depth,
                 atol=atol,
                 norm_eps=norm_eps,
+                visible_dim_limit=visible_dim_limit,
             )
             layer_results.append(_sweep_layer_from_gate(gate, rotation_key_count=len(rotations)))
             if layer_index + 1 < resolved_layer_count:
@@ -170,6 +180,7 @@ def run_checkpoint_full_layer_ciphertext_sweep(
             "full_model_correctness_claimed": False,
             "inter_layer_ciphertext_handoff": False,
             "layer_inputs_plaintext_propagated": True,
+            "visible_dim_limit": visible_dim_limit,
             "claim": (
                 "per-layer source-style full visible output sweep; next-layer "
                 "inputs are propagated in plaintext between checked layers"
@@ -194,6 +205,7 @@ def _sweep_layer_from_gate(
         passed=gate.passed,
         max_abs_error=gate.max_abs_error,
         d_model=gate.d_model,
+        checked_visible_dim=gate.checked_visible_dim,
         d_state=gate.d_state,
         mimo_rank=gate.mimo_rank,
         seq_len=gate.seq_len,
@@ -231,3 +243,12 @@ def _validate_initial_layer_input(initial_layer_input: Tensor) -> None:
     if int(initial_layer_input.shape[2]) <= 0:
         msg = "d_model must be positive"
         raise ValueError(msg)
+
+
+def _resolve_checked_visible_dim(d_model: int, visible_dim_limit: int | None) -> int:
+    if visible_dim_limit is None:
+        return d_model
+    if visible_dim_limit <= 0:
+        msg = "visible_dim_limit must be positive"
+        raise ValueError(msg)
+    return min(d_model, visible_dim_limit)

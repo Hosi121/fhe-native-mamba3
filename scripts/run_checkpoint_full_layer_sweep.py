@@ -93,6 +93,7 @@ def main() -> int:
         d_state=d_state,
         mimo_rank=mimo_rank,
         readout_strategy=args.readout_strategy,
+        visible_dim_limit=args.visible_dim_limit or None,
     )
     result = run_checkpoint_full_layer_ciphertext_sweep(
         source_state_dict,
@@ -106,6 +107,7 @@ def main() -> int:
         multiplicative_depth=args.multiplicative_depth,
         atol=args.atol,
         norm_eps=args.norm_eps,
+        visible_dim_limit=args.visible_dim_limit or None,
     )
     payload = {
         "version": __version__,
@@ -121,6 +123,7 @@ def main() -> int:
             "mimo_rank": mimo_rank,
             "input_mode": args.input_mode,
             "readout_strategy": args.readout_strategy,
+            "visible_dim_limit": args.visible_dim_limit or None,
             "multiplicative_depth": args.multiplicative_depth,
             "scaling_mod_size": args.scaling_mod_size,
             "ring_dimension": args.ring_dim or None,
@@ -189,6 +192,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--scaling-mod-size", type=int, default=40)
     parser.add_argument("--ring-dim", type=int, default=0)
     parser.add_argument("--max-rotation-keys", type=int, default=512)
+    parser.add_argument("--visible-dim-limit", type=int, default=0)
     parser.add_argument("--atol", type=float, default=1e-6)
     parser.add_argument("--norm-eps", type=float, default=1e-5)
     parser.add_argument("--max-plan-layers", type=int, default=4)
