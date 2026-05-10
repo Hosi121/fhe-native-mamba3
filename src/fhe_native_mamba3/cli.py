@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fhe_native_mamba3 import __version__
+from fhe_native_mamba3.cli_support import emit_json_payload, write_json_payload
 from fhe_native_mamba3.openfhe_backend import make_demo_problem, run_openfhe_static_recurrence
 
 
@@ -255,15 +256,6 @@ def _parse_input_mode_list(value: str) -> tuple[str, ...]:
     return modes
 
 
-def _emit_json_payload(payload: dict[str, Any], *, output_json: str = "") -> None:
-    text = json.dumps(payload, indent=2, sort_keys=True)
-    if output_json:
-        output_path = Path(output_json)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(text + "\n", encoding="utf-8")
-    print(text)
-
-
 def _finalize_recurrence_payload(
     payload: dict[str, Any],
     *,
@@ -279,12 +271,7 @@ def _finalize_recurrence_payload(
         "expected_outputs": result.expected_outputs,
     }
     if output_json:
-        output_path = Path(output_json)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(full_payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        write_json_payload(full_payload, output_json)
 
     if max_output_values < 0:
         stdout_payload = full_payload
@@ -886,7 +873,7 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         max_output_values=args.max_output_values,
         output_json=args.output_json,
     )
-    _emit_json_payload(payload)
+    emit_json_payload(payload)
     return 0
 
 
@@ -1142,7 +1129,7 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
         ),
         "rows": rows,
     }
-    _emit_json_payload(payload, output_json=args.output_json)
+    emit_json_payload(payload, output_json=args.output_json)
     return 0
 
 
@@ -1371,7 +1358,7 @@ def mamba_checkpoint_compare_reference_cmd(args: argparse.Namespace) -> int:
             }
         )
         payload["source_delta"] = source_delta_payload
-    _emit_json_payload(payload, output_json=args.output_json)
+    emit_json_payload(payload, output_json=args.output_json)
     return 0
 
 
@@ -1509,7 +1496,7 @@ def mamba_checkpoint_source_diagnostics_cmd(args: argparse.Namespace) -> int:
         "summary": _source_diagnostics_summary(rows),
         "rows": rows,
     }
-    _emit_json_payload(payload, output_json=args.output_json)
+    emit_json_payload(payload, output_json=args.output_json)
     return 0
 
 
@@ -1794,7 +1781,7 @@ def source_diagnostics_scale_plan_cmd(args: argparse.Namespace) -> int:
         "diagnostics_json": str(diagnostics_path),
         "scale_plan": scale_plan.to_json_dict(),
     }
-    _emit_json_payload(payload, output_json=args.output_json)
+    emit_json_payload(payload, output_json=args.output_json)
     return 0
 
 
@@ -2116,7 +2103,7 @@ def weight_bundle_recurrence_cmd(args: argparse.Namespace) -> int:
         max_output_values=args.max_output_values,
         output_json=args.output_json,
     )
-    _emit_json_payload(payload)
+    emit_json_payload(payload)
     return 0
 
 

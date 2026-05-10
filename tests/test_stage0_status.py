@@ -5,7 +5,7 @@ from fhe_native_mamba3.stage0_status import build_stage0_status_report
 
 def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> None:
     report = build_stage0_status_report(
-        version="0.2.65",
+        version="0.2.66",
         bootstrap_latency={
             "available": True,
             "mean_latency_sec": 14.5,
@@ -83,7 +83,7 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
         },
     )
 
-    assert report["version"] == "0.2.65"
+    assert report["version"] == "0.2.66"
     assert report["stage0_complete"] is False
     assert report["measurements"]["bootstrap_latency"]["mean_latency_sec"] == 14.5
     assert report["measurements"]["stack_latency_estimate"]["bootstraps"] == 11
@@ -98,7 +98,7 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
 
 
 def test_stage0_status_report_handles_missing_artifacts() -> None:
-    report = build_stage0_status_report(version="0.2.65")
+    report = build_stage0_status_report(version="0.2.66")
 
     assert report["measurements"]["bootstrap_latency"]["available"] is False
     assert report["measurements"]["segment_samples"]["available"] is False
@@ -109,7 +109,7 @@ def test_stage0_status_report_handles_missing_artifacts() -> None:
 
 def test_stage0_status_report_accepts_failed_bootstrap_artifact() -> None:
     report = build_stage0_status_report(
-        version="0.2.65",
+        version="0.2.66",
         bootstrap_latency={
             "available": False,
             "error_type": "RuntimeError",

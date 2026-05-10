@@ -6,6 +6,12 @@ from dataclasses import asdict, dataclass
 from math import log2
 from typing import Any
 
+from fhe_native_mamba3.layout import (
+    ReadoutStrategy,
+    readout_output_slots,
+    required_readout_rotations,
+)
+
 
 @dataclass(frozen=True)
 class RotationKeyGroup:
@@ -20,10 +26,25 @@ class RotationKeyGroup:
 
 
 @dataclass(frozen=True)
+class HeadPackRotationEstimate:
+    """Rotation-key estimate for one candidate head-pack size."""
+
+    pack_size: int
+    logical_slots: int
+    unique_steps: tuple[int, ...]
+    unique_key_count: int
+    estimated_key_memory_gib: float
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class RotationInventory:
     """Rotation-key inventory across scan, readout, matmul, and bootstrap."""
 
     groups: tuple[RotationKeyGroup, ...]
+    head_pack_estimates: tuple[HeadPackRotationEstimate, ...] = ()
     key_size_mb: float = 128.0
 
     @property
@@ -42,6 +63,9 @@ class RotationInventory:
     def to_json_dict(self) -> dict[str, Any]:
         return {
             "groups": [group.to_json_dict() for group in self.groups],
+            "head_pack_estimates": [
+                estimate.to_json_dict() for estimate in self.head_pack_estimates
+            ],
             "unique_steps": self.unique_steps,
             "unique_key_count": self.unique_key_count,
             "key_size_mb": self.key_size_mb,
@@ -57,6 +81,7 @@ def build_rotation_inventory(
     head_pack_sizes: tuple[int, ...] = (4, 8, 16, 32),
     matmul_diagonal_stride: int = 1,
     bootstrap_internal_key_count: int = 0,
+    readout_strategy: ReadoutStrategy = "rank-local",
     key_size_mb: float = 128.0,
 ) -> RotationInventory:
     """Build a conservative rotation inventory for Stage 0/1 planning."""
@@ -70,7 +95,11 @@ def build_rotation_inventory(
     if matmul_diagonal_stride <= 0:
         msg = "matmul_diagonal_stride must be positive"
         raise ValueError(msg)
+    if any(size <= 0 for size in head_pack_sizes):
+        msg = "head_pack_sizes must contain positive integers"
+        raise ValueError(msg)
 
+    max_pack_size = max(head_pack_sizes, default=1)
     groups = (
         RotationKeyGroup(
             name="scan",
@@ -78,9 +107,22 @@ def build_rotation_inventory(
             rationale="Hillis-Steele scan over sequence/effective window.",
         ),
         RotationKeyGroup(
-            name="state-reduce",
-            steps=_powers_of_two_below(d_state),
-            rationale="Rank-local state reductions for MIMO readout/RMS-style reductions.",
+            name="readout",
+            steps=_union_required_readout_rotations(
+                d_state=d_state,
+                head_pack_sizes=head_pack_sizes,
+                readout_strategy=readout_strategy,
+            ),
+            rationale=f"{readout_strategy} rotations for packed rank/state readout.",
+        ),
+        RotationKeyGroup(
+            name="d-skip",
+            steps=_d_skip_rotations(
+                d_state=d_state,
+                mimo_rank=max_pack_size,
+                readout_strategy=readout_strategy,
+            ),
+            rationale="Rotations that align encrypted rank inputs with output slots for D-skip.",
         ),
         RotationKeyGroup(
             name="matmul-diagonal",
@@ -89,8 +131,8 @@ def build_rotation_inventory(
         ),
         RotationKeyGroup(
             name="head-layout",
-            steps=tuple(sorted({size for size in head_pack_sizes if size > 0})),
-            rationale="Candidate head-pack grouping and cross-group layout shifts.",
+            steps=tuple(sorted({d_state * size for size in head_pack_sizes})),
+            rationale="Candidate head-pack group boundaries in rank-major state slots.",
         ),
         RotationKeyGroup(
             name="bootstrap-internal",
@@ -98,10 +140,102 @@ def build_rotation_inventory(
             rationale="Placeholder for backend-specific CoeffToSlot/SlotToCoeff rotations.",
         ),
     )
-    return RotationInventory(groups=groups, key_size_mb=key_size_mb)
+    return RotationInventory(
+        groups=groups,
+        head_pack_estimates=tuple(
+            _head_pack_estimate(
+                pack_size=size,
+                scan_len=scan_len,
+                d_state=d_state,
+                d_model=d_model,
+                matmul_diagonal_stride=matmul_diagonal_stride,
+                bootstrap_internal_key_count=bootstrap_internal_key_count,
+                readout_strategy=readout_strategy,
+                key_size_mb=key_size_mb,
+            )
+            for size in head_pack_sizes
+        ),
+        key_size_mb=key_size_mb,
+    )
 
 
 def _powers_of_two_below(value: int) -> tuple[int, ...]:
     if value <= 1:
         return ()
     return tuple(2**idx for idx in range(int(log2(value - 1)) + 1))
+
+
+def _union_required_readout_rotations(
+    *,
+    d_state: int,
+    head_pack_sizes: tuple[int, ...],
+    readout_strategy: ReadoutStrategy,
+) -> tuple[int, ...]:
+    steps = {
+        step
+        for pack_size in head_pack_sizes
+        for step in required_readout_rotations(
+            d_state=d_state,
+            mimo_rank=pack_size,
+            readout_strategy=readout_strategy,
+        )
+    }
+    return tuple(sorted(steps))
+
+
+def _d_skip_rotations(
+    *,
+    d_state: int,
+    mimo_rank: int,
+    readout_strategy: ReadoutStrategy,
+) -> tuple[int, ...]:
+    output_slots = readout_output_slots(
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        readout_strategy=readout_strategy,
+    )
+    steps = {
+        rank * d_state - output_slots[rank]
+        for rank in range(mimo_rank)
+        if rank * d_state - output_slots[rank] != 0
+    }
+    return tuple(sorted(steps))
+
+
+def _head_pack_estimate(
+    *,
+    pack_size: int,
+    scan_len: int,
+    d_state: int,
+    d_model: int,
+    matmul_diagonal_stride: int,
+    bootstrap_internal_key_count: int,
+    readout_strategy: ReadoutStrategy,
+    key_size_mb: float,
+) -> HeadPackRotationEstimate:
+    steps = set(_powers_of_two_below(scan_len))
+    steps.update(
+        required_readout_rotations(
+            d_state=d_state,
+            mimo_rank=pack_size,
+            readout_strategy=readout_strategy,
+        )
+    )
+    steps.update(
+        _d_skip_rotations(
+            d_state=d_state,
+            mimo_rank=pack_size,
+            readout_strategy=readout_strategy,
+        )
+    )
+    steps.update(tuple(range(0, d_model, matmul_diagonal_stride))[1:])
+    steps.add(d_state * pack_size)
+    steps.update(range(1, bootstrap_internal_key_count + 1))
+    unique_steps = tuple(sorted(step for step in steps if step != 0))
+    return HeadPackRotationEstimate(
+        pack_size=pack_size,
+        logical_slots=d_state * pack_size,
+        unique_steps=unique_steps,
+        unique_key_count=len(unique_steps),
+        estimated_key_memory_gib=len(unique_steps) * key_size_mb / 1024.0,
+    )

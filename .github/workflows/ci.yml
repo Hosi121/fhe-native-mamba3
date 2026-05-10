@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      PYTHON: python
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Run checks
+        run: scripts/run_checks.sh
