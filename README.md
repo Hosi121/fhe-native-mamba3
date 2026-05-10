@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.53`. Future changes should bump
+The project is currently at SemVer `0.2.54`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -323,6 +323,22 @@ Override the sweep grid with space-separated values:
 
 ```bash
 ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,MIMO_RANKS="1 2 4 8",D_STATES="4",SEQ_LENS="8",READOUT_MODES="rank-local" slurm/fideslib_stage0_sweep.sbatch'
+```
+
+Run the real-checkpoint OpenFHE Python smoke. The default uses
+`checkpoints/mamba-130m-hf`, source-style dynamic B/C, layer 20, four prompt
+tokens, the saved source diagnostics scale plan, and `MULTIPLICATIVE_DEPTH=9`
+from the recurrence depth advisory:
+
+```bash
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch slurm/mamba_checkpoint_openfhe_smoke.sbatch'
+```
+
+If the selected Python environment does not have the OpenFHE Python wheel,
+install it inside the job:
+
+```bash
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,INSTALL_OPENFHE=1 slurm/mamba_checkpoint_openfhe_smoke.sbatch'
 ```
 
 ## Sync to `high`

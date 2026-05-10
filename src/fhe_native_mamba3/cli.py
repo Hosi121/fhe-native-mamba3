@@ -611,6 +611,7 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         run_static_mimo_recurrence_with_backend,
         scale_recurrence_state_and_output,
     )
+    from fhe_native_mamba3.recurrence_depth import estimate_recurrence_depth
     from fhe_native_mamba3.recurrence_scales import (
         load_recurrence_scale_plan,
         resolve_recurrence_layer_scales,
@@ -710,6 +711,23 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         state_scale=state_scale,
         output_scale=output_scale,
     )
+    depth_advisory = estimate_recurrence_depth(
+        seq_len=problem.seq_len,
+        d_state=problem.d_state,
+        input_mode=args.input_mode,
+        readout_strategy=args.readout_strategy,
+        has_d_skip=problem.d_skip is not None,
+    )
+    if (
+        args.backend == "openfhe"
+        and args.multiplicative_depth < depth_advisory.recommended_multiplicative_depth
+    ):
+        msg = (
+            f"multiplicative_depth={args.multiplicative_depth} is below the recurrence "
+            f"depth estimate {depth_advisory.recommended_multiplicative_depth}; "
+            "increase --multiplicative-depth or reduce prompt length/readout depth"
+        )
+        raise ValueError(msg)
     rotations = required_readout_rotations(
         d_state=problem.d_state,
         mimo_rank=problem.mimo_rank,
@@ -765,6 +783,13 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             "output_scale": output_scale,
             "c_scale_from_state": output_scale / state_scale,
             "scale_plan": scale_plan,
+        },
+        "depth_advisory": {
+            **depth_advisory.to_json_dict(),
+            "configured_multiplicative_depth": args.multiplicative_depth,
+            "has_recommended_depth": (
+                args.multiplicative_depth >= depth_advisory.recommended_multiplicative_depth
+            ),
         },
         "ckks": {
             "multiplicative_depth": args.multiplicative_depth,
@@ -828,6 +853,7 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
         run_static_mimo_recurrence_with_backend,
         scale_recurrence_state_and_output,
     )
+    from fhe_native_mamba3.recurrence_depth import estimate_recurrence_depth
     from fhe_native_mamba3.recurrence_scales import (
         load_recurrence_scale_plan,
         resolve_recurrence_layer_scales,
@@ -952,6 +978,13 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
                     state_scale=state_scale,
                     output_scale=output_scale,
                 )
+                depth_advisory = estimate_recurrence_depth(
+                    seq_len=problem.seq_len,
+                    d_state=problem.d_state,
+                    input_mode=input_mode,
+                    readout_strategy=args.readout_strategy,
+                    has_d_skip=problem.d_skip is not None,
+                )
                 result = run_static_mimo_recurrence_with_backend(
                     problem,
                     backend=TrackingBackend(batch_size=problem.d_state * problem.mimo_rank),
@@ -975,6 +1008,14 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
                         "output_scale": output_scale,
                         "c_scale_from_state": output_scale / state_scale,
                         "scale_plan": scale_plan_layer,
+                        "depth_advisory": {
+                            **depth_advisory.to_json_dict(),
+                            "configured_multiplicative_depth": args.multiplicative_depth,
+                            "has_recommended_depth": (
+                                args.multiplicative_depth
+                                >= depth_advisory.recommended_multiplicative_depth
+                            ),
+                        },
                         "max_abs_error": result.max_abs_error,
                         "latency_sec_per_token": result.latency_sec_per_token,
                         "operation_counts": {
