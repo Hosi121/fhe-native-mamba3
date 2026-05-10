@@ -23,6 +23,8 @@ def main() -> int:
         bootstrap_latency=_read_optional_json(args.bootstrap_latency_json),
         stack_latency_estimate=_read_optional_json(args.stack_latency_json),
         checkpoint_bootstrap_smoke=_read_optional_json(args.checkpoint_bootstrap_smoke_json),
+        checkpoint_source_profile=_read_optional_json(args.checkpoint_source_profile_json),
+        client_decode_smoke=_read_optional_json(args.client_decode_smoke_json),
         segment_samples=_read_optional_json(args.segment_samples_json),
         all_layer_recurrence=_read_optional_json(args.all_layer_recurrence_json),
         ciphertext_handoff=_read_optional_json(args.ciphertext_handoff_json),
@@ -47,6 +49,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--bootstrap-latency-json", default="")
     parser.add_argument("--stack-latency-json", default="")
     parser.add_argument("--checkpoint-bootstrap-smoke-json", default="")
+    parser.add_argument("--checkpoint-source-profile-json", default="")
+    parser.add_argument("--client-decode-smoke-json", default="")
     parser.add_argument("--segment-samples-json", default="")
     parser.add_argument("--all-layer-recurrence-json", default="")
     parser.add_argument("--ciphertext-handoff-json", default="")

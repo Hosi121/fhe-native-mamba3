@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.82`. Future changes should bump
+The project is currently at SemVer `0.2.83`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -362,6 +362,8 @@ scripts/build_stage0_status_report.py \
   --bootstrap-latency-json runs/openfhe-bootstrap-latency-v059-b32768-cf20.json \
   --stack-latency-json runs/openfhe-stack-latency-estimate-v059-bootstrap-measured-b32768.json \
   --checkpoint-bootstrap-smoke-json runs/mamba-130m-layer20-openfhe-bootstrap-smoke-v060.json \
+  --checkpoint-source-profile-json runs/mamba-130m-source-profile-repeat64-v081.json \
+  --client-decode-smoke-json runs/mamba-130m-client-decode-smoke-v080.json \
   --segment-samples-json runs/openfhe-bootstrap-segment-samples-v061-sbatch.json \
   --all-layer-recurrence-json runs/openfhe-all-layer-recurrence-v063.json \
   --ciphertext-handoff-json runs/openfhe-ciphertext-handoff-v064b.json \

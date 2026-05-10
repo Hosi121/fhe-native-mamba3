@@ -11,6 +11,8 @@ def build_stage0_status_report(
     bootstrap_latency: dict[str, Any] | None = None,
     stack_latency_estimate: dict[str, Any] | None = None,
     checkpoint_bootstrap_smoke: dict[str, Any] | None = None,
+    checkpoint_source_profile: dict[str, Any] | None = None,
+    client_decode_smoke: dict[str, Any] | None = None,
     segment_samples: dict[str, Any] | None = None,
     all_layer_recurrence: dict[str, Any] | None = None,
     ciphertext_handoff: dict[str, Any] | None = None,
@@ -21,12 +23,15 @@ def build_stage0_status_report(
         "bootstrap_latency": _bootstrap_latency_summary(bootstrap_latency),
         "stack_latency_estimate": _stack_latency_summary(stack_latency_estimate),
         "checkpoint_bootstrap_smoke": _checkpoint_smoke_summary(checkpoint_bootstrap_smoke),
+        "checkpoint_source_profile": _checkpoint_source_profile_summary(checkpoint_source_profile),
+        "client_decode_smoke": _client_decode_smoke_summary(client_decode_smoke),
         "segment_samples": _segment_sample_summary(segment_samples),
         "all_layer_recurrence": _all_layer_recurrence_summary(all_layer_recurrence),
         "ciphertext_handoff": _ciphertext_handoff_summary(ciphertext_handoff),
     }
     completed_items = _completed_items(measurements)
     remaining_items = _remaining_items(measurements)
+    bottlenecks = _bottleneck_assessment(measurements)
     return {
         "version": version,
         "stage": "stage0-status-report",
@@ -34,7 +39,8 @@ def build_stage0_status_report(
         "completed_items": completed_items,
         "remaining_items": remaining_items,
         "measurements": measurements,
-        "next_bottleneck": _next_bottleneck(measurements),
+        "bottlenecks": bottlenecks,
+        "next_bottleneck": _next_bottleneck(measurements, bottlenecks),
     }
 
 
@@ -102,6 +108,72 @@ def _checkpoint_smoke_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
         "batch_size": payload.get("ckks", {}).get("batch_size"),
         "ring_dimension": payload.get("ckks", {}).get("ring_dimension"),
         "bootstrap_after_tokens": payload.get("ckks", {}).get("bootstrap_after_tokens"),
+    }
+
+
+def _checkpoint_source_profile_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {"available": False}
+    result = payload.get("result", {})
+    global_maxima = result.get("global_maxima", {})
+    token_ids = result.get("token_ids", [])
+    range_stage = None
+    range_layer = None
+    if result.get("layers"):
+        worst_layer = max(
+            result["layers"],
+            key=lambda layer: float(layer.get("range_score", 0.0)),
+        )
+        range_layer = worst_layer.get("layer_index")
+        range_stage = worst_layer.get("range_score_stage")
+    return {
+        "available": True,
+        "passed": payload.get("passed"),
+        "encrypted": payload.get("measurement_scope", {}).get("encrypted"),
+        "full_model_correctness_claimed": payload.get("measurement_scope", {}).get(
+            "full_model_correctness_claimed"
+        ),
+        "seq_len": len(token_ids),
+        "layer_count": result.get("layer_count"),
+        "d_model": result.get("d_model"),
+        "d_state": result.get("d_state"),
+        "mimo_rank": result.get("mimo_rank"),
+        "top1_token": result.get("top1_token"),
+        "top1_top2_gap": result.get("top1_top2_gap"),
+        "decay_abs_max": global_maxima.get("decay_abs_max"),
+        "high_decay_burst_len": global_maxima.get("high_decay_burst_len"),
+        "update_abs_max": global_maxima.get("update_abs_max"),
+        "range_score": global_maxima.get("range_score"),
+        "range_score_layer": range_layer,
+        "range_score_stage": range_stage,
+        "logits_abs_max": global_maxima.get("logits_abs_max"),
+        "elapsed_sec": result.get("elapsed_sec"),
+    }
+
+
+def _client_decode_smoke_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {"available": False}
+    result = payload.get("result", {})
+    decode_steps = result.get("decode_steps", [])
+    first_step = decode_steps[0] if decode_steps else {}
+    return {
+        "available": True,
+        "passed": payload.get("passed"),
+        "layer_count": result.get("layer_count"),
+        "d_model": result.get("d_model"),
+        "d_state": result.get("d_state"),
+        "mimo_rank": result.get("mimo_rank"),
+        "vocab_size": result.get("vocab_size"),
+        "new_token_ids": result.get("new_token_ids"),
+        "top1_top2_gap": first_step.get("top1_top2_gap"),
+        "hidden_abs_max": result.get("hidden_abs_max"),
+        "logits_abs_max": result.get("logits_abs_max"),
+        "client_side_lm_head": result.get("client_side_lm_head"),
+        "client_side_argmax": result.get("client_side_argmax"),
+        "encrypted_argmax": result.get("encrypted_argmax"),
+        "full_model_correctness_claimed": result.get("full_model_correctness_claimed"),
+        "elapsed_sec": result.get("elapsed_sec"),
     }
 
 
@@ -189,6 +261,10 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         items.append("estimate 24-layer recurrence stack latency from segment samples")
     if measurements["checkpoint_bootstrap_smoke"].get("bootstraps"):
         items.append("insert and execute an actual bootstrap in real-checkpoint recurrence")
+    if measurements["checkpoint_source_profile"].get("available"):
+        items.append("profile real checkpoint ranges, decay bursts, updates, and logit gaps")
+    if measurements["client_decode_smoke"].get("passed"):
+        items.append("run real checkpoint source-style client-side decode smoke")
     if measurements["segment_samples"].get("bootstrap_enabled_sample_count"):
         items.append("sample representative recurrence segment with bootstrap enabled")
     all_layer = measurements["all_layer_recurrence"]
@@ -215,7 +291,59 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
     return items
 
 
-def _next_bottleneck(measurements: dict[str, dict[str, Any]]) -> str:
+def _bottleneck_assessment(measurements: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    bottlenecks: list[dict[str, Any]] = []
+    profile = measurements["checkpoint_source_profile"]
+    if profile.get("available"):
+        range_score = profile.get("range_score")
+        if isinstance(range_score, int | float):
+            range_target = 6.0
+            if range_score > range_target:
+                bottlenecks.append(
+                    {
+                        "name": "range",
+                        "severity": "high" if range_score > 100.0 else "medium",
+                        "value": range_score,
+                        "threshold": range_target,
+                        "reason": (
+                            "source-style activation range exceeds the current polynomial/FHE "
+                            "planning target"
+                        ),
+                        "next_action": (
+                            "run range-aware calibration or LoRA before claiming "
+                            "full block stability"
+                        ),
+                    }
+                )
+        burst_len = profile.get("high_decay_burst_len")
+        seq_len = profile.get("seq_len")
+        if isinstance(burst_len, int | float) and isinstance(seq_len, int | float):
+            if seq_len >= 16 and burst_len >= seq_len:
+                bottlenecks.append(
+                    {
+                        "name": "decay_burst",
+                        "severity": "high",
+                        "value": burst_len,
+                        "threshold": seq_len,
+                        "reason": "near-1 decay burst spans the profiled prompt",
+                        "next_action": (
+                            "do not claim a small fixed effective window without contraction "
+                            "fine-tuning or broader prompt profiling"
+                        ),
+                    }
+                )
+            elif burst_len >= max(8.0, 0.5 * seq_len):
+                bottlenecks.append(
+                    {
+                        "name": "decay_burst",
+                        "severity": "medium",
+                        "value": burst_len,
+                        "threshold": max(8.0, 0.5 * seq_len),
+                        "reason": "near-1 decay burst is large relative to the prompt length",
+                        "next_action": "profile longer prompts and adversarial repetitions",
+                    }
+                )
+
     estimate = measurements["stack_latency_estimate"]
     arithmetic = estimate.get("arithmetic_sec_per_token")
     bootstrap = estimate.get("bootstrap_sec_per_token")
@@ -224,7 +352,69 @@ def _next_bottleneck(measurements: dict[str, dict[str, Any]]) -> str:
         and isinstance(bootstrap, int | float)
         and bootstrap > arithmetic
     ):
-        return "bootstrap latency dominates the current Stage 0 recurrence estimate"
+        bottlenecks.append(
+            {
+                "name": "bootstrap_latency",
+                "severity": "high" if bootstrap > 2 * arithmetic else "medium",
+                "value": bootstrap,
+                "threshold": arithmetic,
+                "reason": "bootstrap latency dominates the current Stage 0 recurrence estimate",
+                "next_action": (
+                    "connect measured bootstrap cost to scheduled ciphertext-chain execution"
+                ),
+            }
+        )
+    if not measurements["checkpoint_bootstrap_smoke"].get("bootstraps"):
+        bottlenecks.append(
+            {
+                "name": "bootstrap_execution",
+                "severity": "medium",
+                "value": 0,
+                "threshold": 1,
+                "reason": "no real-checkpoint recurrence smoke with an actual bootstrap is present",
+                "next_action": (
+                    "execute a real-checkpoint recurrence smoke with an actual bootstrap"
+                ),
+            }
+        )
+    all_layer = measurements["all_layer_recurrence"]
+    if all_layer.get("actual_scheduled_bootstraps") and all_layer.get("bootstrap_probe_only"):
+        bottlenecks.append(
+            {
+                "name": "ciphertext_chain",
+                "severity": "high",
+                "value": all_layer.get("actual_scheduled_bootstraps"),
+                "threshold": all_layer.get("scheduled_bootstraps"),
+                "reason": (
+                    "scheduled bootstraps are still probe-only, not a true ciphertext handoff chain"
+                ),
+                "next_action": (
+                    "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
+                ),
+            }
+        )
+    decode = measurements["client_decode_smoke"]
+    if decode.get("client_side_argmax") and not decode.get("encrypted_argmax"):
+        bottlenecks.append(
+            {
+                "name": "decoding",
+                "severity": "medium",
+                "value": "client-side-argmax",
+                "threshold": "encrypted-argmax",
+                "reason": "generation currently relies on client-side lm_head/argmax",
+                "next_action": "keep interactive decoding as baseline and defer CutMax to Stage 2",
+            }
+        )
+    order = {"high": 0, "medium": 1, "low": 2}
+    return sorted(bottlenecks, key=lambda item: order.get(str(item["severity"]), 3))
+
+
+def _next_bottleneck(
+    measurements: dict[str, dict[str, Any]],
+    bottlenecks: list[dict[str, Any]],
+) -> str:
+    if bottlenecks:
+        return str(bottlenecks[0]["reason"])
     if not measurements["checkpoint_bootstrap_smoke"].get("bootstraps"):
         return "execute a real-checkpoint recurrence smoke with an actual bootstrap"
     return "connect token/layer bootstrap probes to full 24-layer scheduled execution"
