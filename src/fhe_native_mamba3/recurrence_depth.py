@@ -32,6 +32,25 @@ class RecurrenceDepthEstimate:
 
 
 @dataclass(frozen=True)
+class RecurrenceBootstrapSegment:
+    """Contiguous layer segment evaluated between bootstraps."""
+
+    segment_index: int
+    layer_indices: tuple[int, ...]
+    layer_depths: tuple[int, ...]
+    depth_sum: int
+    start_level: int
+    final_level: int
+    starts_after_bootstrap: bool
+
+    def to_json_dict(self) -> dict[str, int | bool | list[int]]:
+        payload = asdict(self)
+        payload["layer_indices"] = list(self.layer_indices)
+        payload["layer_depths"] = list(self.layer_depths)
+        return payload
+
+
+@dataclass(frozen=True)
 class RecurrenceBootstrapGroup:
     """Bootstrap plan for one recurrence-source/sequence configuration."""
 
@@ -44,12 +63,24 @@ class RecurrenceBootstrapGroup:
     bootstrap_before_layers: tuple[int, ...]
     final_level: int
     bootstraps: int
+    segments: tuple[RecurrenceBootstrapSegment, ...]
 
-    def to_json_dict(self) -> dict[str, int | str | list[int]]:
+    @property
+    def segment_count(self) -> int:
+        return len(self.segments)
+
+    @property
+    def max_segment_depth(self) -> int:
+        return max((segment.depth_sum for segment in self.segments), default=0)
+
+    def to_json_dict(self) -> dict[str, int | str | list[int] | list[dict]]:
         payload = asdict(self)
         payload["layer_indices"] = list(self.layer_indices)
         payload["layer_depths"] = list(self.layer_depths)
         payload["bootstrap_before_layers"] = list(self.bootstrap_before_layers)
+        payload["segment_count"] = self.segment_count
+        payload["max_segment_depth"] = self.max_segment_depth
+        payload["segments"] = [segment.to_json_dict() for segment in self.segments]
         return payload
 
 
@@ -146,6 +177,13 @@ def _recurrence_bootstrap_groups(
         layer_indices = tuple(sorted(depths_by_layer))
         layer_depths = tuple(depths_by_layer[index] for index in layer_indices)
         schedule = greedy_bootstrap_schedule(layer_depths, ckks)
+        segments = tuple(
+            _bootstrap_segments_from_depths(
+                layer_indices=layer_indices,
+                layer_depths=layer_depths,
+                ckks=ckks,
+            )
+        )
         plans.append(
             RecurrenceBootstrapGroup(
                 recurrence_source=recurrence_source,
@@ -159,9 +197,82 @@ def _recurrence_bootstrap_groups(
                 ),
                 final_level=schedule.final_level,
                 bootstraps=schedule.bootstraps,
+                segments=segments,
             )
         )
     return plans
+
+
+def _bootstrap_segments_from_depths(
+    *,
+    layer_indices: tuple[int, ...],
+    layer_depths: tuple[int, ...],
+    ckks: CkksConfig,
+) -> list[RecurrenceBootstrapSegment]:
+    segments: list[RecurrenceBootstrapSegment] = []
+    segment_layers: list[int] = []
+    segment_depths: list[int] = []
+    segment_start_level = ckks.max_level
+    starts_after_bootstrap = False
+    level = ckks.max_level
+
+    for layer_index, depth in zip(layer_indices, layer_depths, strict=True):
+        if depth < 0:
+            msg = "layer depths must be non-negative"
+            raise ValueError(msg)
+        if level - depth < ckks.min_level:
+            if segment_layers:
+                segments.append(
+                    _make_bootstrap_segment(
+                        segment_index=len(segments),
+                        layer_indices=segment_layers,
+                        layer_depths=segment_depths,
+                        start_level=segment_start_level,
+                        final_level=level,
+                        starts_after_bootstrap=starts_after_bootstrap,
+                    )
+                )
+            segment_layers = []
+            segment_depths = []
+            segment_start_level = ckks.max_level
+            starts_after_bootstrap = True
+            level = ckks.max_level
+        segment_layers.append(layer_index)
+        segment_depths.append(depth)
+        level -= depth
+
+    if segment_layers:
+        segments.append(
+            _make_bootstrap_segment(
+                segment_index=len(segments),
+                layer_indices=segment_layers,
+                layer_depths=segment_depths,
+                start_level=segment_start_level,
+                final_level=level,
+                starts_after_bootstrap=starts_after_bootstrap,
+            )
+        )
+    return segments
+
+
+def _make_bootstrap_segment(
+    *,
+    segment_index: int,
+    layer_indices: list[int],
+    layer_depths: list[int],
+    start_level: int,
+    final_level: int,
+    starts_after_bootstrap: bool,
+) -> RecurrenceBootstrapSegment:
+    return RecurrenceBootstrapSegment(
+        segment_index=segment_index,
+        layer_indices=tuple(layer_indices),
+        layer_depths=tuple(layer_depths),
+        depth_sum=sum(layer_depths),
+        start_level=start_level,
+        final_level=final_level,
+        starts_after_bootstrap=starts_after_bootstrap,
+    )
 
 
 def _readout_extra_depth(

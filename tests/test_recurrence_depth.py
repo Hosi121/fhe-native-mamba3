@@ -83,6 +83,28 @@ def test_recurrence_bootstrap_plan_groups_rows_by_source_and_sequence() -> None:
     assert source_group["bootstrap_before_layers"] == [2]
     assert source_group["bootstraps"] == 1
     assert source_group["final_level"] == 19
+    assert source_group["segment_count"] == 2
+    assert source_group["max_segment_depth"] == 18
+    assert source_group["segments"] == [
+        {
+            "segment_index": 0,
+            "layer_indices": [0, 1],
+            "layer_depths": [9, 9],
+            "depth_sum": 18,
+            "start_level": 28,
+            "final_level": 10,
+            "starts_after_bootstrap": False,
+        },
+        {
+            "segment_index": 1,
+            "layer_indices": [2],
+            "layer_depths": [9],
+            "depth_sum": 9,
+            "start_level": 28,
+            "final_level": 19,
+            "starts_after_bootstrap": True,
+        },
+    ]
 
 
 def _row(*, layer: int, depth: int, source: str, seq_len: int) -> dict:

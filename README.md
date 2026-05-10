@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.55`. Future changes should bump
+The project is currently at SemVer `0.2.57`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -239,7 +239,9 @@ python3 -m fhe_native_mamba3.cli mamba-checkpoint-recurrence-sweep \
   --output-json runs/mamba-recurrence-sweep-24layer.json
 The recurrence sweep summary includes `bootstrap_schedules`, built from the
 per-row `depth_advisory.recommended_multiplicative_depth` values and the CKKS
-level budget.
+level budget. Each bootstrap schedule also contains contiguous `segments`,
+which are the natural units to sample with OpenFHE before attempting full
+multi-layer encrypted execution.
 python3 -m fhe_native_mamba3.cli mamba-checkpoint-source-diagnostics \
   runs/mamba/checkpoint.pt \
   --infer-shape \
