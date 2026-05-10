@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.57"
+__version__ = "0.2.58"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -130,6 +130,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.recurrence_depth",
         "estimate_recurrence_depth",
     ),
+    "estimate_recurrence_stack_latency": (
+        "fhe_native_mamba3.recurrence_latency",
+        "estimate_recurrence_stack_latency",
+    ),
     "build_recurrence_bootstrap_plan": (
         "fhe_native_mamba3.recurrence_depth",
         "build_recurrence_bootstrap_plan",
@@ -235,6 +239,7 @@ __all__ = [
     "estimate_block_cost",
     "estimate_integrated_cost",
     "estimate_recurrence_depth",
+    "estimate_recurrence_stack_latency",
     "greedy_bootstrap_schedule",
     "inspect_checkpoint",
     "load_mapping_rules",
