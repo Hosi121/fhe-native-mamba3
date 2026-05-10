@@ -78,3 +78,54 @@ def test_dynamic_decay_uses_ciphertext_multiply_path() -> None:
 
     assert result.max_abs_error == 0
     assert result.backend_stats["ct_ct_mul_count"] == problem.seq_len
+
+
+def test_encrypted_dynamic_bc_uses_ciphertext_multiply_path() -> None:
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((1.0, -2.0), (0.5, 0.25)),
+        decay=(0.1, 0.2),
+        b=((0.0, 0.0),),
+        c=((0.0, 0.0),),
+        b_by_token=(
+            ((0.25, -0.5),),
+            ((0.75, 0.125),),
+        ),
+        c_by_token=(
+            ((2.0, -1.0),),
+            ((-0.25, 0.5),),
+        ),
+    )
+
+    result = run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=TrackingBackend(batch_size=2),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="encrypted-dynamic-bc",
+    )
+
+    assert result.max_abs_error == 0
+    assert result.backend_stats["ct_ct_mul_count"] == 2 * problem.seq_len
+
+
+def test_state_rank_decay_adds_ciphertext_multiply_path() -> None:
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((1.0, -2.0), (0.5, 0.25)),
+        decay=(0.1, 0.2),
+        decay_state_by_token=(
+            ((0.5, 0.6),),
+            ((0.7, 0.8),),
+        ),
+        b=((0.25, -0.5),),
+        c=((2.0, -1.0),),
+    )
+
+    result = run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=TrackingBackend(batch_size=2),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+    )
+
+    assert result.max_abs_error == 0
+    assert result.backend_stats["ct_ct_mul_count"] == problem.seq_len

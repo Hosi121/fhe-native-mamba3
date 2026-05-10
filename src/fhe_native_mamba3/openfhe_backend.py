@@ -1,4 +1,4 @@
-"""OpenFHE CKKS backend for the minimal static MIMO recurrence."""
+"""OpenFHE CKKS backend for minimal MIMO recurrence smoke tests."""
 
 from __future__ import annotations
 
@@ -11,18 +11,21 @@ from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
 
 ReadoutStrategy = Literal["slotwise", "rank-reduce", "rank-local"]
-InputMode = Literal["server-bx", "client-update"]
+InputMode = Literal["server-bx", "client-update", "encrypted-dynamic-bc"]
 
 
 @dataclass(frozen=True)
 class OpenFheRecurrenceProblem:
-    """Plain inputs for an encrypted static MIMO recurrence run."""
+    """Plain inputs for an encrypted MIMO recurrence run."""
 
     rank_inputs: tuple[tuple[float, ...], ...]
     decay: tuple[float, ...]
     b: tuple[tuple[float, ...], ...]
     c: tuple[tuple[float, ...], ...]
     decay_by_token: tuple[tuple[float, ...], ...] | None = None
+    decay_state_by_token: tuple[tuple[tuple[float, ...], ...], ...] | None = None
+    b_by_token: tuple[tuple[tuple[float, ...], ...], ...] | None = None
+    c_by_token: tuple[tuple[tuple[float, ...], ...], ...] | None = None
     d_skip: tuple[float, ...] | None = None
 
     @property
@@ -31,6 +34,8 @@ class OpenFheRecurrenceProblem:
 
     @property
     def d_state(self) -> int:
+        if self.b_by_token is not None and self.b_by_token:
+            return len(self.b_by_token[0])
         return len(self.b)
 
     @property
@@ -97,13 +102,20 @@ def plaintext_static_recurrence(
     state = [[0.0 for _ in range(problem.mimo_rank)] for _ in range(problem.d_state)]
     outputs: list[tuple[float, ...]] = []
     for t, rank_input in enumerate(problem.rank_inputs):
-        decay = problem.decay_by_token[t] if problem.decay_by_token is not None else problem.decay
+        b_matrix = problem.b_by_token[t] if problem.b_by_token is not None else problem.b
+        c_matrix = problem.c_by_token[t] if problem.c_by_token is not None else problem.c
         for n in range(problem.d_state):
             for r in range(problem.mimo_rank):
-                state[n][r] = decay[r] * state[n][r] + problem.b[n][r] * rank_input[r]
+                if problem.decay_state_by_token is not None:
+                    decay = problem.decay_state_by_token[t][n][r]
+                elif problem.decay_by_token is not None:
+                    decay = problem.decay_by_token[t][r]
+                else:
+                    decay = problem.decay[r]
+                state[n][r] = decay * state[n][r] + b_matrix[n][r] * rank_input[r]
         outputs.append(
             tuple(
-                sum(problem.c[n][r] * state[n][r] for n in range(problem.d_state))
+                sum(c_matrix[n][r] * state[n][r] for n in range(problem.d_state))
                 + ((problem.d_skip[r] * rank_input[r]) if problem.d_skip is not None else 0.0)
                 for r in range(problem.mimo_rank)
             )
@@ -128,6 +140,37 @@ def _expanded_update(
     rank: int,
 ) -> list[float]:
     return [b_matrix[n][r] * rank_input[r] for r in range(rank) for n in range(d_state)]
+
+
+def _matrix_at_token(
+    token_matrices: tuple[tuple[tuple[float, ...], ...], ...] | None,
+    fallback: tuple[tuple[float, ...], ...],
+    token_index: int,
+) -> tuple[tuple[float, ...], ...]:
+    if token_matrices is None:
+        return fallback
+    return token_matrices[token_index]
+
+
+def _validate_token_matrices(
+    matrices: tuple[tuple[tuple[float, ...], ...], ...],
+    *,
+    seq_len: int,
+    d_state: int,
+    rank: int,
+    name: str,
+) -> None:
+    if len(matrices) != seq_len:
+        msg = f"{name} length must match seq_len"
+        raise ValueError(msg)
+    for token_index, matrix in enumerate(matrices):
+        if len(matrix) != d_state:
+            msg = f"{name}[{token_index}] must have d_state={d_state} rows"
+            raise ValueError(msg)
+        bad_rows = [len(row) for row in matrix if len(row) != rank]
+        if bad_rows:
+            msg = f"each {name}[{token_index}] row must match mimo_rank={rank}"
+            raise ValueError(msg)
 
 
 def _d_skip_output_vector(
@@ -320,7 +363,7 @@ def run_static_mimo_recurrence_with_backend(
     d_state = problem.d_state
     rank = problem.mimo_rank
     slots = d_state * rank
-    if input_mode not in {"server-bx", "client-update"}:
+    if input_mode not in {"server-bx", "client-update", "encrypted-dynamic-bc"}:
         msg = f"unsupported input_mode: {input_mode}"
         raise ValueError(msg)
     if backend.batch_size < slots:
@@ -337,6 +380,35 @@ def run_static_mimo_recurrence_with_backend(
         if bad_rows:
             msg = f"each decay_by_token row must match mimo_rank={rank}"
             raise ValueError(msg)
+    if problem.decay_state_by_token is not None:
+        _validate_token_matrices(
+            problem.decay_state_by_token,
+            seq_len=problem.seq_len,
+            d_state=d_state,
+            rank=rank,
+            name="decay_state_by_token",
+        )
+    if problem.b_by_token is not None:
+        _validate_token_matrices(
+            problem.b_by_token,
+            seq_len=problem.seq_len,
+            d_state=d_state,
+            rank=rank,
+            name="b_by_token",
+        )
+    if problem.c_by_token is not None:
+        _validate_token_matrices(
+            problem.c_by_token,
+            seq_len=problem.seq_len,
+            d_state=d_state,
+            rank=rank,
+            name="c_by_token",
+        )
+    if input_mode == "encrypted-dynamic-bc" and (
+        problem.b_by_token is None or problem.c_by_token is None
+    ):
+        msg = "encrypted-dynamic-bc input mode requires b_by_token and c_by_token"
+        raise ValueError(msg)
 
     started = time.perf_counter()
     state_ct = backend.encrypt([0.0] * backend.batch_size)
@@ -352,14 +424,31 @@ def run_static_mimo_recurrence_with_backend(
     )
     client_plaintext_public_weight_multiplies = 0
     for t, rank_input in enumerate(problem.rank_inputs):
+        b_matrix = _matrix_at_token(problem.b_by_token, problem.b, t)
+        c_matrix = _matrix_at_token(problem.c_by_token, problem.c, t)
         input_ct = None
-        if input_mode == "server-bx":
+        if input_mode == "encrypted-dynamic-bc":
             input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
-            update_ct = backend.mul_plain(input_ct, b_pt)
+            b_ct = backend.encrypt(_flat_state_by_rank(b_matrix, d_state, rank))
+            update_ct = backend.mul_ct(input_ct, b_ct)
+        elif input_mode == "server-bx":
+            input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
+            if problem.b_by_token is None:
+                update_ct = backend.mul_plain(input_ct, b_pt)
+            else:
+                update_ct = backend.mul_plain(
+                    input_ct,
+                    backend.encode(_flat_state_by_rank(b_matrix, d_state, rank)),
+                )
         else:
-            update_ct = backend.encrypt(_expanded_update(rank_input, problem.b, d_state, rank))
+            update_ct = backend.encrypt(_expanded_update(rank_input, b_matrix, d_state, rank))
             client_plaintext_public_weight_multiplies += slots
-        if problem.decay_by_token is None:
+        if problem.decay_state_by_token is not None:
+            decay_ct = backend.encrypt(
+                _flat_state_by_rank(problem.decay_state_by_token[t], d_state, rank)
+            )
+            decayed_state_ct = backend.mul_ct(state_ct, decay_ct)
+        elif problem.decay_by_token is None:
             decayed_state_ct = backend.mul_plain(state_ct, decay_pt)
         else:
             decay_ct = backend.encrypt(
@@ -370,7 +459,16 @@ def run_static_mimo_recurrence_with_backend(
             decayed_state_ct,
             update_ct,
         )
-        contrib_ct = backend.mul_plain(state_ct, c_pt)
+        if input_mode == "encrypted-dynamic-bc":
+            c_ct = backend.encrypt(_flat_state_by_rank(c_matrix, d_state, rank))
+            contrib_ct = backend.mul_ct(state_ct, c_ct)
+        elif problem.c_by_token is None:
+            contrib_ct = backend.mul_plain(state_ct, c_pt)
+        else:
+            contrib_ct = backend.mul_plain(
+                state_ct,
+                backend.encode(_flat_state_by_rank(c_matrix, d_state, rank)),
+            )
         output_ct = _readout_ciphertext(
             backend=backend,
             contrib_ct=contrib_ct,

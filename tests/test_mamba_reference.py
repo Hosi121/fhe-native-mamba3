@@ -3,6 +3,7 @@ import json
 import torch
 
 from fhe_native_mamba3.mamba_reference import (
+    build_mamba_source_recurrence_problem,
     compare_mamba_layer_reference,
     compare_mamba_source_delta,
 )
@@ -85,6 +86,28 @@ def test_mamba_source_delta_reports_fhe_native_approximation_gap() -> None:
     assert result.recurrence_rank_output_max_abs_delta >= 0
     assert result.final_block_output_max_abs_delta is None
     json.dumps(result.to_json_dict())
+
+
+def test_mamba_source_recurrence_problem_uses_dynamic_bc_and_state_decay() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    problem = build_mamba_source_recurrence_problem(
+        state_dict,
+        layer_input,
+        layer_index=0,
+        d_state=2,
+        mimo_rank=4,
+    )
+
+    assert problem.seq_len == 3
+    assert problem.d_state == 2
+    assert problem.mimo_rank == 4
+    assert problem.b_by_token is not None
+    assert problem.c_by_token is not None
+    assert problem.decay_state_by_token is not None
+    assert len(problem.b_by_token[0]) == 2
+    assert len(problem.b_by_token[0][0]) == 4
 
 
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:

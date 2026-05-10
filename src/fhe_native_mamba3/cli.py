@@ -259,8 +259,17 @@ def _recurrence_problem_summary(extracted: Any) -> dict[str, Any]:
             "rank_inputs_abs_max": _matrix_abs_max(problem.rank_inputs),
             "b_abs_max": _matrix_abs_max(problem.b),
             "c_abs_max": _matrix_abs_max(problem.c),
+            "b_by_token_abs_max": _nested_abs_max(problem.b_by_token)
+            if problem.b_by_token is not None
+            else None,
+            "c_by_token_abs_max": _nested_abs_max(problem.c_by_token)
+            if problem.c_by_token is not None
+            else None,
             "decay_by_token_abs_max": _matrix_abs_max(problem.decay_by_token)
             if problem.decay_by_token is not None
+            else None,
+            "decay_state_by_token_abs_max": _nested_abs_max(problem.decay_state_by_token)
+            if problem.decay_state_by_token is not None
             else None,
             "d_skip_abs_max": max((abs(value) for value in problem.d_skip), default=0.0)
             if problem.d_skip is not None
@@ -294,6 +303,13 @@ def _matrix_summary(matrix: tuple[tuple[float, ...], ...], *, max_values: int) -
 
 def _matrix_abs_max(matrix: tuple[tuple[float, ...], ...]) -> float:
     return max((abs(value) for row in matrix for value in row), default=0.0)
+
+
+def _nested_abs_max(tensor: tuple[tuple[tuple[float, ...], ...], ...]) -> float:
+    return max(
+        (abs(value) for matrix in tensor for row in matrix for value in row),
+        default=0.0,
+    )
 
 
 def stage0_sweep_cmd(args: argparse.Namespace) -> int:
@@ -557,11 +573,20 @@ def mamba_checkpoint_to_bundle_cmd(args: argparse.Namespace) -> int:
 
 
 def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
+    import torch
+
     from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
     from fhe_native_mamba3.backends.tracking import TrackingBackend
-    from fhe_native_mamba3.bundle_recurrence import build_weight_bundle_recurrence_problem
+    from fhe_native_mamba3.bundle_recurrence import (
+        WeightBundleRecurrenceProblem,
+        build_weight_bundle_recurrence_problem,
+    )
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
-    from fhe_native_mamba3.mamba_checkpoint import save_mamba_checkpoint_bundle
+    from fhe_native_mamba3.mamba_checkpoint import (
+        adapt_mamba_state_dict_to_model,
+        save_mamba_checkpoint_bundle,
+    )
+    from fhe_native_mamba3.mamba_reference import build_mamba_source_recurrence_problem
     from fhe_native_mamba3.openfhe_backend import (
         required_readout_rotations,
         run_static_mimo_recurrence_with_backend,
@@ -588,11 +613,57 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             source_dtype=args.source_dtype,
         ),
     )
-    extracted = build_weight_bundle_recurrence_problem(
-        args.output_dir,
-        token_ids=_parse_int_list(args.prompt),
-        layer_index=args.layer_index,
-    )
+    token_ids = _parse_int_list(args.prompt)
+    if not token_ids:
+        msg = "prompt must contain at least one token id"
+        raise ValueError(msg)
+    if len(token_ids) > args.max_seq_len:
+        msg = "prompt length exceeds max_seq_len"
+        raise ValueError(msg)
+    if args.recurrence_source == "adapter-static":
+        extracted = build_weight_bundle_recurrence_problem(
+            args.output_dir,
+            token_ids=token_ids,
+            layer_index=args.layer_index,
+            bc_mode="static",
+        )
+    elif args.recurrence_source == "source-dynamic":
+        required_layers = max(args.n_layers, args.layer_index + 1)
+        model, _source_report = adapt_mamba_state_dict_to_model(
+            source_state_dict,
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            n_layers=required_layers,
+            max_seq_len=args.max_seq_len,
+            seed=args.seed,
+        )
+        invalid = [token for token in token_ids if token < 0 or token >= model.config.vocab_size]
+        if invalid:
+            msg = f"token ids out of range for vocab_size={model.config.vocab_size}: {invalid}"
+            raise ValueError(msg)
+        model.eval()
+        with torch.inference_mode():
+            input_ids = torch.tensor([token_ids], dtype=torch.long)
+            x = model.embed(input_ids) + model.pos[: len(token_ids)].unsqueeze(0)
+            for block in model.blocks[: args.layer_index]:
+                x = block(x)
+            problem = build_mamba_source_recurrence_problem(
+                source_state_dict,
+                x,
+                layer_index=args.layer_index,
+                d_state=d_state,
+                mimo_rank=mimo_rank,
+            )
+        extracted = WeightBundleRecurrenceProblem(
+            bundle_dir=args.output_dir,
+            layer_index=args.layer_index,
+            token_ids=tuple(token_ids),
+            problem=problem,
+            manifest=manifest,
+        )
+    else:
+        msg = f"unsupported recurrence_source: {args.recurrence_source}"
+        raise ValueError(msg)
     problem = extracted.problem
     rotations = required_readout_rotations(
         d_state=problem.d_state,
@@ -643,6 +714,7 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             "state_slots": problem.d_state * problem.mimo_rank,
             "readout_strategy": args.readout_strategy,
             "input_mode": args.input_mode,
+            "recurrence_source": args.recurrence_source,
         },
         "ckks": {
             "multiplicative_depth": args.multiplicative_depth,
@@ -1056,6 +1128,7 @@ def weight_bundle_recurrence_cmd(args: argparse.Namespace) -> int:
         args.bundle_dir,
         token_ids=_parse_int_list(args.prompt),
         layer_index=args.layer_index,
+        bc_mode=args.bc_mode,
     )
     problem = extracted.problem
     rotations = required_readout_rotations(
@@ -1099,6 +1172,7 @@ def weight_bundle_recurrence_cmd(args: argparse.Namespace) -> int:
             "state_slots": problem.d_state * problem.mimo_rank,
             "readout_strategy": args.readout_strategy,
             "input_mode": args.input_mode,
+            "bc_mode": args.bc_mode,
         },
         "ckks": {
             "multiplicative_depth": args.multiplicative_depth,
@@ -1490,6 +1564,12 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_smoke_parser.add_argument("--prompt", default="1")
     mamba_smoke_parser.add_argument("--layer-index", type=int, default=0)
     mamba_smoke_parser.add_argument(
+        "--recurrence-source",
+        choices=["adapter-static", "source-dynamic"],
+        default="adapter-static",
+        help="extract the encrypted recurrence from the adapter path or source-style dynamic B/C",
+    )
+    mamba_smoke_parser.add_argument(
         "--backend", choices=["openfhe", "tracking"], default="tracking"
     )
     mamba_smoke_parser.add_argument(
@@ -1499,7 +1579,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mamba_smoke_parser.add_argument(
         "--input-mode",
-        choices=["server-bx", "client-update"],
+        choices=["server-bx", "client-update", "encrypted-dynamic-bc"],
         default="client-update",
     )
     mamba_smoke_parser.add_argument("--multiplicative-depth", type=int, default=8)
@@ -1642,13 +1722,19 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_recurrence_parser.add_argument("--prompt", default="1,2,3")
     bundle_recurrence_parser.add_argument("--layer-index", type=int, default=0)
     bundle_recurrence_parser.add_argument(
+        "--bc-mode",
+        choices=["static", "dynamic"],
+        default="static",
+        help="extract static B/C weights or token-dependent dynamic B/C projections",
+    )
+    bundle_recurrence_parser.add_argument(
         "--readout-strategy",
         choices=["slotwise", "rank-reduce", "rank-local"],
         default="rank-local",
     )
     bundle_recurrence_parser.add_argument(
         "--input-mode",
-        choices=["server-bx", "client-update"],
+        choices=["server-bx", "client-update", "encrypted-dynamic-bc"],
         default="client-update",
     )
     bundle_recurrence_parser.add_argument("--multiplicative-depth", type=int, default=8)

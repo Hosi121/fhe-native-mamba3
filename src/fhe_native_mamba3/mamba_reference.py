@@ -366,6 +366,74 @@ def compare_mamba_source_delta(
     )
 
 
+def build_mamba_source_recurrence_problem(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    norm_eps: float = 1e-5,
+) -> Any:
+    """Build an OpenFHE recurrence problem from source-style dynamic B/C terms."""
+
+    from fhe_native_mamba3.openfhe_backend import OpenFheRecurrenceProblem
+
+    if layer_input.ndim != 3:
+        msg = "layer_input must have shape [batch, seq_len, d_model]"
+        raise ValueError(msg)
+    if layer_input.shape[0] != 1:
+        msg = "source recurrence problem extraction currently supports batch size 1"
+        raise ValueError(msg)
+
+    plan = plan_mamba_checkpoint(state_dict)
+    if layer_index >= len(plan.layers):
+        msg = f"layer_index {layer_index} is not present in the state_dict"
+        raise ValueError(msg)
+    layer = plan.layers[layer_index]
+    resolved_d_state = d_state if d_state is not None else layer.source_d_state
+    resolved_rank = mimo_rank if mimo_rank is not None else layer.source_inner_dim
+    if resolved_d_state is None or resolved_rank is None:
+        msg = "d_state and mimo_rank must be provided when they cannot be inferred"
+        raise ValueError(msg)
+
+    tensors = _build_layer_tensors(
+        state_dict,
+        layer_index=layer_index,
+        d_model=int(layer_input.shape[-1]),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        include_gate=True,
+    )
+    stages = _run_source_dynamic_formula(layer_input, tensors, norm_eps=norm_eps)
+    b_by_token = _state_vectors_to_token_matrices(
+        stages.dynamic_b_terms[0].detach().cpu(),
+        resolved_rank,
+    )
+    c_by_token = _state_vectors_to_token_matrices(
+        stages.dynamic_c_terms[0].detach().cpu(),
+        resolved_rank,
+    )
+    decay_state_by_token = (
+        _rank_state_to_token_matrices(stages.decay_by_token[0].detach().cpu())
+        if stages.decay_by_token is not None
+        else None
+    )
+    b_static = _mean_token_matrix(b_by_token, resolved_d_state, resolved_rank)
+    c_static = _mean_token_matrix(c_by_token, resolved_d_state, resolved_rank)
+
+    return OpenFheRecurrenceProblem(
+        rank_inputs=_tensor_rows(stages.causal_conv_post_silu[0].detach().cpu()),
+        decay=_tensor_vector(tensors.decay.reshape(-1).detach().cpu()),
+        decay_state_by_token=decay_state_by_token,
+        b=b_static,
+        c=c_static,
+        b_by_token=b_by_token,
+        c_by_token=c_by_token,
+        d_skip=_tensor_vector(tensors.d_skip.detach().cpu()),
+    )
+
+
 def _build_layer_tensors(
     state_dict: dict[str, Tensor],
     *,
@@ -739,6 +807,55 @@ def _fit_last_dim(x: Tensor, target_dim: int) -> Tensor:
     if keep > 0:
         target[..., :keep] = x[..., :keep]
     return target
+
+
+def _tensor_vector(tensor: Tensor) -> tuple[float, ...]:
+    return tuple(float(value) for value in tensor.reshape(-1).tolist())
+
+
+def _tensor_rows(tensor: Tensor) -> tuple[tuple[float, ...], ...]:
+    return tuple(tuple(float(value) for value in row) for row in tensor.tolist())
+
+
+def _state_vectors_to_token_matrices(
+    vectors: Tensor,
+    rank: int,
+) -> tuple[tuple[tuple[float, ...], ...], ...]:
+    matrices: list[tuple[tuple[float, ...], ...]] = []
+    for vector in vectors:
+        rows = []
+        for value in vector.tolist():
+            rows.append(tuple(float(value) for _ in range(rank)))
+        matrices.append(tuple(rows))
+    return tuple(matrices)
+
+
+def _rank_state_to_token_matrices(
+    rank_state: Tensor,
+) -> tuple[tuple[tuple[float, ...], ...], ...]:
+    matrices: list[tuple[tuple[float, ...], ...]] = []
+    for token in rank_state:
+        matrices.append(
+            tuple(
+                tuple(float(token[rank_index, state_index]) for rank_index in range(token.shape[0]))
+                for state_index in range(token.shape[1])
+            )
+        )
+    return tuple(matrices)
+
+
+def _mean_token_matrix(
+    matrices: tuple[tuple[tuple[float, ...], ...], ...],
+    d_state: int,
+    rank: int,
+) -> tuple[tuple[float, ...], ...]:
+    if not matrices:
+        return tuple(tuple(0.0 for _ in range(rank)) for _ in range(d_state))
+    scale = 1.0 / len(matrices)
+    rows: list[tuple[float, ...]] = []
+    for n in range(d_state):
+        rows.append(tuple(scale * sum(matrix[n][r] for matrix in matrices) for r in range(rank)))
+    return tuple(rows)
 
 
 def _static_recurrence(

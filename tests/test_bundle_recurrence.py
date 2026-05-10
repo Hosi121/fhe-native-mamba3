@@ -88,6 +88,26 @@ def test_weight_bundle_recurrence_problem_rejects_unsupported_layer_modes(tmp_pa
     with pytest.raises(ValueError, match="static B/C"):
         build_weight_bundle_recurrence_problem(dynamic_dir, token_ids=(1, 2))
 
+    dynamic_extracted = build_weight_bundle_recurrence_problem(
+        dynamic_dir,
+        token_ids=(1, 2),
+        bc_mode="dynamic",
+    )
+    assert dynamic_extracted.problem.b_by_token is not None
+    assert dynamic_extracted.problem.c_by_token is not None
+    assert dynamic_extracted.problem.seq_len == 2
+    dynamic_result = run_static_mimo_recurrence_with_backend(
+        dynamic_extracted.problem,
+        backend=TrackingBackend(
+            batch_size=dynamic_extracted.problem.d_state * dynamic_extracted.problem.mimo_rank
+        ),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="encrypted-dynamic-bc",
+    )
+    assert dynamic_result.max_abs_error == 0
+    assert dynamic_result.backend_stats["ct_ct_mul_count"] == 2 * dynamic_extracted.problem.seq_len
+
     state_rank_config = FheMamba3Config(
         vocab_size=8,
         d_model=8,

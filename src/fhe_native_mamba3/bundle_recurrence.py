@@ -32,8 +32,19 @@ class WeightBundleRecurrenceProblem:
                 "decay_by_token": [list(row) for row in self.problem.decay_by_token]
                 if self.problem.decay_by_token is not None
                 else None,
+                "decay_state_by_token": [
+                    [list(row) for row in matrix] for matrix in self.problem.decay_state_by_token
+                ]
+                if self.problem.decay_state_by_token is not None
+                else None,
                 "b": [list(row) for row in self.problem.b],
                 "c": [list(row) for row in self.problem.c],
+                "b_by_token": [[list(row) for row in matrix] for matrix in self.problem.b_by_token]
+                if self.problem.b_by_token is not None
+                else None,
+                "c_by_token": [[list(row) for row in matrix] for matrix in self.problem.c_by_token]
+                if self.problem.c_by_token is not None
+                else None,
                 "d_skip": list(self.problem.d_skip) if self.problem.d_skip is not None else None,
             },
         }
@@ -44,8 +55,9 @@ def build_weight_bundle_recurrence_problem(
     *,
     token_ids: tuple[int, ...],
     layer_index: int = 0,
+    bc_mode: str = "static",
 ) -> WeightBundleRecurrenceProblem:
-    """Extract a static scalar MIMO recurrence problem from a saved bundle."""
+    """Extract a scalar MIMO recurrence problem from a saved bundle."""
 
     if not token_ids:
         msg = "token_ids must be non-empty"
@@ -65,8 +77,14 @@ def build_weight_bundle_recurrence_problem(
     if model.config.decay_mode != "scalar":
         msg = "weight-bundle recurrence smoke currently supports scalar decay only"
         raise ValueError(msg)
-    if model.config.bc_mode != "static":
-        msg = "weight-bundle recurrence smoke currently supports static B/C only"
+    if bc_mode not in {"static", "dynamic"}:
+        msg = f"unsupported recurrence bc_mode: {bc_mode}"
+        raise ValueError(msg)
+    if bc_mode == "static" and model.config.bc_mode != "static":
+        msg = "static recurrence smoke requires a bundle with static B/C"
+        raise ValueError(msg)
+    if bc_mode == "dynamic" and model.config.bc_mode != "dynamic":
+        msg = "dynamic recurrence smoke requires a bundle with dynamic B/C"
         raise ValueError(msg)
 
     model.eval()
@@ -76,9 +94,6 @@ def build_weight_bundle_recurrence_problem(
         for block in model.blocks[:layer_index]:
             x = block(x)
         block = model.blocks[layer_index]
-        if block.b_static is None or block.c_static is None:
-            msg = "selected block does not contain static B/C parameters"
-            raise ValueError(msg)
         x_norm = block.in_norm(x)
         rank_input = block._causal_rank_conv(block.in_rank(x_norm))[0].detach().cpu()
         decay = block._decay(dtype=rank_input.dtype, device=rank_input.device).view(-1)
@@ -86,8 +101,25 @@ def build_weight_bundle_recurrence_problem(
         decay_by_token = (
             decay_by_token_tensor[0].detach().cpu() if decay_by_token_tensor is not None else None
         )
-        b_static = block.b_static.detach().cpu()
-        c_static = block.c_static.detach().cpu()
+        if bc_mode == "static":
+            if block.b_static is None or block.c_static is None:
+                msg = "selected block does not contain static B/C parameters"
+                raise ValueError(msg)
+            b_static = block.b_static.detach().cpu()
+            c_static = block.c_static.detach().cpu()
+            b_by_token = None
+            c_by_token = None
+        else:
+            if block.b_dynamic is None or block.c_dynamic is None:
+                msg = "selected block does not contain dynamic B/C projections"
+                raise ValueError(msg)
+            shape = (1, len(token_ids), model.config.d_state, model.config.mimo_rank)
+            b_tensor = block.b_dynamic(x_norm).view(shape)[0].detach().cpu()
+            c_tensor = block.c_dynamic(x_norm).view(shape)[0].detach().cpu()
+            b_static = b_tensor.mean(dim=0)
+            c_static = c_tensor.mean(dim=0)
+            b_by_token = _tensor_matrices(b_tensor)
+            c_by_token = _tensor_matrices(c_tensor)
         d_skip = block.d_skip.detach().cpu()
 
     problem = OpenFheRecurrenceProblem(
@@ -96,6 +128,8 @@ def build_weight_bundle_recurrence_problem(
         decay_by_token=_tensor_rows(decay_by_token) if decay_by_token is not None else None,
         b=_tensor_rows(b_static),
         c=_tensor_rows(c_static),
+        b_by_token=b_by_token,
+        c_by_token=c_by_token,
         d_skip=_tensor_vector(d_skip),
     )
     return WeightBundleRecurrenceProblem(
@@ -113,3 +147,7 @@ def _tensor_vector(tensor: torch.Tensor) -> tuple[float, ...]:
 
 def _tensor_rows(tensor: torch.Tensor) -> tuple[tuple[float, ...], ...]:
     return tuple(tuple(float(value) for value in row) for row in tensor.tolist())
+
+
+def _tensor_matrices(tensor: torch.Tensor) -> tuple[tuple[tuple[float, ...], ...], ...]:
+    return tuple(_tensor_rows(matrix) for matrix in tensor)

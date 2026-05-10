@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.38"
+__version__ = "0.2.39"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -60,6 +60,10 @@ _LAZY_IMPORTS = {
     "build_rotation_inventory": (
         "fhe_native_mamba3.rotation_inventory",
         "build_rotation_inventory",
+    ),
+    "build_mamba_source_recurrence_problem": (
+        "fhe_native_mamba3.mamba_reference",
+        "build_mamba_source_recurrence_problem",
     ),
     "calibrate_weight_values": (
         "fhe_native_mamba3.weight_encoding",
@@ -174,6 +178,7 @@ __all__ = [
     "__version__",
     "adapt_mamba_state_dict_to_model",
     "backend_capability_matrix",
+    "build_mamba_source_recurrence_problem",
     "build_rotation_inventory",
     "build_weight_bundle_manifest",
     "build_weight_bundle_recurrence_problem",
