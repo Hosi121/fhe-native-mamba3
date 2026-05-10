@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.69"
+__version__ = "0.2.70"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -121,6 +121,8 @@ _LAZY_IMPORTS = {
     "StateDictMappingReport": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingReport"),
     "StateDictMappingRule": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingRule"),
     "StateDictMappingDraft": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingDraft"),
+    "SrhtButterflyStage": ("fhe_native_mamba3.srht_sketch", "SrhtButterflyStage"),
+    "SrhtSketchMetadata": ("fhe_native_mamba3.srht_sketch", "SrhtSketchMetadata"),
     "TrackingBackend": ("fhe_native_mamba3.backends.tracking", "TrackingBackend"),
     "WeightCalibration": ("fhe_native_mamba3.weight_encoding", "WeightCalibration"),
     "WeightBundleManifest": ("fhe_native_mamba3.weight_bundle", "WeightBundleManifest"),
@@ -222,6 +224,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage0_status",
         "build_stage0_status_report",
     ),
+    "build_srht_sketch_metadata": (
+        "fhe_native_mamba3.srht_sketch",
+        "build_srht_sketch_metadata",
+    ),
     "measure_openfhe_bootstrap_latency": (
         "fhe_native_mamba3.bootstrap_latency",
         "measure_openfhe_bootstrap_latency",
@@ -252,6 +258,7 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.profiling",
         "profile_recurrence_traces",
     ),
+    "apply_srht_sketch": ("fhe_native_mamba3.srht_sketch", "apply_srht_sketch"),
     "plan_mamba_checkpoint": (
         "fhe_native_mamba3.mamba_checkpoint",
         "plan_mamba_checkpoint",
@@ -281,6 +288,9 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.ssd_prefix_scan",
         "ssd_prefix_scan_prefill",
     ),
+    "srht_sample_indices": ("fhe_native_mamba3.srht_sketch", "srht_sample_indices"),
+    "srht_sampling_mask": ("fhe_native_mamba3.srht_sketch", "srht_sampling_mask"),
+    "srht_sketch_matrix": ("fhe_native_mamba3.srht_sketch", "srht_sketch_matrix"),
     "sweep_head_pack_candidates": (
         "fhe_native_mamba3.head_packing",
         "sweep_head_pack_candidates",
@@ -341,6 +351,8 @@ __all__ = [
     "OpenFheRecurrenceResult",
     "PackingPlan",
     "RecurrenceTraceProfile",
+    "SrhtButterflyStage",
+    "SrhtSketchMetadata",
     "SsdPrefixScanResult",
     "Stage0MimoConfig",
     "Stage0SweepConfig",
@@ -355,12 +367,14 @@ __all__ = [
     "__version__",
     "adapt_mamba_state_dict_to_model",
     "apply_handoff_bootstrap_schedule",
+    "apply_srht_sketch",
     "backend_capability_matrix",
     "build_bootstrap_execution_schedule",
     "build_mamba_source_recurrence_problem",
     "build_prefix_scan_metadata",
     "build_recurrence_bootstrap_plan",
     "build_rotation_inventory",
+    "build_srht_sketch_metadata",
     "build_stage0_status_report",
     "build_weight_bundle_manifest",
     "build_weight_bundle_recurrence_problem",
@@ -408,6 +422,9 @@ __all__ = [
     "save_weight_bundle_from_mapped_checkpoint",
     "scale_recurrence_state",
     "scale_recurrence_state_and_output",
+    "srht_sample_indices",
+    "srht_sampling_mask",
+    "srht_sketch_matrix",
     "ssd_prefix_scan",
     "ssd_prefix_scan_prefill",
     "sweep_head_pack_candidates",

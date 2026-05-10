@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Literal
 
+from fhe_native_mamba3.bootstrap_schedule import build_bootstrap_execution_schedule
 from fhe_native_mamba3.ckks import CkksConfig
 from fhe_native_mamba3.cost import greedy_bootstrap_schedule
 from fhe_native_mamba3.layout import ReadoutStrategy, readout_reduce_steps
@@ -64,6 +65,7 @@ class RecurrenceBootstrapGroup:
     final_level: int
     bootstraps: int
     segments: tuple[RecurrenceBootstrapSegment, ...]
+    execution_schedule: dict[str, object]
 
     @property
     def segment_count(self) -> int:
@@ -81,6 +83,7 @@ class RecurrenceBootstrapGroup:
         payload["segment_count"] = self.segment_count
         payload["max_segment_depth"] = self.max_segment_depth
         payload["segments"] = [segment.to_json_dict() for segment in self.segments]
+        payload["execution_schedule"] = self.execution_schedule
         return payload
 
 
@@ -177,6 +180,18 @@ def _recurrence_bootstrap_groups(
         layer_indices = tuple(sorted(depths_by_layer))
         layer_depths = tuple(depths_by_layer[index] for index in layer_indices)
         schedule = greedy_bootstrap_schedule(layer_depths, ckks)
+        execution_schedule = build_bootstrap_execution_schedule(
+            (
+                {
+                    "layer_index": layer_index,
+                    "block_name": "recurrence",
+                    "depth_cost": depth,
+                }
+                for layer_index, depth in zip(layer_indices, layer_depths, strict=True)
+            ),
+            max_level=ckks.max_level,
+            min_level=ckks.min_level,
+        )
         segments = tuple(
             _bootstrap_segments_from_depths(
                 layer_indices=layer_indices,
@@ -198,6 +213,7 @@ def _recurrence_bootstrap_groups(
                 final_level=schedule.final_level,
                 bootstraps=schedule.bootstraps,
                 segments=segments,
+                execution_schedule=execution_schedule.to_payload(),
             )
         )
     return plans

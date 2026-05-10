@@ -20,7 +20,8 @@ def main() -> int:
     from fhe_native_mamba3 import __version__
     from fhe_native_mamba3.backends.openfhe import OpenFheBootstrapConfig, OpenFheCkksBackend
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
-    from fhe_native_mamba3.cli import _parse_int_list, _recurrence_problem_stats
+    from fhe_native_mamba3.cli import _recurrence_problem_stats
+    from fhe_native_mamba3.cli_support import parse_int_list
     from fhe_native_mamba3.mamba_checkpoint import (
         adapt_mamba_state_dict_to_model,
         plan_mamba_checkpoint,
@@ -61,7 +62,7 @@ def main() -> int:
         msg = f"selected layer exceeds complete_layer_count={plan.complete_layer_count}"
         raise ValueError(msg)
 
-    token_ids = _parse_int_list(args.prompt)
+    token_ids = parse_int_list(args.prompt)
     if not token_ids:
         msg = "prompt must contain at least one token id"
         raise ValueError(msg)
@@ -90,12 +91,12 @@ def main() -> int:
         input_mode=args.input_mode,
         readout_strategy=args.readout_strategy,
     )
-    scheduled_bootstraps = int(schedule_group.get("bootstraps", 0)) if schedule_group else 0
-    bootstrap_before_layers = (
-        tuple(int(layer) for layer in schedule_group.get("bootstrap_before_layers", ()))
-        if schedule_group
-        else ()
+    bootstrap_before_layers = _bootstrap_before_layers_from_schedule_group(schedule_group)
+    scheduled_bootstraps = _scheduled_bootstraps_from_schedule_group(
+        schedule_group,
+        bootstrap_before_layers=bootstrap_before_layers,
     )
+    execution_schedule_available = bool(schedule_group and schedule_group.get("execution_schedule"))
 
     actual_bootstrap_probe = None
     if args.execute_scheduled_bootstraps:
@@ -254,6 +255,7 @@ def main() -> int:
                     mimo_rank=mimo_rank,
                     scheduled_bootstraps=scheduled_bootstraps,
                     bootstrap_before_layers=bootstrap_before_layers,
+                    execution_schedule_available=execution_schedule_available,
                     actual_bootstrap_probe=actual_bootstrap_probe,
                     rows=rows,
                 )
@@ -275,6 +277,7 @@ def main() -> int:
                 mimo_rank=mimo_rank,
                 scheduled_bootstraps=scheduled_bootstraps,
                 bootstrap_before_layers=bootstrap_before_layers,
+                execution_schedule_available=execution_schedule_available,
                 actual_bootstrap_probe=actual_bootstrap_probe,
                 rows=rows,
             )
@@ -295,6 +298,7 @@ def main() -> int:
         mimo_rank=mimo_rank,
         scheduled_bootstraps=scheduled_bootstraps,
         bootstrap_before_layers=bootstrap_before_layers,
+        execution_schedule_available=execution_schedule_available,
         actual_bootstrap_probe=actual_bootstrap_probe,
         rows=rows,
     )
@@ -319,6 +323,7 @@ def _payload(
     mimo_rank: int,
     scheduled_bootstraps: int,
     bootstrap_before_layers: tuple[int, ...],
+    execution_schedule_available: bool,
     actual_bootstrap_probe: dict[str, Any] | None,
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -356,6 +361,7 @@ def _payload(
             "scaling_mod_size": args.scaling_mod_size,
             "ring_dim": args.ring_dim,
             "execute_scheduled_bootstraps": args.execute_scheduled_bootstraps,
+            "execution_schedule_available": execution_schedule_available,
         },
         "summary": {
             "layer_count": len(rows),
@@ -479,6 +485,40 @@ def _selected_schedule_group(
         ):
             return group
     return None
+
+
+def _bootstrap_before_layers_from_schedule_group(
+    schedule_group: dict[str, Any] | None,
+) -> tuple[int, ...]:
+    if not schedule_group:
+        return ()
+    legacy_layers = tuple(int(layer) for layer in schedule_group.get("bootstrap_before_layers", ()))
+    execution_schedule = schedule_group.get("execution_schedule")
+    if not isinstance(execution_schedule, dict):
+        return legacy_layers
+    execution_layers = tuple(
+        int(item["layer_index"]) for item in execution_schedule.get("bootstrap_before", ())
+    )
+    if legacy_layers and legacy_layers != execution_layers:
+        msg = (
+            "sweep bootstrap_before_layers does not match execution_schedule bootstrap_before "
+            f"layers: {legacy_layers} != {execution_layers}"
+        )
+        raise ValueError(msg)
+    return execution_layers
+
+
+def _scheduled_bootstraps_from_schedule_group(
+    schedule_group: dict[str, Any] | None,
+    *,
+    bootstrap_before_layers: tuple[int, ...],
+) -> int:
+    if not schedule_group:
+        return 0
+    execution_schedule = schedule_group.get("execution_schedule")
+    if isinstance(execution_schedule, dict):
+        return int(execution_schedule.get("total_bootstrap_count", len(bootstrap_before_layers)))
+    return int(schedule_group.get("bootstraps", len(bootstrap_before_layers)))
 
 
 def _parse_args() -> argparse.Namespace:

@@ -11,7 +11,16 @@ from pathlib import Path
 from typing import Any
 
 from fhe_native_mamba3 import __version__
-from fhe_native_mamba3.cli_support import emit_json_payload, write_json_payload
+from fhe_native_mamba3.cli_support import (
+    emit_json_payload,
+    write_json_payload,
+)
+from fhe_native_mamba3.cli_support import (
+    parse_float_list as _parse_float_list,
+)
+from fhe_native_mamba3.cli_support import (
+    parse_int_list as _parse_int_list,
+)
 from fhe_native_mamba3.openfhe_backend import make_demo_problem, run_openfhe_static_recurrence
 
 
@@ -219,14 +228,6 @@ def stage0_mimo_cmd(args: argparse.Namespace) -> int:
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
-
-
-def _parse_int_list(value: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in value.split(",") if part)
-
-
-def _parse_float_list(value: str) -> tuple[float, ...]:
-    return tuple(float(part) for part in value.split(",") if part)
 
 
 def _parse_readout_list(value: str) -> tuple[str, ...]:

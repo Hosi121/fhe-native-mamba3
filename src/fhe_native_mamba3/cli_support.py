@@ -26,3 +26,11 @@ def emit_json_payload(payload: dict[str, Any], *, output_json: str | Path | None
     if output_json:
         _write_json_text(text, output_json)
     print(text)
+
+
+def parse_int_list(value: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in value.split(",") if part)
+
+
+def parse_float_list(value: str) -> tuple[float, ...]:
+    return tuple(float(part) for part in value.split(",") if part)

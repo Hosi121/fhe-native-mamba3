@@ -85,6 +85,17 @@ def test_recurrence_bootstrap_plan_groups_rows_by_source_and_sequence() -> None:
     assert source_group["final_level"] == 19
     assert source_group["segment_count"] == 2
     assert source_group["max_segment_depth"] == 18
+    assert source_group["execution_schedule"]["total_bootstrap_count"] == 1
+    assert source_group["execution_schedule"]["bootstrap_before"] == [
+        {
+            "execution_index": 2,
+            "layer_index": 2,
+            "block_index": 0,
+            "block_name": "recurrence",
+            "block_id": "layer-2/block-0:recurrence",
+        }
+    ]
+    assert source_group["execution_schedule"]["steps"][2]["remaining_level"] == 19
     assert source_group["segments"] == [
         {
             "segment_index": 0,
