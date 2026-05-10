@@ -27,8 +27,16 @@ MAX_SEQ_LEN="${MAX_SEQ_LEN:-8}"
 N_LAYERS="${N_LAYERS:-24}"
 MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-9}"
 SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-50}"
+RING_DIM="${RING_DIM:-}"
 READOUT_STRATEGY="${READOUT_STRATEGY:-rank-local}"
 INPUT_MODE="${INPUT_MODE:-encrypted-dynamic-bc}"
+ENABLE_BOOTSTRAP="${ENABLE_BOOTSTRAP:-0}"
+BOOTSTRAP_EVERY_TOKENS="${BOOTSTRAP_EVERY_TOKENS:-0}"
+BOOTSTRAP_AFTER_TOKENS="${BOOTSTRAP_AFTER_TOKENS:-}"
+BOOTSTRAP_LEVEL_BUDGET="${BOOTSTRAP_LEVEL_BUDGET:-5,4}"
+BOOTSTRAP_DIM1="${BOOTSTRAP_DIM1:-0,0}"
+BOOTSTRAP_SLOTS="${BOOTSTRAP_SLOTS:-}"
+BOOTSTRAP_CORRECTION_FACTOR="${BOOTSTRAP_CORRECTION_FACTOR:-20}"
 INSTALL_OPENFHE="${INSTALL_OPENFHE:-0}"
 
 mkdir -p runs slurm
@@ -83,6 +91,27 @@ scale_plan_args=()
 if [[ -f "${SCALE_PLAN_JSON}" ]]; then
   scale_plan_args=(--scale-plan-json "${SCALE_PLAN_JSON}")
 fi
+bootstrap_args=()
+if [[ "${ENABLE_BOOTSTRAP}" == "1" ]]; then
+  bootstrap_args+=(--enable-bootstrap)
+fi
+if [[ "${BOOTSTRAP_EVERY_TOKENS}" != "0" ]]; then
+  bootstrap_args+=(--bootstrap-every-tokens "${BOOTSTRAP_EVERY_TOKENS}")
+fi
+if [[ -n "${BOOTSTRAP_AFTER_TOKENS}" ]]; then
+  bootstrap_args+=(--bootstrap-after-tokens "${BOOTSTRAP_AFTER_TOKENS}")
+fi
+if [[ -n "${RING_DIM}" ]]; then
+  bootstrap_args+=(--ring-dim "${RING_DIM}")
+fi
+if [[ "${ENABLE_BOOTSTRAP}" == "1" || "${BOOTSTRAP_EVERY_TOKENS}" != "0" || -n "${BOOTSTRAP_AFTER_TOKENS}" ]]; then
+  bootstrap_args+=(--bootstrap-level-budget "${BOOTSTRAP_LEVEL_BUDGET}")
+  bootstrap_args+=(--bootstrap-dim1 "${BOOTSTRAP_DIM1}")
+  bootstrap_args+=(--bootstrap-correction-factor "${BOOTSTRAP_CORRECTION_FACTOR}")
+  if [[ -n "${BOOTSTRAP_SLOTS}" ]]; then
+    bootstrap_args+=(--bootstrap-slots "${BOOTSTRAP_SLOTS}")
+  fi
+fi
 
 "${PYTHON}" -m fhe_native_mamba3.cli mamba-checkpoint-recurrence-smoke "${CHECKPOINT}" \
   --output-dir "${OUTPUT_DIR}" \
@@ -97,6 +126,7 @@ fi
   --max-seq-len "${MAX_SEQ_LEN}" \
   --prompt "${PROMPT}" \
   "${scale_plan_args[@]}" \
+  "${bootstrap_args[@]}" \
   --multiplicative-depth "${MULTIPLICATIVE_DEPTH}" \
   --scaling-mod-size "${SCALING_MOD_SIZE}" \
   --max-plan-layers 4 \
@@ -119,6 +149,8 @@ summary = {
     "seq_len": payload["model"]["seq_len"],
     "state_slots": payload["model"]["state_slots"],
     "multiplicative_depth": payload["ckks"]["multiplicative_depth"],
+    "bootstrap_after_tokens": payload["ckks"]["bootstrap_after_tokens"],
+    "bootstrap_configured": payload["ckks"]["bootstrap_configured"],
     "recommended_depth": payload["depth_advisory"]["recommended_multiplicative_depth"],
     "latency_sec_per_token": payload["latency_sec_per_token"],
     "max_abs_error": payload["max_abs_error"],

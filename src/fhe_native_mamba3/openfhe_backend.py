@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 from fhe_native_mamba3.backends.base import FHEBackend
-from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
+from fhe_native_mamba3.backends.openfhe import OpenFheBootstrapConfig, OpenFheCkksBackend
 from fhe_native_mamba3.layout import (
     ReadoutStrategy,
     readout_reduce_mask,
@@ -73,6 +73,7 @@ class OpenFheRecurrenceResult:
     readout_strategy: str
     input_mode: str
     client_plaintext_public_weight_multiplies: int
+    bootstrap_after_tokens: tuple[int, ...] = ()
 
     def to_json_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -450,12 +451,19 @@ def run_static_mimo_recurrence_with_backend(
     multiplicative_depth: int,
     readout_strategy: ReadoutStrategy = "slotwise",
     input_mode: InputMode = "client-update",
+    bootstrap_every_tokens: int = 0,
+    bootstrap_after_tokens: tuple[int, ...] = (),
 ) -> OpenFheRecurrenceResult:
     """Evaluate the encrypted static MIMO recurrence with a backend."""
 
     d_state = problem.d_state
     rank = problem.mimo_rank
     slots = d_state * rank
+    bootstrap_tokens = _resolve_bootstrap_after_tokens(
+        seq_len=problem.seq_len,
+        every=bootstrap_every_tokens,
+        explicit=bootstrap_after_tokens,
+    )
     if input_mode not in {"server-bx", "client-update", "encrypted-dynamic-bc"}:
         msg = f"unsupported input_mode: {input_mode}"
         raise ValueError(msg)
@@ -552,6 +560,9 @@ def run_static_mimo_recurrence_with_backend(
             decayed_state_ct,
             update_ct,
         )
+        token_number = t + 1
+        if token_number in bootstrap_tokens:
+            state_ct = backend.bootstrap(state_ct)
         if input_mode == "encrypted-dynamic-bc":
             c_ct = backend.encrypt(_flat_state_by_rank(c_matrix, d_state, rank))
             contrib_ct = backend.mul_ct(state_ct, c_ct)
@@ -620,6 +631,7 @@ def run_static_mimo_recurrence_with_backend(
         readout_strategy=readout_strategy,
         input_mode=input_mode,
         client_plaintext_public_weight_multiplies=client_plaintext_public_weight_multiplies,
+        bootstrap_after_tokens=tuple(sorted(bootstrap_tokens)),
     )
 
 
@@ -630,6 +642,10 @@ def run_openfhe_static_recurrence(
     scaling_mod_size: int = 50,
     readout_strategy: ReadoutStrategy = "slotwise",
     input_mode: InputMode = "client-update",
+    bootstrap_every_tokens: int = 0,
+    bootstrap_after_tokens: tuple[int, ...] = (),
+    bootstrap_config: OpenFheBootstrapConfig | None = None,
+    ring_dimension: int | None = None,
 ) -> OpenFheRecurrenceResult:
     """Encrypt inputs and evaluate the static MIMO recurrence with OpenFHE CKKS."""
 
@@ -638,6 +654,8 @@ def run_openfhe_static_recurrence(
         batch_size=problem.d_state * problem.mimo_rank,
         multiplicative_depth=depth,
         scaling_mod_size=scaling_mod_size,
+        bootstrap_config=bootstrap_config,
+        ring_dimension=ring_dimension,
         rotations=required_readout_rotations(
             d_state=problem.d_state,
             mimo_rank=problem.mimo_rank,
@@ -650,4 +668,24 @@ def run_openfhe_static_recurrence(
         multiplicative_depth=depth,
         readout_strategy=readout_strategy,
         input_mode=input_mode,
+        bootstrap_every_tokens=bootstrap_every_tokens,
+        bootstrap_after_tokens=bootstrap_after_tokens,
     )
+
+
+def _resolve_bootstrap_after_tokens(
+    *,
+    seq_len: int,
+    every: int,
+    explicit: tuple[int, ...],
+) -> set[int]:
+    if every < 0:
+        msg = "bootstrap_every_tokens must be non-negative"
+        raise ValueError(msg)
+    if any(token <= 0 or token > seq_len for token in explicit):
+        msg = f"bootstrap_after_tokens must be in [1, {seq_len}]"
+        raise ValueError(msg)
+    tokens = set(explicit)
+    if every:
+        tokens.update(range(every, seq_len + 1, every))
+    return tokens

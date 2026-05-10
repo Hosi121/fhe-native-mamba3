@@ -48,6 +48,8 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "mamba-checkpoint-recurrence-smoke" in checkpoint_openfhe_text
     assert "--backend openfhe" in checkpoint_openfhe_text
     assert "INSTALL_OPENFHE" in checkpoint_openfhe_text
+    assert "BOOTSTRAP_AFTER_TOKENS" in checkpoint_openfhe_text
+    assert "BOOTSTRAP_CORRECTION_FACTOR" in checkpoint_openfhe_text
     assert "recommended_multiplicative_depth" in checkpoint_openfhe_text
 
     bootstrap_openfhe_text = bootstrap_openfhe_slurm.read_text()

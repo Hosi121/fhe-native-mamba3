@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.59`. Future changes should bump
+The project is currently at SemVer `0.2.60`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -362,6 +362,13 @@ install it inside the job:
 
 ```bash
 ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,INSTALL_OPENFHE=1 slurm/mamba_checkpoint_openfhe_smoke.sbatch'
+```
+
+Run the same real-checkpoint smoke with an actual OpenFHE bootstrap inserted
+after the first recurrence token:
+
+```bash
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,RUN_NAME=mamba-130m-layer20-openfhe-bootstrap-smoke,PROMPT=1,MULTIPLICATIVE_DEPTH=28,SCALING_MOD_SIZE=40,RING_DIM=65536,BOOTSTRAP_AFTER_TOKENS=1,BOOTSTRAP_CORRECTION_FACTOR=20 slurm/mamba_checkpoint_openfhe_smoke.sbatch'
 ```
 
 ## Sync to `high`

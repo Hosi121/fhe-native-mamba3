@@ -120,6 +120,40 @@ def test_encrypted_dynamic_bc_uses_ciphertext_multiply_path() -> None:
     assert result.backend_stats["ct_ct_mul_count"] == 2 * problem.seq_len
 
 
+def test_recurrence_runner_can_bootstrap_state_after_tokens() -> None:
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((1.0, -2.0), (0.5, 0.25), (0.75, -0.5)),
+        decay=(0.1, 0.2),
+        b=((0.25, -0.5),),
+        c=((2.0, -1.0),),
+    )
+
+    result = run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=TrackingBackend(batch_size=2),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        bootstrap_after_tokens=(1,),
+        bootstrap_every_tokens=2,
+    )
+
+    assert result.max_abs_error == 0
+    assert result.bootstrap_after_tokens == (1, 2)
+    assert result.backend_stats["bootstrap_count"] == 2
+
+
+def test_recurrence_runner_rejects_invalid_bootstrap_token() -> None:
+    problem = make_demo_problem(seq_len=2, d_state=2, mimo_rank=2, seed=11)
+
+    with pytest.raises(ValueError, match="bootstrap_after_tokens"):
+        run_static_mimo_recurrence_with_backend(
+            problem,
+            backend=TrackingBackend(batch_size=4),
+            multiplicative_depth=8,
+            bootstrap_after_tokens=(3,),
+        )
+
+
 def test_state_rank_decay_adds_ciphertext_multiply_path() -> None:
     problem = OpenFheRecurrenceProblem(
         rank_inputs=((1.0, -2.0), (0.5, 0.25)),

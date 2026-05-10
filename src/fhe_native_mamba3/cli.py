@@ -14,6 +14,31 @@ from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.openfhe_backend import make_demo_problem, run_openfhe_static_recurrence
 
 
+def _parse_pair(value: str) -> tuple[int, int]:
+    parts = value.split(",")
+    if len(parts) != 2:
+        msg = f"expected two comma-separated integers, got {value!r}"
+        raise argparse.ArgumentTypeError(msg)
+    try:
+        return (int(parts[0]), int(parts[1]))
+    except ValueError as exc:
+        msg = f"expected two comma-separated integers, got {value!r}"
+        raise argparse.ArgumentTypeError(msg) from exc
+
+
+def _openfhe_bootstrap_config_from_args(args: argparse.Namespace) -> Any:
+    if not (args.enable_bootstrap or args.bootstrap_every_tokens or args.bootstrap_after_tokens):
+        return None
+    from fhe_native_mamba3.backends.openfhe import OpenFheBootstrapConfig
+
+    return OpenFheBootstrapConfig(
+        level_budget=args.bootstrap_level_budget,
+        dim1=args.bootstrap_dim1,
+        slots=args.bootstrap_slots,
+        correction_factor=args.bootstrap_correction_factor,
+    )
+
+
 def _config_from_args(args: argparse.Namespace) -> Any:
     from fhe_native_mamba3.model import FheMamba3Config
 
@@ -62,6 +87,31 @@ def _add_ckks_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--heads", type=int, default=32)
     parser.add_argument("--head-pack", type=int, default=32)
     parser.add_argument("--bootstrap-every-layers", type=int, default=2)
+
+
+def _add_openfhe_bootstrap_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--enable-bootstrap",
+        action="store_true",
+        help="configure OpenFHE CKKS bootstrapping even if no token bootstrap is scheduled",
+    )
+    parser.add_argument(
+        "--bootstrap-every-tokens",
+        type=int,
+        default=0,
+        help="insert a bootstrap after every N recurrence tokens; 0 disables periodic insertion",
+    )
+    parser.add_argument(
+        "--bootstrap-after-tokens",
+        type=_parse_int_list,
+        default=(),
+        help="comma-separated 1-indexed token numbers after which to bootstrap recurrent state",
+    )
+    parser.add_argument("--ring-dim", type=int, default=None)
+    parser.add_argument("--bootstrap-level-budget", type=_parse_pair, default=(5, 4))
+    parser.add_argument("--bootstrap-dim1", type=_parse_pair, default=(0, 0))
+    parser.add_argument("--bootstrap-slots", type=int, default=None)
+    parser.add_argument("--bootstrap-correction-factor", type=int, default=20)
 
 
 def inspect_cmd(args: argparse.Namespace) -> int:
@@ -131,6 +181,10 @@ def openfhe_recurrence_cmd(args: argparse.Namespace) -> int:
         multiplicative_depth=args.multiplicative_depth,
         scaling_mod_size=args.scaling_mod_size,
         input_mode=args.input_mode,
+        bootstrap_every_tokens=args.bootstrap_every_tokens,
+        bootstrap_after_tokens=args.bootstrap_after_tokens,
+        bootstrap_config=_openfhe_bootstrap_config_from_args(args),
+        ring_dimension=args.ring_dim,
     )
     payload = {
         "version": __version__,
@@ -739,6 +793,8 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             multiplicative_depth=args.multiplicative_depth,
             scaling_mod_size=args.scaling_mod_size,
             rotations=rotations,
+            bootstrap_config=_openfhe_bootstrap_config_from_args(args),
+            ring_dimension=args.ring_dim,
         )
     elif args.backend == "tracking":
         backend = TrackingBackend(batch_size=problem.d_state * problem.mimo_rank)
@@ -751,6 +807,8 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         multiplicative_depth=args.multiplicative_depth,
         readout_strategy=args.readout_strategy,
         input_mode=args.input_mode,
+        bootstrap_every_tokens=args.bootstrap_every_tokens,
+        bootstrap_after_tokens=args.bootstrap_after_tokens,
     )
     stats = result.backend_stats
     payload = {
@@ -797,6 +855,8 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             "ring_dimension": result.ring_dimension,
             "batch_size": result.batch_size,
             "rotations": list(result.rotations),
+            "bootstrap_after_tokens": list(result.bootstrap_after_tokens),
+            "bootstrap_configured": _openfhe_bootstrap_config_from_args(args) is not None,
         },
         "latency_sec_per_token": result.latency_sec_per_token,
         "max_abs_error": result.max_abs_error,
@@ -2232,6 +2292,7 @@ def build_parser() -> argparse.ArgumentParser:
     openfhe_parser.add_argument("--seed", type=int, default=7)
     openfhe_parser.add_argument("--multiplicative-depth", type=int, default=0)
     openfhe_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    _add_openfhe_bootstrap_args(openfhe_parser)
     openfhe_parser.add_argument(
         "--input-mode",
         choices=["server-bx", "client-update"],
@@ -2437,6 +2498,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mamba_smoke_parser.add_argument("--multiplicative-depth", type=int, default=8)
     mamba_smoke_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    _add_openfhe_bootstrap_args(mamba_smoke_parser)
     mamba_smoke_parser.add_argument(
         "--state-scale",
         type=float,
