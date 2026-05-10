@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.67"
+__version__ = "0.2.68"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -8,6 +8,10 @@ _LAZY_IMPORTS = {
     "CkksTrace": ("fhe_native_mamba3.ckks", "CkksTrace"),
     "CheckpointInspection": ("fhe_native_mamba3.checkpoint", "CheckpointInspection"),
     "CheckpointTensorSpec": ("fhe_native_mamba3.checkpoint", "CheckpointTensorSpec"),
+    "CheckpointRecurrenceCorrectnessGate": (
+        "fhe_native_mamba3.checkpoint_correctness",
+        "CheckpointRecurrenceCorrectnessGate",
+    ),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
     "CiphertextHandoffLayer": (
         "fhe_native_mamba3.ciphertext_handoff",
@@ -65,6 +69,12 @@ _LAZY_IMPORTS = {
     "FheMamba3Block": ("fhe_native_mamba3.model", "FheMamba3Block"),
     "FheMamba3Config": ("fhe_native_mamba3.model", "FheMamba3Config"),
     "FheMamba3ForCausalLM": ("fhe_native_mamba3.model", "FheMamba3ForCausalLM"),
+    "GreedyBootstrapSchedule": (
+        "fhe_native_mamba3.bootstrap_schedule",
+        "GreedyBootstrapSchedule",
+    ),
+    "HeadPackCandidate": ("fhe_native_mamba3.head_packing", "HeadPackCandidate"),
+    "HeadPackSweep": ("fhe_native_mamba3.head_packing", "HeadPackSweep"),
     "IntegratedCostEstimate": ("fhe_native_mamba3.cost", "IntegratedCostEstimate"),
     "OpenFheRecurrenceProblem": (
         "fhe_native_mamba3.openfhe_backend",
@@ -171,6 +181,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.profiling",
         "estimate_high_decay_burst_len",
     ),
+    "evaluate_head_pack_candidate": (
+        "fhe_native_mamba3.head_packing",
+        "evaluate_head_pack_candidate",
+    ),
     "estimate_recurrence_depth": (
         "fhe_native_mamba3.recurrence_depth",
         "estimate_recurrence_depth",
@@ -217,6 +231,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "run_openfhe_static_recurrence",
     ),
+    "run_checkpoint_recurrence_correctness_gate": (
+        "fhe_native_mamba3.checkpoint_correctness",
+        "run_checkpoint_recurrence_correctness_gate",
+    ),
     "run_static_mimo_recurrence_ciphertexts_with_backend": (
         "fhe_native_mamba3.openfhe_backend",
         "run_static_mimo_recurrence_ciphertexts_with_backend",
@@ -233,6 +251,10 @@ _LAZY_IMPORTS = {
     "ssd_prefix_scan_prefill": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "ssd_prefix_scan_prefill",
+    ),
+    "sweep_head_pack_candidates": (
+        "fhe_native_mamba3.head_packing",
+        "sweep_head_pack_candidates",
     ),
     "run_stage0_mimo": ("fhe_native_mamba3.benchmarks.stage0_mimo", "run_stage0_mimo"),
     "run_stage0_sweep": ("fhe_native_mamba3.benchmarks.stage0_sweep", "run_stage0_sweep"),
@@ -258,6 +280,7 @@ __all__ = [
     "BackendStats",
     "BootstrapSchedule",
     "CheckpointInspection",
+    "CheckpointRecurrenceCorrectnessGate",
     "CheckpointTensorSpec",
     "CiphertextHandoffLayer",
     "CiphertextHandoffResult",
@@ -268,6 +291,9 @@ __all__ = [
     "FheMamba3Block",
     "FheMamba3Config",
     "FheMamba3ForCausalLM",
+    "GreedyBootstrapSchedule",
+    "HeadPackCandidate",
+    "HeadPackSweep",
     "IntegratedCostEstimate",
     "MambaCheckpointAdapterReport",
     "MambaCheckpointPlan",
@@ -320,6 +346,7 @@ __all__ = [
     "estimate_integrated_cost",
     "estimate_recurrence_depth",
     "estimate_recurrence_stack_latency",
+    "evaluate_head_pack_candidate",
     "greedy_bootstrap_schedule",
     "inspect_checkpoint",
     "load_mapping_rules",
@@ -332,6 +359,7 @@ __all__ = [
     "plan_mamba_checkpoint",
     "prefix_decay_products",
     "profile_model_batch",
+    "run_checkpoint_recurrence_correctness_gate",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
@@ -345,6 +373,7 @@ __all__ = [
     "scale_recurrence_state_and_output",
     "ssd_prefix_scan",
     "ssd_prefix_scan_prefill",
+    "sweep_head_pack_candidates",
 ]
 
 
