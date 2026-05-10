@@ -25,6 +25,7 @@ from fhe_native_mamba3.layout import (
 )
 
 InputMode = Literal["server-bx", "client-update", "encrypted-dynamic-bc"]
+CiphertextTraceOutputLayout = Literal["readout", "expanded-rank-input"]
 
 
 @dataclass(frozen=True)
@@ -462,6 +463,30 @@ def _d_skip_from_input_ciphertext(
     return output_ct
 
 
+def _expand_readout_ciphertext_to_rank_input_slots(
+    *,
+    backend: FHEBackend,
+    output_ct: Any,
+    output_slots: tuple[int, ...],
+    d_state: int,
+    rank: int,
+) -> Any:
+    """Expand rank readout slots to the repeated rank-input state-slot layout."""
+
+    expanded_ct = backend.encrypt([0.0] * backend.batch_size)
+    for r, source in enumerate(output_slots):
+        for n in range(d_state):
+            target = r * d_state + n
+            mask = [0.0] * backend.batch_size
+            mask[source] = 1.0
+            term = backend.mul_plain(output_ct, backend.encode(mask))
+            shift = source - target
+            if shift:
+                term = backend.rotate(term, shift)
+            expanded_ct = backend.add(expanded_ct, term)
+    return expanded_ct
+
+
 def run_static_mimo_recurrence_with_backend(
     problem: OpenFheRecurrenceProblem,
     *,
@@ -471,6 +496,7 @@ def run_static_mimo_recurrence_with_backend(
     input_mode: InputMode = "client-update",
     bootstrap_every_tokens: int = 0,
     bootstrap_after_tokens: tuple[int, ...] = (),
+    rank_input_ciphertexts: tuple[Any, ...] | None = None,
 ) -> OpenFheRecurrenceResult:
     """Evaluate the encrypted static MIMO recurrence with a backend."""
 
@@ -482,6 +508,7 @@ def run_static_mimo_recurrence_with_backend(
         input_mode=input_mode,
         bootstrap_every_tokens=bootstrap_every_tokens,
         bootstrap_after_tokens=bootstrap_after_tokens,
+        rank_input_ciphertexts=rank_input_ciphertexts,
     )
     decrypted_outputs: list[tuple[float, ...]] = []
     for output_ct in trace.output_ciphertexts:
@@ -523,6 +550,7 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
     bootstrap_every_tokens: int = 0,
     bootstrap_after_tokens: tuple[int, ...] = (),
     rank_input_ciphertexts: tuple[Any, ...] | None = None,
+    output_layout: CiphertextTraceOutputLayout = "readout",
 ) -> OpenFheRecurrenceCiphertextTrace:
     """Evaluate recurrence and return ciphertext outputs without decrypting."""
 
@@ -536,6 +564,9 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
     )
     if input_mode not in {"server-bx", "client-update", "encrypted-dynamic-bc"}:
         msg = f"unsupported input_mode: {input_mode}"
+        raise ValueError(msg)
+    if output_layout not in {"readout", "expanded-rank-input"}:
+        msg = f"unsupported output_layout: {output_layout}"
         raise ValueError(msg)
     if rank_input_ciphertexts is not None:
         if len(rank_input_ciphertexts) != problem.seq_len:
@@ -595,10 +626,15 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
     c_pt = backend.encode(_flat_state_by_rank(problem.c, d_state, rank))
 
     output_ciphertexts: list[Any] = []
-    output_slots = readout_output_slots(
+    readout_slots = readout_output_slots(
         d_state=d_state,
         mimo_rank=rank,
         readout_strategy=readout_strategy,
+    )
+    output_slots = (
+        tuple(r * d_state for r in range(rank))
+        if output_layout == "expanded-rank-input"
+        else readout_slots
     )
     client_plaintext_public_weight_multiplies = 0
     for t, rank_input in enumerate(problem.rank_inputs):
@@ -663,7 +699,7 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
                     _d_skip_output_vector(
                         rank_input=rank_input,
                         d_skip=problem.d_skip,
-                        output_slots=output_slots,
+                        output_slots=readout_slots,
                         batch_size=backend.batch_size,
                     )
                 )
@@ -675,9 +711,17 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
                     d_skip=problem.d_skip,
                     d_state=d_state,
                     rank=rank,
-                    output_slots=output_slots,
+                    output_slots=readout_slots,
                 )
             output_ct = backend.add(output_ct, d_skip_ct)
+        if output_layout == "expanded-rank-input":
+            output_ct = _expand_readout_ciphertext_to_rank_input_slots(
+                backend=backend,
+                output_ct=output_ct,
+                output_slots=readout_slots,
+                d_state=d_state,
+                rank=rank,
+            )
         output_ciphertexts.append(output_ct)
     eval_seconds = time.perf_counter() - started
     backend.stats().eval_seconds += eval_seconds

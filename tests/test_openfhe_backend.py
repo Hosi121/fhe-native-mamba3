@@ -148,18 +148,18 @@ def test_ciphertext_recurrence_trace_can_handoff_without_decrypting() -> None:
         def decrypt(self, value: object, *, length: int) -> tuple[float, ...]:
             raise AssertionError("handoff trace must not decrypt")
 
-    backend = NoDecryptTrackingBackend(batch_size=2)
+    backend = NoDecryptTrackingBackend(batch_size=4)
     first_problem = OpenFheRecurrenceProblem(
         rank_inputs=((1.0, -2.0), (0.5, 0.25)),
         decay=(0.0, 0.0),
-        b=((1.0, 1.0),),
-        c=((1.0, 1.0),),
+        b=((1.0, 1.0), (0.0, 0.0)),
+        c=((1.0, 1.0), (0.0, 0.0)),
     )
     second_problem = OpenFheRecurrenceProblem(
         rank_inputs=((0.0, 0.0), (0.0, 0.0)),
         decay=(0.0, 0.0),
-        b=((0.5, -0.25),),
-        c=((2.0, 3.0),),
+        b=((0.5, -0.25), (1.5, 0.75)),
+        c=((2.0, 3.0), (1.0, 2.0)),
     )
 
     first = run_static_mimo_recurrence_ciphertexts_with_backend(
@@ -169,6 +169,7 @@ def test_ciphertext_recurrence_trace_can_handoff_without_decrypting() -> None:
         readout_strategy="rank-local",
         input_mode="server-bx",
         bootstrap_after_tokens=(1,),
+        output_layout="expanded-rank-input",
     )
     second = run_static_mimo_recurrence_ciphertexts_with_backend(
         second_problem,
@@ -180,9 +181,70 @@ def test_ciphertext_recurrence_trace_can_handoff_without_decrypting() -> None:
     )
 
     assert first.bootstrap_after_tokens == (1,)
-    assert second.output_slots == (0, 1)
+    assert second.output_slots == (0, 2)
     assert backend.stats().decrypt_count == 0
     assert backend.stats().bootstrap_count == 1
+
+
+def test_rank_local_handoff_expands_readout_slots_for_d_state_greater_than_one() -> None:
+    backend = TrackingBackend(batch_size=4)
+    first_problem = OpenFheRecurrenceProblem(
+        rank_inputs=((2.0, 4.0),),
+        decay=(0.0, 0.0),
+        b=((1.0, 1.0), (0.0, 0.0)),
+        c=((1.0, 1.0), (0.0, 0.0)),
+    )
+    second_problem = OpenFheRecurrenceProblem(
+        rank_inputs=((2.0, 4.0),),
+        decay=(0.0, 0.0),
+        b=((1.0, 1.0), (1.0, 1.0)),
+        c=((1.0, 1.0), (1.0, 1.0)),
+    )
+
+    first = run_static_mimo_recurrence_ciphertexts_with_backend(
+        first_problem,
+        backend=backend,
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="server-bx",
+        output_layout="expanded-rank-input",
+    )
+    second = run_static_mimo_recurrence_with_backend(
+        second_problem,
+        backend=backend,
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="server-bx",
+        rank_input_ciphertexts=first.output_ciphertexts,
+    )
+
+    assert second.decrypted_outputs == ((4.0, 8.0),)
+    assert second.max_abs_error == 0
+
+
+def test_client_update_trace_keeps_client_side_update_statistics() -> None:
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((1.0, -2.0), (0.5, 0.25)),
+        decay=(0.1, 0.2),
+        b=((0.25, -0.5),),
+        c=((2.0, -1.0),),
+        d_skip=(0.5, 0.25),
+    )
+
+    result = run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=TrackingBackend(batch_size=2),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="client-update",
+    )
+
+    assert result.max_abs_error == 0
+    assert result.backend_stats["encrypt_count"] == 1 + 2 * problem.seq_len
+    assert (
+        result.client_plaintext_public_weight_multiplies
+        == (problem.d_state * problem.mimo_rank + problem.mimo_rank) * problem.seq_len
+    )
 
 
 def test_recurrence_runner_rejects_invalid_bootstrap_token() -> None:

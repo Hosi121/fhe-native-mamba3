@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from fhe_native_mamba3.backends.tracking import TrackingBackend
@@ -73,3 +76,22 @@ def test_handoff_rejects_layer_width_mismatch() -> None:
             input_values=(1.0, 2.0),
             layers=(layer,),
         )
+
+
+def test_smoke_script_rejects_openfhe_non_power_of_two_width_early() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_ciphertext_handoff_smoke.py",
+            "--backend",
+            "openfhe",
+            "--width",
+            "3",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "requires --width to be a power of two" in completed.stderr

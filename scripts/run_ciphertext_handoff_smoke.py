@@ -24,6 +24,7 @@ def main() -> int:
     )
 
     args = _parse_args()
+    _validate_backend_layout_args(args)
     bootstrap_after_layers = _parse_int_set(args.bootstrap_after_layers)
     layers = tuple(
         CiphertextHandoffLayer(
@@ -135,6 +136,29 @@ def _parse_pair(value: str) -> tuple[int, int]:
     except ValueError as exc:
         msg = f"expected two comma-separated integers, got {value!r}"
         raise argparse.ArgumentTypeError(msg) from exc
+
+
+def _validate_backend_layout_args(args: argparse.Namespace) -> None:
+    if args.width <= 0:
+        msg = "--width must be positive"
+        raise ValueError(msg)
+    if args.batch_size and args.batch_size != args.width:
+        msg = (
+            "ciphertext handoff smoke currently requires --batch-size to equal "
+            f"--width; got batch_size={args.batch_size}, width={args.width}"
+        )
+        raise ValueError(msg)
+    if args.backend == "openfhe" and not _is_power_of_two(args.width):
+        msg = (
+            "OpenFHE ciphertext handoff smoke requires --width to be a power "
+            "of two. The cyclic diagonal layout wraps over the CKKS batch, and "
+            "OpenFHE rounds the batch size to a power of two."
+        )
+        raise ValueError(msg)
+
+
+def _is_power_of_two(value: int) -> bool:
+    return value > 0 and value & (value - 1) == 0
 
 
 def _parse_args() -> argparse.Namespace:
