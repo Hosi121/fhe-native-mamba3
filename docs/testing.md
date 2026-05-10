@@ -64,6 +64,7 @@ These probes produce benchmark JSON and are recorded in
   parameters; higher ranks are recorded as known failing configurations.
   `rank-local` is the scatter-free candidate path for the next B200 sweep.
 - Bootstrap scheduling has symbolic tests, a JSON-emitting OpenFHE bootstrap
-  latency probe, and a real-checkpoint one-layer bootstrap smoke. Full 24-layer
-  encrypted recurrence execution with scheduled inter-layer bootstraps is still
-  the next integration gap.
+  latency probe, a real-checkpoint one-layer bootstrap smoke, and a
+  bootstrap-enabled segment sample through SLURM. Full 24-layer encrypted
+  recurrence execution with scheduled inter-layer bootstraps is still the next
+  integration gap.

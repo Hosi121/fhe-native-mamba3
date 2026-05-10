@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Build a Stage 0 status report from measured JSON artifacts."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+
+def main() -> int:
+    from fhe_native_mamba3 import __version__
+    from fhe_native_mamba3.stage0_status import build_stage0_status_report
+
+    args = _parse_args()
+    payload = build_stage0_status_report(
+        version=__version__,
+        bootstrap_latency=_read_optional_json(args.bootstrap_latency_json),
+        stack_latency_estimate=_read_optional_json(args.stack_latency_json),
+        checkpoint_bootstrap_smoke=_read_optional_json(args.checkpoint_bootstrap_smoke_json),
+        segment_samples=_read_optional_json(args.segment_samples_json),
+    )
+    if args.output_json:
+        Path(args.output_json).write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def _read_optional_json(path: str) -> dict[str, Any] | None:
+    if not path:
+        return None
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bootstrap-latency-json", default="")
+    parser.add_argument("--stack-latency-json", default="")
+    parser.add_argument("--checkpoint-bootstrap-smoke-json", default="")
+    parser.add_argument("--segment-samples-json", default="")
+    parser.add_argument("--output-json", default="")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
