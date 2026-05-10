@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.46"
+__version__ = "0.2.47"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -38,6 +38,14 @@ _LAZY_IMPORTS = {
     "run_mamba_source_layer": (
         "fhe_native_mamba3.mamba_reference",
         "run_mamba_source_layer",
+    ),
+    "LayerRangeScalePlan": (
+        "fhe_native_mamba3.range_calibration",
+        "LayerRangeScalePlan",
+    ),
+    "RangeScalePlan": (
+        "fhe_native_mamba3.range_calibration",
+        "RangeScalePlan",
     ),
     "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),

@@ -1568,6 +1568,28 @@ def _range_group(
     }
 
 
+def source_diagnostics_scale_plan_cmd(args: argparse.Namespace) -> int:
+    from fhe_native_mamba3.range_calibration import build_range_scale_plan
+
+    diagnostics_path = Path(args.diagnostics_json)
+    diagnostics_payload = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    scale_plan = build_range_scale_plan(
+        diagnostics_payload,
+        activation_target=args.activation_target,
+        state_target=args.state_target,
+        encoded_target=args.encoded_target,
+        monotonic_output_scale=not args.allow_output_rescale_up,
+    )
+    payload = {
+        "version": __version__,
+        "stage": "source-diagnostics-scale-plan",
+        "diagnostics_json": str(diagnostics_path),
+        "scale_plan": scale_plan.to_json_dict(),
+    }
+    _emit_json_payload(payload, output_json=args.output_json)
+    return 0
+
+
 def profile_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -2423,6 +2445,22 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_diagnostics_parser.add_argument("--max-statuses", type=int, default=50)
     mamba_diagnostics_parser.add_argument("--output-json", default="")
     mamba_diagnostics_parser.set_defaults(func=mamba_checkpoint_source_diagnostics_cmd)
+
+    scale_plan_parser = subparsers.add_parser(
+        "source-diagnostics-scale-plan",
+        help="derive hidden-state and recurrence scale factors from source diagnostics JSON",
+    )
+    scale_plan_parser.add_argument("diagnostics_json")
+    scale_plan_parser.add_argument("--activation-target", type=float, default=6.0)
+    scale_plan_parser.add_argument("--state-target", type=float, default=32.0)
+    scale_plan_parser.add_argument("--encoded-target", type=float, default=32.0)
+    scale_plan_parser.add_argument(
+        "--allow-output-rescale-up",
+        action="store_true",
+        help="allow later layers to increase the encoded residual scale again",
+    )
+    scale_plan_parser.add_argument("--output-json", default="")
+    scale_plan_parser.set_defaults(func=source_diagnostics_scale_plan_cmd)
 
     rotation_parser = subparsers.add_parser(
         "rotation-inventory",

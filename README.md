@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.46`. Future changes should bump
+The project is currently at SemVer `0.2.47`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -249,6 +249,12 @@ The source diagnostics summary separates full residual range from
 `activation`, `recurrence`, and `residual` range groups. Use the activation
 group to decide whether polynomial SiLU/RMSNorm ranges need LoRA/range-loss
 tuning, and the recurrence group to size CKKS scales and bootstrap placement.
+python3 -m fhe_native_mamba3.cli source-diagnostics-scale-plan \
+  runs/mamba-source-diagnostics-24layer.json \
+  --activation-target 6 \
+  --state-target 32 \
+  --encoded-target 32 \
+  --output-json runs/mamba-source-scale-plan.json
 python3 -m fhe_native_mamba3.cli checkpoint-inspect runs/train/checkpoint.pt
 python3 -m fhe_native_mamba3.cli checkpoint-map-report \
   runs/train/checkpoint.pt \
