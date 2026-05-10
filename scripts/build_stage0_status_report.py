@@ -25,6 +25,7 @@ def main() -> int:
         checkpoint_bootstrap_smoke=_read_optional_json(args.checkpoint_bootstrap_smoke_json),
         segment_samples=_read_optional_json(args.segment_samples_json),
         all_layer_recurrence=_read_optional_json(args.all_layer_recurrence_json),
+        ciphertext_handoff=_read_optional_json(args.ciphertext_handoff_json),
     )
     if args.output_json:
         Path(args.output_json).write_text(
@@ -48,6 +49,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-bootstrap-smoke-json", default="")
     parser.add_argument("--segment-samples-json", default="")
     parser.add_argument("--all-layer-recurrence-json", default="")
+    parser.add_argument("--ciphertext-handoff-json", default="")
     parser.add_argument("--output-json", default="")
     return parser.parse_args()
 

@@ -5,7 +5,7 @@ from fhe_native_mamba3.stage0_status import build_stage0_status_report
 
 def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> None:
     report = build_stage0_status_report(
-        version="0.2.63",
+        version="0.2.64",
         bootstrap_latency={
             "available": True,
             "mean_latency_sec": 14.5,
@@ -66,32 +66,50 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
                 "max_abs_error": 5e-7,
             }
         },
+        ciphertext_handoff={
+            "backend": "openfhe-ckks",
+            "encrypted": True,
+            "no_intermediate_decrypt": True,
+            "result": {
+                "layer_count": 4,
+                "bootstrap_after_layers": [2, 4],
+                "latency_sec": 25.0,
+                "max_abs_error": 1e-9,
+                "backend_stats": {
+                    "decrypt_count": 1,
+                    "bootstrap_count": 2,
+                },
+            },
+        },
     )
 
-    assert report["version"] == "0.2.63"
+    assert report["version"] == "0.2.64"
     assert report["stage0_complete"] is False
     assert report["measurements"]["bootstrap_latency"]["mean_latency_sec"] == 14.5
     assert report["measurements"]["stack_latency_estimate"]["bootstraps"] == 11
     assert report["measurements"]["segment_samples"]["bootstrap_enabled_sample_count"] == 1
     assert report["measurements"]["all_layer_recurrence"]["success_count"] == 24
     assert report["measurements"]["all_layer_recurrence"]["actual_scheduled_bootstraps"] == 11
+    assert report["measurements"]["ciphertext_handoff"]["decrypt_count"] == 1
     assert "bootstrap latency dominates" in report["next_bottleneck"]
-    assert any("ciphertext handoff" in item for item in report["remaining_items"])
+    assert any("gate/out-projection/residual" in item for item in report["remaining_items"])
     assert any("scheduled boundary bootstraps" in item for item in report["completed_items"])
+    assert any("ciphertext handoff smoke" in item for item in report["completed_items"])
 
 
 def test_stage0_status_report_handles_missing_artifacts() -> None:
-    report = build_stage0_status_report(version="0.2.63")
+    report = build_stage0_status_report(version="0.2.64")
 
     assert report["measurements"]["bootstrap_latency"]["available"] is False
     assert report["measurements"]["segment_samples"]["available"] is False
+    assert report["measurements"]["ciphertext_handoff"]["available"] is False
     assert report["stage0_complete"] is False
     assert len(report["completed_items"]) == 2
 
 
 def test_stage0_status_report_accepts_failed_bootstrap_artifact() -> None:
     report = build_stage0_status_report(
-        version="0.2.63",
+        version="0.2.64",
         bootstrap_latency={
             "available": False,
             "error_type": "RuntimeError",

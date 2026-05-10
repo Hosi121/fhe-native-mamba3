@@ -13,6 +13,7 @@ def build_stage0_status_report(
     checkpoint_bootstrap_smoke: dict[str, Any] | None = None,
     segment_samples: dict[str, Any] | None = None,
     all_layer_recurrence: dict[str, Any] | None = None,
+    ciphertext_handoff: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a compact Stage 0 progress report from existing measurements."""
 
@@ -22,6 +23,7 @@ def build_stage0_status_report(
         "checkpoint_bootstrap_smoke": _checkpoint_smoke_summary(checkpoint_bootstrap_smoke),
         "segment_samples": _segment_sample_summary(segment_samples),
         "all_layer_recurrence": _all_layer_recurrence_summary(all_layer_recurrence),
+        "ciphertext_handoff": _ciphertext_handoff_summary(ciphertext_handoff),
     }
     completed_items = _completed_items(measurements)
     remaining_items = _remaining_items(measurements)
@@ -39,7 +41,12 @@ def build_stage0_status_report(
 def _remaining_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
     all_layer = measurements["all_layer_recurrence"]
     first_item = (
-        "connect scheduled boundary bootstrap smoke to true inter-layer ciphertext handoff"
+        "wire checkpoint gate/out-projection/residual into ciphertext handoff"
+        if measurements["ciphertext_handoff"].get("no_intermediate_decrypt")
+        else "connect scheduled boundary bootstrap smoke to true inter-layer ciphertext handoff"
+    )
+    first_item = (
+        first_item
         if all_layer.get("actual_scheduled_bootstraps")
         else "run 24-layer encrypted recurrence with scheduled inter-layer bootstraps"
     )
@@ -143,6 +150,25 @@ def _all_layer_recurrence_summary(payload: dict[str, Any] | None) -> dict[str, A
     }
 
 
+def _ciphertext_handoff_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {"available": False}
+    result = payload.get("result", {})
+    stats = result.get("backend_stats", {})
+    return {
+        "available": True,
+        "backend": payload.get("backend"),
+        "encrypted": payload.get("encrypted"),
+        "no_intermediate_decrypt": payload.get("no_intermediate_decrypt"),
+        "layer_count": result.get("layer_count"),
+        "bootstrap_after_layers": result.get("bootstrap_after_layers"),
+        "decrypt_count": stats.get("decrypt_count"),
+        "bootstrap_count": stats.get("bootstrap_count"),
+        "latency_sec": result.get("latency_sec"),
+        "max_abs_error": result.get("max_abs_error"),
+    }
+
+
 def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
     items = [
         "import real Mamba checkpoint into recurrence smoke path",
@@ -165,6 +191,9 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         "actual_scheduled_bootstraps"
     ) == all_layer.get("scheduled_bootstraps"):
         items.append("execute all scheduled boundary bootstraps in the 24-layer probe")
+    handoff = measurements["ciphertext_handoff"]
+    if handoff.get("encrypted") and handoff.get("no_intermediate_decrypt"):
+        items.append("run encrypted ciphertext handoff smoke without intermediate decrypts")
     return items
 
 

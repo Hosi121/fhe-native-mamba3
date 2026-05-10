@@ -81,6 +81,24 @@ class OpenFheRecurrenceResult:
         return payload
 
 
+@dataclass(frozen=True)
+class OpenFheRecurrenceCiphertextTrace:
+    """Ciphertext-only recurrence trace with no output decryption."""
+
+    output_ciphertexts: tuple[Any, ...]
+    output_slots: tuple[int, ...]
+    ring_dimension: int
+    batch_size: int
+    multiplicative_depth: int
+    rotations: tuple[int, ...]
+    backend_stats: dict[str, Any]
+    latency_sec_per_token: float
+    readout_strategy: str
+    input_mode: str
+    client_plaintext_public_weight_multiplies: int = 0
+    bootstrap_after_tokens: tuple[int, ...] = ()
+
+
 def make_demo_problem(
     *,
     seq_len: int = 3,
@@ -456,6 +474,58 @@ def run_static_mimo_recurrence_with_backend(
 ) -> OpenFheRecurrenceResult:
     """Evaluate the encrypted static MIMO recurrence with a backend."""
 
+    trace = run_static_mimo_recurrence_ciphertexts_with_backend(
+        problem,
+        backend=backend,
+        multiplicative_depth=multiplicative_depth,
+        readout_strategy=readout_strategy,
+        input_mode=input_mode,
+        bootstrap_every_tokens=bootstrap_every_tokens,
+        bootstrap_after_tokens=bootstrap_after_tokens,
+    )
+    decrypted_outputs: list[tuple[float, ...]] = []
+    for output_ct in trace.output_ciphertexts:
+        output_values = backend.decrypt(output_ct, length=backend.batch_size)
+        decrypted_outputs.append(tuple(output_values[slot] for slot in trace.output_slots))
+
+    expected_outputs = plaintext_static_recurrence(problem)
+    max_abs_error = max(
+        abs(actual - expected)
+        for actual_row, expected_row in zip(decrypted_outputs, expected_outputs, strict=True)
+        for actual, expected in zip(actual_row, expected_row, strict=True)
+    )
+
+    return OpenFheRecurrenceResult(
+        problem=problem,
+        decrypted_outputs=tuple(decrypted_outputs),
+        expected_outputs=expected_outputs,
+        max_abs_error=max_abs_error,
+        ring_dimension=trace.ring_dimension,
+        batch_size=trace.batch_size,
+        multiplicative_depth=trace.multiplicative_depth,
+        rotations=trace.rotations,
+        backend_stats=backend.stats().to_json_dict(),
+        latency_sec_per_token=trace.latency_sec_per_token,
+        readout_strategy=trace.readout_strategy,
+        input_mode=trace.input_mode,
+        client_plaintext_public_weight_multiplies=(trace.client_plaintext_public_weight_multiplies),
+        bootstrap_after_tokens=trace.bootstrap_after_tokens,
+    )
+
+
+def run_static_mimo_recurrence_ciphertexts_with_backend(
+    problem: OpenFheRecurrenceProblem,
+    *,
+    backend: FHEBackend,
+    multiplicative_depth: int,
+    readout_strategy: ReadoutStrategy = "slotwise",
+    input_mode: InputMode = "client-update",
+    bootstrap_every_tokens: int = 0,
+    bootstrap_after_tokens: tuple[int, ...] = (),
+    rank_input_ciphertexts: tuple[Any, ...] | None = None,
+) -> OpenFheRecurrenceCiphertextTrace:
+    """Evaluate recurrence and return ciphertext outputs without decrypting."""
+
     d_state = problem.d_state
     rank = problem.mimo_rank
     slots = d_state * rank
@@ -467,6 +537,13 @@ def run_static_mimo_recurrence_with_backend(
     if input_mode not in {"server-bx", "client-update", "encrypted-dynamic-bc"}:
         msg = f"unsupported input_mode: {input_mode}"
         raise ValueError(msg)
+    if rank_input_ciphertexts is not None:
+        if len(rank_input_ciphertexts) != problem.seq_len:
+            msg = "rank_input_ciphertexts length must match seq_len"
+            raise ValueError(msg)
+        if input_mode == "client-update":
+            msg = "rank_input_ciphertexts require server-bx or encrypted-dynamic-bc input mode"
+            raise ValueError(msg)
     if backend.batch_size < slots:
         msg = f"backend batch_size={backend.batch_size} is smaller than required slots={slots}"
         raise ValueError(msg)
@@ -517,7 +594,7 @@ def run_static_mimo_recurrence_with_backend(
     b_pt = backend.encode(_flat_state_by_rank(problem.b, d_state, rank))
     c_pt = backend.encode(_flat_state_by_rank(problem.c, d_state, rank))
 
-    decrypted_outputs: list[tuple[float, ...]] = []
+    output_ciphertexts: list[Any] = []
     output_slots = readout_output_slots(
         d_state=d_state,
         mimo_rank=rank,
@@ -527,13 +604,16 @@ def run_static_mimo_recurrence_with_backend(
     for t, rank_input in enumerate(problem.rank_inputs):
         b_matrix = _matrix_at_token(problem.b_by_token, problem.b, t)
         c_matrix = _matrix_at_token(problem.c_by_token, problem.c, t)
-        input_ct = None
-        if input_mode == "encrypted-dynamic-bc":
+        if rank_input_ciphertexts is not None:
+            input_ct = rank_input_ciphertexts[t]
+        elif input_mode == "client-update":
+            input_ct = None
+        else:
             input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
+        if input_mode == "encrypted-dynamic-bc":
             b_ct = backend.encrypt(_flat_state_by_rank(b_matrix, d_state, rank))
             update_ct = backend.mul_ct(input_ct, b_ct)
         elif input_mode == "server-bx":
-            input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
             if problem.b_by_token is None:
                 update_ct = backend.mul_plain(input_ct, b_pt)
             else:
@@ -556,10 +636,7 @@ def run_static_mimo_recurrence_with_backend(
                 [problem.decay_by_token[t][r] for r in range(rank) for _ in range(d_state)]
             )
             decayed_state_ct = backend.mul_ct(state_ct, decay_ct)
-        state_ct = backend.add(
-            decayed_state_ct,
-            update_ct,
-        )
+        state_ct = backend.add(decayed_state_ct, update_ct)
         token_number = t + 1
         if token_number in bootstrap_tokens:
             state_ct = backend.bootstrap(state_ct)
@@ -601,23 +678,13 @@ def run_static_mimo_recurrence_with_backend(
                     output_slots=output_slots,
                 )
             output_ct = backend.add(output_ct, d_skip_ct)
-        output_values = backend.decrypt(output_ct, length=backend.batch_size)
-        decrypted_outputs.append(tuple(output_values[slot] for slot in output_slots))
+        output_ciphertexts.append(output_ct)
     eval_seconds = time.perf_counter() - started
     backend.stats().eval_seconds += eval_seconds
 
-    expected_outputs = plaintext_static_recurrence(problem)
-    max_abs_error = max(
-        abs(actual - expected)
-        for actual_row, expected_row in zip(decrypted_outputs, expected_outputs, strict=True)
-        for actual, expected in zip(actual_row, expected_row, strict=True)
-    )
-
-    return OpenFheRecurrenceResult(
-        problem=problem,
-        decrypted_outputs=tuple(decrypted_outputs),
-        expected_outputs=expected_outputs,
-        max_abs_error=max_abs_error,
+    return OpenFheRecurrenceCiphertextTrace(
+        output_ciphertexts=tuple(output_ciphertexts),
+        output_slots=output_slots,
         ring_dimension=backend.ring_dimension,
         batch_size=backend.batch_size,
         multiplicative_depth=multiplicative_depth,

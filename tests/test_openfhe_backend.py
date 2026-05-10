@@ -15,6 +15,7 @@ from fhe_native_mamba3.openfhe_backend import (
     readout_output_slots,
     required_readout_rotations,
     run_openfhe_static_recurrence,
+    run_static_mimo_recurrence_ciphertexts_with_backend,
     run_static_mimo_recurrence_with_backend,
     scale_recurrence_state,
     scale_recurrence_state_and_output,
@@ -140,6 +141,48 @@ def test_recurrence_runner_can_bootstrap_state_after_tokens() -> None:
     assert result.max_abs_error == 0
     assert result.bootstrap_after_tokens == (1, 2)
     assert result.backend_stats["bootstrap_count"] == 2
+
+
+def test_ciphertext_recurrence_trace_can_handoff_without_decrypting() -> None:
+    class NoDecryptTrackingBackend(TrackingBackend):
+        def decrypt(self, value: object, *, length: int) -> tuple[float, ...]:
+            raise AssertionError("handoff trace must not decrypt")
+
+    backend = NoDecryptTrackingBackend(batch_size=2)
+    first_problem = OpenFheRecurrenceProblem(
+        rank_inputs=((1.0, -2.0), (0.5, 0.25)),
+        decay=(0.0, 0.0),
+        b=((1.0, 1.0),),
+        c=((1.0, 1.0),),
+    )
+    second_problem = OpenFheRecurrenceProblem(
+        rank_inputs=((0.0, 0.0), (0.0, 0.0)),
+        decay=(0.0, 0.0),
+        b=((0.5, -0.25),),
+        c=((2.0, 3.0),),
+    )
+
+    first = run_static_mimo_recurrence_ciphertexts_with_backend(
+        first_problem,
+        backend=backend,
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="server-bx",
+        bootstrap_after_tokens=(1,),
+    )
+    second = run_static_mimo_recurrence_ciphertexts_with_backend(
+        second_problem,
+        backend=backend,
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="server-bx",
+        rank_input_ciphertexts=first.output_ciphertexts,
+    )
+
+    assert first.bootstrap_after_tokens == (1,)
+    assert second.output_slots == (0, 1)
+    assert backend.stats().decrypt_count == 0
+    assert backend.stats().bootstrap_count == 1
 
 
 def test_recurrence_runner_rejects_invalid_bootstrap_token() -> None:

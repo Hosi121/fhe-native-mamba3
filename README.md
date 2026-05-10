@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.63`. Future changes should bump
+The project is currently at SemVer `0.2.64`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -263,6 +263,17 @@ bootstrap-latency estimate:
 ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,RUN_NAME=openfhe-all-layer-recurrence-v063,N_LAYERS=24,MULTIPLICATIVE_DEPTH_OVERRIDE=9,RING_DIM=65536,BOOTSTRAP_SEC=14.540211920975707,EXECUTE_SCHEDULED_BOOTSTRAP=1 slurm/openfhe_all_layer_recurrence.sbatch'
 ```
 
+Run a small no-intermediate-decrypt ciphertext handoff smoke:
+
+```bash
+scripts/run_ciphertext_handoff_smoke.py \
+  --backend tracking \
+  --width 8 \
+  --layers 4 \
+  --bootstrap-after-layers 2,4
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,RUN_NAME=openfhe-ciphertext-handoff-v064,WIDTH=8,LAYERS=4 slurm/openfhe_ciphertext_handoff.sbatch'
+```
+
 Build a compact Stage 0 status report from the latest measured artifacts:
 
 ```bash
@@ -272,6 +283,7 @@ scripts/build_stage0_status_report.py \
   --checkpoint-bootstrap-smoke-json runs/mamba-130m-layer20-openfhe-bootstrap-smoke-v060.json \
   --segment-samples-json runs/openfhe-bootstrap-segment-samples-v061-sbatch.json \
   --all-layer-recurrence-json runs/openfhe-all-layer-recurrence-v063.json \
+  --ciphertext-handoff-json runs/openfhe-ciphertext-handoff-v064b.json \
   --output-json runs/stage0-status-report.json
 ```
 
