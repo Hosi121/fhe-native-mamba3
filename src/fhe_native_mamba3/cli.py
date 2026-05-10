@@ -878,6 +878,176 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
+    from fhe_native_mamba3.backends.tracking import TrackingBackend
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.checkpoint_correctness import (
+        required_full_layer_visible_rotations,
+        run_checkpoint_full_layer_ciphertext_gate,
+    )
+    from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model
+    from fhe_native_mamba3.mamba_reference import run_mamba_source_layer
+
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    d_state, mimo_rank, adapter_shape = _resolve_mamba_adapter_shape(args, source_state_dict)
+    token_ids = _parse_int_list(args.prompt)
+    if not token_ids:
+        msg = "prompt must contain at least one token id"
+        raise ValueError(msg)
+    if len(token_ids) > args.max_seq_len:
+        msg = "prompt length exceeds max_seq_len"
+        raise ValueError(msg)
+
+    required_layers = max(args.n_layers, args.layer_index + 1)
+    model, report = adapt_mamba_state_dict_to_model(
+        source_state_dict,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        n_layers=required_layers,
+        max_seq_len=args.max_seq_len,
+        seed=args.seed,
+    )
+    invalid = [token for token in token_ids if token < 0 or token >= model.config.vocab_size]
+    if invalid:
+        msg = f"token ids out of range for vocab_size={model.config.vocab_size}: {invalid}"
+        raise ValueError(msg)
+
+    model.eval()
+    with torch.inference_mode():
+        input_ids = torch.tensor([token_ids], dtype=torch.long)
+        x = model.embed(input_ids)
+        if args.input_propagation == "prototype":
+            x = x + model.pos[: len(token_ids)].unsqueeze(0)
+        for block_index, block in enumerate(model.blocks[: args.layer_index]):
+            if args.input_propagation == "source":
+                x = run_mamba_source_layer(
+                    source_state_dict,
+                    x,
+                    layer_index=block_index,
+                    d_state=d_state,
+                    mimo_rank=mimo_rank,
+                    norm_eps=args.norm_eps,
+                )
+            else:
+                x = block(x)
+
+    d_model = int(x.shape[-1])
+    rotations = required_full_layer_visible_rotations(
+        d_model=d_model,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        readout_strategy=args.readout_strategy,
+    )
+    if args.backend == "openfhe" and len(rotations) > args.max_rotation_keys:
+        msg = (
+            f"full-layer visible gate requires {len(rotations)} rotation keys, above "
+            f"--max-rotation-keys={args.max_rotation_keys}; use tracking backend, reduce "
+            "mimo_rank/d_model, or raise the guard explicitly"
+        )
+        raise ValueError(msg)
+
+    batch_size = max(d_state * mimo_rank, d_model)
+    if args.backend == "openfhe":
+        backend = OpenFheCkksBackend(
+            batch_size=batch_size,
+            multiplicative_depth=args.multiplicative_depth,
+            scaling_mod_size=args.scaling_mod_size,
+            rotations=rotations,
+            bootstrap_config=_openfhe_bootstrap_config_from_args(args),
+            ring_dimension=args.ring_dim,
+        )
+    elif args.backend == "tracking":
+        backend = TrackingBackend(batch_size=batch_size)
+    else:
+        msg = f"unsupported backend: {args.backend}"
+        raise ValueError(msg)
+
+    result = run_checkpoint_full_layer_ciphertext_gate(
+        source_state_dict,
+        x,
+        layer_index=args.layer_index,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        backend=backend,
+        input_mode=args.input_mode,
+        readout_strategy=args.readout_strategy,
+        multiplicative_depth=args.multiplicative_depth,
+        atol=args.atol,
+        norm_eps=args.norm_eps,
+    )
+    stats = result.backend_stats
+    payload = {
+        "version": __version__,
+        "stage": "mamba-checkpoint-full-layer-gate",
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "adapter_shape": adapter_shape,
+        "backend": stats["backend"],
+        "encrypted": stats["encrypted"],
+        "mamba_checkpoint_plan": _mamba_checkpoint_plan_payload(
+            source_state_dict,
+            max_layers=args.max_plan_layers,
+        ),
+        "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
+        "model": {
+            "layer_index": args.layer_index,
+            "seq_len": result.seq_len,
+            "d_model": result.d_model,
+            "d_state": result.d_state,
+            "mimo_rank": result.mimo_rank,
+            "readout_strategy": args.readout_strategy,
+            "input_mode": args.input_mode,
+            "input_propagation": args.input_propagation,
+        },
+        "ckks": {
+            "multiplicative_depth": args.multiplicative_depth,
+            "scaling_mod_size": args.scaling_mod_size,
+            "ring_dimension": backend.ring_dimension,
+            "batch_size": backend.batch_size,
+            "rotations": list(rotations),
+            "rotation_count": len(rotations),
+            "max_rotation_keys": args.max_rotation_keys,
+            "bootstrap_configured": _openfhe_bootstrap_config_from_args(args) is not None,
+        },
+        "measurement_scope": {
+            "source_style_full_layer_formula": True,
+            "official_mamba_parity": result.official_mamba_parity,
+            "full_model_correctness_claimed": result.full_model_correctness_claimed,
+            "plaintext_precomputed_stages": list(result.plaintext_precomputed_stages),
+            "claim": (
+                "source-style one-layer full visible output gate; input-dependent "
+                "pre-recurrence tensors remain plaintext-precomputed"
+            ),
+        },
+        "result": result.to_json_dict(),
+        "operation_counts": {
+            "ct_ct_mul": stats["ct_ct_mul_count"],
+            "ct_pt_mul": stats["ct_pt_mul_count"],
+            "add": stats["add_count"],
+            "rotations": stats["rotation_count"],
+            "bootstraps": stats["bootstrap_count"],
+            "encrypt": stats["encrypt_count"],
+            "decrypt": stats["decrypt_count"],
+            "encode": stats["encode_count"],
+        },
+        "timing": {
+            "setup_seconds": stats["setup_seconds"],
+            "eval_seconds": stats["eval_seconds"],
+        },
+        "passed": result.passed,
+        "max_abs_error": result.max_abs_error,
+    }
+    emit_json_payload(payload, output_json=args.output_json)
+    return 0
+
+
 def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -2527,6 +2697,64 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional path for the full recurrence smoke JSON payload",
     )
     mamba_smoke_parser.set_defaults(func=mamba_checkpoint_recurrence_smoke_cmd)
+
+    mamba_full_layer_parser = subparsers.add_parser(
+        "mamba-checkpoint-full-layer-gate",
+        help="run a source-style full visible-layer ciphertext correctness gate",
+    )
+    mamba_full_layer_parser.add_argument("checkpoint")
+    mamba_full_layer_parser.add_argument("--state-dict-key", default="")
+    mamba_full_layer_parser.add_argument("--map-location", default="cpu")
+    mamba_full_layer_parser.add_argument("--d-state", type=int, default=1)
+    mamba_full_layer_parser.add_argument("--mimo-rank", type=int, default=1)
+    mamba_full_layer_parser.add_argument(
+        "--infer-shape",
+        action="store_true",
+        help="derive d_state and mimo_rank from the detected checkpoint tensors",
+    )
+    mamba_full_layer_parser.add_argument("--n-layers", type=int, default=1)
+    mamba_full_layer_parser.add_argument("--max-seq-len", type=int, default=8)
+    mamba_full_layer_parser.add_argument("--seed", type=int, default=0)
+    mamba_full_layer_parser.add_argument("--prompt", default="1")
+    mamba_full_layer_parser.add_argument("--layer-index", type=int, default=0)
+    mamba_full_layer_parser.add_argument(
+        "--backend", choices=["openfhe", "tracking"], default="tracking"
+    )
+    mamba_full_layer_parser.add_argument(
+        "--readout-strategy",
+        choices=["slotwise", "rank-reduce", "rank-local"],
+        default="rank-local",
+    )
+    mamba_full_layer_parser.add_argument(
+        "--input-mode",
+        choices=["server-bx", "encrypted-dynamic-bc"],
+        default="encrypted-dynamic-bc",
+    )
+    mamba_full_layer_parser.add_argument(
+        "--input-propagation",
+        choices=["source", "prototype"],
+        default="source",
+        help="propagate layer inputs with source-style layers or prototype blocks",
+    )
+    mamba_full_layer_parser.add_argument("--multiplicative-depth", type=int, default=12)
+    mamba_full_layer_parser.add_argument("--scaling-mod-size", type=int, default=40)
+    mamba_full_layer_parser.add_argument("--atol", type=float, default=1e-6)
+    mamba_full_layer_parser.add_argument("--norm-eps", type=float, default=1e-5)
+    mamba_full_layer_parser.add_argument(
+        "--max-rotation-keys",
+        type=int,
+        default=512,
+        help="fail early when the full-layer visible projection needs too many rotations",
+    )
+    mamba_full_layer_parser.add_argument("--max-plan-layers", type=int, default=8)
+    mamba_full_layer_parser.add_argument("--max-statuses", type=int, default=50)
+    _add_openfhe_bootstrap_args(mamba_full_layer_parser)
+    mamba_full_layer_parser.add_argument(
+        "--output-json",
+        default="",
+        help="optional path for the full-layer gate JSON payload",
+    )
+    mamba_full_layer_parser.set_defaults(func=mamba_checkpoint_full_layer_gate_cmd)
 
     mamba_sweep_parser = subparsers.add_parser(
         "mamba-checkpoint-recurrence-sweep",

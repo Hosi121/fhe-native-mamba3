@@ -12,6 +12,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     bootstrap_openfhe_slurm = ROOT / "slurm" / "openfhe_bootstrap_latency.sbatch"
     segment_openfhe_slurm = ROOT / "slurm" / "openfhe_segment_samples.sbatch"
     all_layer_openfhe_slurm = ROOT / "slurm" / "openfhe_all_layer_recurrence.sbatch"
+    full_layer_gate_slurm = ROOT / "slurm" / "mamba_checkpoint_full_layer_gate.sbatch"
     handoff_openfhe_slurm = ROOT / "slurm" / "openfhe_ciphertext_handoff.sbatch"
     recurrence_chain_openfhe_slurm = ROOT / "slurm" / "openfhe_recurrence_chain.sbatch"
 
@@ -23,6 +24,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert bootstrap_openfhe_slurm.exists()
     assert segment_openfhe_slurm.exists()
     assert all_layer_openfhe_slurm.exists()
+    assert full_layer_gate_slurm.exists()
     assert handoff_openfhe_slurm.exists()
     assert recurrence_chain_openfhe_slurm.exists()
 
@@ -76,6 +78,11 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "BOOTSTRAP_SEC" in all_layer_openfhe_text
     assert "EXECUTE_SCHEDULED_BOOTSTRAP" in all_layer_openfhe_text
     assert "BOOTSTRAP_MULTIPLICATIVE_DEPTH" in all_layer_openfhe_text
+
+    full_layer_gate_text = full_layer_gate_slurm.read_text()
+    assert "mamba-checkpoint-full-layer-gate" in full_layer_gate_text
+    assert "MAX_ROTATION_KEYS" in full_layer_gate_text
+    assert "full-layer gate" in full_layer_gate_text
 
     handoff_openfhe_text = handoff_openfhe_slurm.read_text()
     assert "run_ciphertext_handoff_smoke.py" in handoff_openfhe_text
