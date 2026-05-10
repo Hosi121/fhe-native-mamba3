@@ -10,10 +10,12 @@ from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.openfhe_backend import (
     OpenFheRecurrenceProblem,
     make_demo_problem,
+    plaintext_recurrence_trace,
     readout_output_slots,
     required_readout_rotations,
     run_openfhe_static_recurrence,
     run_static_mimo_recurrence_with_backend,
+    scale_recurrence_state,
 )
 
 
@@ -129,3 +131,32 @@ def test_state_rank_decay_adds_ciphertext_multiply_path() -> None:
 
     assert result.max_abs_error == 0
     assert result.backend_stats["ct_ct_mul_count"] == problem.seq_len
+
+
+def test_state_scale_preserves_outputs_and_reduces_plain_state_range() -> None:
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((2.0, -1.0), (1.5, 0.25)),
+        decay=(0.8, 0.7),
+        b=((3.0, -2.0), (1.0, 4.0)),
+        c=((0.5, -1.0), (2.0, 0.25)),
+    )
+
+    scaled = scale_recurrence_state(problem, 0.125)
+    original_result = run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=TrackingBackend(batch_size=4),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+    )
+    scaled_result = run_static_mimo_recurrence_with_backend(
+        scaled,
+        backend=TrackingBackend(batch_size=4),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+    )
+
+    assert scaled_result.expected_outputs == original_result.expected_outputs
+    assert scaled_result.max_abs_error == 0
+    assert plaintext_recurrence_trace(scaled)["state_abs_max"] == pytest.approx(
+        0.125 * plaintext_recurrence_trace(problem)["state_abs_max"]
+    )

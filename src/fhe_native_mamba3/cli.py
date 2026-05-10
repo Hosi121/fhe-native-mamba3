@@ -265,6 +265,8 @@ def _recurrence_problem_summary(extracted: Any) -> dict[str, Any]:
 
 
 def _recurrence_problem_stats(problem: Any) -> dict[str, Any]:
+    from fhe_native_mamba3.openfhe_backend import plaintext_recurrence_trace
+
     return {
         "seq_len": problem.seq_len,
         "d_state": problem.d_state,
@@ -290,6 +292,7 @@ def _recurrence_problem_stats(problem: Any) -> dict[str, Any]:
         else None,
         "decay_min": min(problem.decay) if problem.decay else None,
         "decay_max": max(problem.decay) if problem.decay else None,
+        "plaintext_trace": plaintext_recurrence_trace(problem),
     }
 
 
@@ -603,6 +606,7 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.openfhe_backend import (
         required_readout_rotations,
         run_static_mimo_recurrence_with_backend,
+        scale_recurrence_state,
     )
     from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
 
@@ -677,7 +681,11 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     else:
         msg = f"unsupported recurrence_source: {args.recurrence_source}"
         raise ValueError(msg)
-    problem = extracted.problem
+    problem = (
+        scale_recurrence_state(extracted.problem, args.state_scale)
+        if args.state_scale != 1.0
+        else extracted.problem
+    )
     rotations = required_readout_rotations(
         d_state=problem.d_state,
         mimo_rank=problem.mimo_rank,
@@ -728,6 +736,7 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             "readout_strategy": args.readout_strategy,
             "input_mode": args.input_mode,
             "recurrence_source": args.recurrence_source,
+            "state_scale": args.state_scale,
         },
         "ckks": {
             "multiplicative_depth": args.multiplicative_depth,
@@ -738,6 +747,7 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         },
         "latency_sec_per_token": result.latency_sec_per_token,
         "max_abs_error": result.max_abs_error,
+        "scaled_problem_summary": _recurrence_problem_stats(problem),
         "operation_counts": {
             "ct_ct_mul": stats["ct_ct_mul_count"],
             "ct_pt_mul": stats["ct_pt_mul_count"],
@@ -2283,6 +2293,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mamba_smoke_parser.add_argument("--multiplicative-depth", type=int, default=8)
     mamba_smoke_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    mamba_smoke_parser.add_argument(
+        "--state-scale",
+        type=float,
+        default=1.0,
+        help="apply an equivalent h' = state_scale * h recurrence gauge transform",
+    )
     mamba_smoke_parser.add_argument("--scale-bits", type=int, default=40)
     mamba_smoke_parser.add_argument("--target-max-abs", type=float, default=1.0)
     mamba_smoke_parser.add_argument("--source-dtype", default="fp32")

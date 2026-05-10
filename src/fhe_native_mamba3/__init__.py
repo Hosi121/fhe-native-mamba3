@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.47"
+__version__ = "0.2.48"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -135,6 +135,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "plaintext_static_recurrence",
     ),
+    "plaintext_recurrence_trace": (
+        "fhe_native_mamba3.openfhe_backend",
+        "plaintext_recurrence_trace",
+    ),
     "plan_mamba_checkpoint": (
         "fhe_native_mamba3.mamba_checkpoint",
         "plan_mamba_checkpoint",
@@ -142,6 +146,10 @@ _LAZY_IMPORTS = {
     "run_openfhe_static_recurrence": (
         "fhe_native_mamba3.openfhe_backend",
         "run_openfhe_static_recurrence",
+    ),
+    "scale_recurrence_state": (
+        "fhe_native_mamba3.openfhe_backend",
+        "scale_recurrence_state",
     ),
     "run_stage0_mimo": ("fhe_native_mamba3.benchmarks.stage0_mimo", "run_stage0_mimo"),
     "run_stage0_sweep": ("fhe_native_mamba3.benchmarks.stage0_sweep", "run_stage0_sweep"),
@@ -219,6 +227,7 @@ __all__ = [
     "load_weight_bundle_model",
     "make_demo_problem",
     "map_state_dict",
+    "plaintext_recurrence_trace",
     "plaintext_static_recurrence",
     "plan_mamba_checkpoint",
     "run_openfhe_static_recurrence",
@@ -229,6 +238,7 @@ __all__ = [
     "save_weight_bundle",
     "save_weight_bundle_from_checkpoint",
     "save_weight_bundle_from_mapped_checkpoint",
+    "scale_recurrence_state",
 ]
 
 

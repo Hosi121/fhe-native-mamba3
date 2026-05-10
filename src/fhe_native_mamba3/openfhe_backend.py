@@ -123,6 +123,78 @@ def plaintext_static_recurrence(
     return tuple(outputs)
 
 
+def plaintext_recurrence_trace(problem: OpenFheRecurrenceProblem) -> dict[str, float]:
+    """Plaintext range trace for a recurrence problem."""
+
+    state = [[0.0 for _ in range(problem.mimo_rank)] for _ in range(problem.d_state)]
+    update_abs_max = 0.0
+    state_abs_max = 0.0
+    output_abs_max = 0.0
+    for t, rank_input in enumerate(problem.rank_inputs):
+        b_matrix = problem.b_by_token[t] if problem.b_by_token is not None else problem.b
+        c_matrix = problem.c_by_token[t] if problem.c_by_token is not None else problem.c
+        for n in range(problem.d_state):
+            for r in range(problem.mimo_rank):
+                if problem.decay_state_by_token is not None:
+                    decay = problem.decay_state_by_token[t][n][r]
+                elif problem.decay_by_token is not None:
+                    decay = problem.decay_by_token[t][r]
+                else:
+                    decay = problem.decay[r]
+                update = b_matrix[n][r] * rank_input[r]
+                update_abs_max = max(update_abs_max, abs(update))
+                state[n][r] = decay * state[n][r] + update
+                state_abs_max = max(state_abs_max, abs(state[n][r]))
+        for r in range(problem.mimo_rank):
+            output = sum(c_matrix[n][r] * state[n][r] for n in range(problem.d_state))
+            if problem.d_skip is not None:
+                output += problem.d_skip[r] * rank_input[r]
+            output_abs_max = max(output_abs_max, abs(output))
+    return {
+        "update_abs_max": update_abs_max,
+        "state_abs_max": state_abs_max,
+        "output_abs_max": output_abs_max,
+    }
+
+
+def scale_recurrence_state(
+    problem: OpenFheRecurrenceProblem, state_scale: float
+) -> OpenFheRecurrenceProblem:
+    """Apply the equivalent state gauge transform h' = state_scale * h."""
+
+    if state_scale <= 0:
+        msg = "state_scale must be positive"
+        raise ValueError(msg)
+    if state_scale == 1.0:
+        return problem
+    return OpenFheRecurrenceProblem(
+        rank_inputs=problem.rank_inputs,
+        decay=problem.decay,
+        decay_by_token=problem.decay_by_token,
+        decay_state_by_token=problem.decay_state_by_token,
+        b=_scale_matrix(problem.b, state_scale),
+        c=_scale_matrix(problem.c, 1.0 / state_scale),
+        b_by_token=_scale_token_matrices(problem.b_by_token, state_scale),
+        c_by_token=_scale_token_matrices(problem.c_by_token, 1.0 / state_scale),
+        d_skip=problem.d_skip,
+    )
+
+
+def _scale_matrix(
+    matrix: tuple[tuple[float, ...], ...], scale: float
+) -> tuple[tuple[float, ...], ...]:
+    return tuple(tuple(scale * value for value in row) for row in matrix)
+
+
+def _scale_token_matrices(
+    matrices: tuple[tuple[tuple[float, ...], ...], ...] | None,
+    scale: float,
+) -> tuple[tuple[tuple[float, ...], ...], ...] | None:
+    if matrices is None:
+        return None
+    return tuple(_scale_matrix(matrix, scale) for matrix in matrices)
+
+
 def _flat_state_by_rank(
     matrix: tuple[tuple[float, ...], ...], d_state: int, rank: int
 ) -> list[float]:
