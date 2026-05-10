@@ -682,6 +682,116 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def mamba_checkpoint_compare_reference_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model
+    from fhe_native_mamba3.mamba_reference import compare_mamba_layer_reference
+
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    d_state, mimo_rank, adapter_shape = _resolve_mamba_adapter_shape(args, source_state_dict)
+    required_layers = max(args.n_layers, args.layer_index + 1)
+    model, report = adapt_mamba_state_dict_to_model(
+        source_state_dict,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        n_layers=required_layers,
+        max_seq_len=args.max_seq_len,
+        seed=args.seed,
+    )
+    token_ids = _parse_int_list(args.prompt)
+    if not token_ids:
+        msg = "prompt must contain at least one token id"
+        raise ValueError(msg)
+    if len(token_ids) > model.config.max_seq_len:
+        msg = "prompt length exceeds max_seq_len"
+        raise ValueError(msg)
+    invalid = [token for token in token_ids if token < 0 or token >= model.config.vocab_size]
+    if invalid:
+        msg = f"token ids out of range for vocab_size={model.config.vocab_size}: {invalid}"
+        raise ValueError(msg)
+
+    model.eval()
+    input_ids = torch.tensor([token_ids], dtype=torch.long)
+    with torch.inference_mode():
+        x = model.embed(input_ids) + model.pos[: len(token_ids)].unsqueeze(0)
+        for block in model.blocks[: args.layer_index]:
+            x = block(x)
+        final_block_output = model.blocks[args.layer_index](x) if args.include_final else None
+        comparison = compare_mamba_layer_reference(
+            source_state_dict,
+            x,
+            layer_index=args.layer_index,
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            final_block_output=final_block_output,
+            norm_eps=args.norm_eps,
+        )
+
+    exact_errors = _mamba_reference_exact_errors(comparison)
+    max_exact_error = max(exact_errors.values(), default=0.0)
+    comparison_payload = comparison.to_json_dict()
+    comparison_payload.update(
+        {
+            "scope": "adapter-compatible-reference",
+            "reference_formula": "adapter-compatible-static-bc-dynamic-decay",
+            "official_mamba_parity": False,
+            "exact_stage_errors": exact_errors,
+            "max_exact_stage_error": max_exact_error,
+            "passed": max_exact_error <= args.atol,
+            "atol": args.atol,
+            "rtol": args.rtol,
+        }
+    )
+    payload = {
+        "version": __version__,
+        "stage": "mamba-checkpoint-compare-reference",
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "adapter_shape": adapter_shape,
+        "prompt_token_ids": list(token_ids),
+        "mamba_checkpoint_plan": _mamba_checkpoint_plan_payload(
+            source_state_dict,
+            max_layers=args.max_plan_layers,
+        ),
+        "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
+        "model": {
+            "layer_index": args.layer_index,
+            "seq_len": len(token_ids),
+            "d_state": d_state,
+            "mimo_rank": mimo_rank,
+            "dt_rank": model.config.dt_rank,
+            "n_layers": required_layers,
+            "include_final": args.include_final,
+        },
+        "comparison": comparison_payload,
+    }
+    _emit_json_payload(payload, output_json=args.output_json)
+    return 0
+
+
+def _mamba_reference_exact_errors(comparison: Any) -> dict[str, float]:
+    fields = (
+        "projected_rank_input_max_abs_error",
+        "causal_conv_output_max_abs_error",
+        "dt_hidden_max_abs_error",
+        "dt_max_abs_error",
+        "decay_by_token_max_abs_error",
+        "recurrence_rank_output_max_abs_error",
+    )
+    errors: dict[str, float] = {}
+    for field in fields:
+        value = getattr(comparison, field)
+        if value is not None:
+            errors[field] = float(value)
+    return errors
+
+
 def profile_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -1384,6 +1494,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional path for the full recurrence smoke JSON payload",
     )
     mamba_smoke_parser.set_defaults(func=mamba_checkpoint_recurrence_smoke_cmd)
+
+    mamba_compare_parser = subparsers.add_parser(
+        "mamba-checkpoint-compare-reference",
+        help=(
+            "compare an adapted Mamba checkpoint layer against adapter-compatible reference stages"
+        ),
+    )
+    mamba_compare_parser.add_argument("checkpoint")
+    mamba_compare_parser.add_argument("--state-dict-key", default="")
+    mamba_compare_parser.add_argument("--map-location", default="cpu")
+    mamba_compare_parser.add_argument("--d-state", type=int, default=1)
+    mamba_compare_parser.add_argument("--mimo-rank", type=int, default=1)
+    mamba_compare_parser.add_argument(
+        "--infer-shape",
+        action="store_true",
+        help="derive d_state and mimo_rank from the detected checkpoint tensors",
+    )
+    mamba_compare_parser.add_argument("--n-layers", type=int, default=1)
+    mamba_compare_parser.add_argument("--max-seq-len", type=int, default=8)
+    mamba_compare_parser.add_argument("--seed", type=int, default=0)
+    mamba_compare_parser.add_argument("--prompt", default="1")
+    mamba_compare_parser.add_argument("--layer-index", type=int, default=0)
+    mamba_compare_parser.add_argument("--norm-eps", type=float, default=1e-5)
+    mamba_compare_parser.add_argument("--atol", type=float, default=1e-6)
+    mamba_compare_parser.add_argument("--rtol", type=float, default=1e-5)
+    mamba_compare_parser.add_argument("--include-final", action="store_true")
+    mamba_compare_parser.add_argument("--max-plan-layers", type=int, default=8)
+    mamba_compare_parser.add_argument("--max-statuses", type=int, default=50)
+    mamba_compare_parser.add_argument("--output-json", default="")
+    mamba_compare_parser.set_defaults(func=mamba_checkpoint_compare_reference_cmd)
 
     rotation_parser = subparsers.add_parser(
         "rotation-inventory",

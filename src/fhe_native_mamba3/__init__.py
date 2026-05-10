@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.36"
+__version__ = "0.2.37"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -19,6 +19,10 @@ _LAZY_IMPORTS = {
     ),
     "MambaCheckpointPlan": ("fhe_native_mamba3.mamba_checkpoint", "MambaCheckpointPlan"),
     "MambaLayerPlan": ("fhe_native_mamba3.mamba_checkpoint", "MambaLayerPlan"),
+    "MambaLayerReferenceResult": (
+        "fhe_native_mamba3.mamba_reference",
+        "MambaLayerReferenceResult",
+    ),
     "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
     "FheCostEstimate": ("fhe_native_mamba3.cost", "FheCostEstimate"),
@@ -56,6 +60,10 @@ _LAZY_IMPORTS = {
     "calibrate_weight_values": (
         "fhe_native_mamba3.weight_encoding",
         "calibrate_weight_values",
+    ),
+    "compare_mamba_layer_reference": (
+        "fhe_native_mamba3.mamba_reference",
+        "compare_mamba_layer_reference",
     ),
     "build_weight_bundle_manifest": (
         "fhe_native_mamba3.weight_bundle",
@@ -139,6 +147,7 @@ __all__ = [
     "MambaCheckpointAdapterReport",
     "MambaCheckpointPlan",
     "MambaLayerPlan",
+    "MambaLayerReferenceResult",
     "OpenFheCkksBackend",
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
@@ -164,6 +173,7 @@ __all__ = [
     "ckks_batch_size_for_slots",
     "ckks_ring_dimension_for_batch_size",
     "client_side_argmax",
+    "compare_mamba_layer_reference",
     "decoding_policies",
     "draft_mapping_rules",
     "estimate_block_cost",
