@@ -853,7 +853,10 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
         run_static_mimo_recurrence_with_backend,
         scale_recurrence_state_and_output,
     )
-    from fhe_native_mamba3.recurrence_depth import estimate_recurrence_depth
+    from fhe_native_mamba3.recurrence_depth import (
+        build_recurrence_bootstrap_plan,
+        estimate_recurrence_depth,
+    )
     from fhe_native_mamba3.recurrence_scales import (
         load_recurrence_scale_plan,
         resolve_recurrence_layer_scales,
@@ -1064,8 +1067,19 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
             "scale_plan_json": args.scale_plan_json,
             "state_scale_override": args.state_scale,
             "output_scale_override": args.output_scale,
+            "ckks_max_level": args.ckks_max_level,
+            "ckks_min_level": args.ckks_min_level,
         },
-        "summary": _recurrence_sweep_summary(rows),
+        "summary": _recurrence_sweep_summary(
+            rows,
+            ckks_max_level=args.ckks_max_level,
+            ckks_min_level=args.ckks_min_level,
+            bootstrap_plan=build_recurrence_bootstrap_plan(
+                rows,
+                ckks_max_level=args.ckks_max_level,
+                ckks_min_level=args.ckks_min_level,
+            ),
+        ),
         "rows": rows,
     }
     _emit_json_payload(payload, output_json=args.output_json)
@@ -1078,9 +1092,20 @@ def _tokens_for_seq_len(token_seed: tuple[int, ...], seq_len: int) -> tuple[int,
     return tuple(token_seed[index % len(token_seed)] for index in range(seq_len))
 
 
-def _recurrence_sweep_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _recurrence_sweep_summary(
+    rows: list[dict[str, Any]],
+    *,
+    ckks_max_level: int,
+    ckks_min_level: int,
+    bootstrap_plan: dict[str, Any],
+) -> dict[str, Any]:
     if not rows:
-        return {"row_count": 0}
+        return {
+            "row_count": 0,
+            "bootstrap_schedules": bootstrap_plan,
+            "ckks_max_level": ckks_max_level,
+            "ckks_min_level": ckks_min_level,
+        }
     latency_row = max(rows, key=lambda row: row["latency_sec_per_token"])
     ct_ct_row = max(rows, key=lambda row: row["operation_counts"]["ct_ct_mul"])
     return {
@@ -1103,6 +1128,9 @@ def _recurrence_sweep_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "by_layer": _recurrence_sweep_by_layer(rows),
         "top_range_cases": _recurrence_sweep_top_range_cases(rows),
+        "bootstrap_schedules": bootstrap_plan,
+        "ckks_max_level": ckks_max_level,
+        "ckks_min_level": ckks_min_level,
     }
 
 
@@ -2513,6 +2541,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--scale-plan-json",
         default="",
         help="optional source-diagnostics-scale-plan JSON to supply per-layer scales",
+    )
+    mamba_sweep_parser.add_argument(
+        "--ckks-max-level",
+        type=int,
+        default=28,
+        help="maximum CKKS level used for recurrence bootstrap scheduling",
+    )
+    mamba_sweep_parser.add_argument(
+        "--ckks-min-level",
+        type=int,
+        default=2,
+        help="minimum CKKS level used for recurrence bootstrap scheduling",
     )
     mamba_sweep_parser.add_argument("--scale-bits", type=int, default=40)
     mamba_sweep_parser.add_argument("--target-max-abs", type=float, default=1.0)
