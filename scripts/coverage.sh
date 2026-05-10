@@ -12,4 +12,5 @@ fi
 "${PYTHON}" -m pytest \
   --cov=fhe_native_mamba3 \
   --cov-report=term-missing \
-  --cov-report=xml
+  --cov-report=xml \
+  --durations="${PYTEST_DURATIONS:-10}"

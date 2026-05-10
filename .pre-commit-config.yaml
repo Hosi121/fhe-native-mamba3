@@ -13,6 +13,11 @@ repos:
         pass_filenames: false
       - id: pytest
         name: pytest
-        entry: bash -c '"${PYTHON:-.venv/bin/python}" -m pytest'
+        entry: >-
+          bash -c 'PY="${PYTHON:-.venv/bin/python}";
+          if "$PY" -c "import xdist" >/dev/null 2>&1;
+          then "$PY" -m pytest -n "${CHECK_JOBS:-auto}" --durations="${PYTEST_DURATIONS:-10}";
+          else "$PY" -m pytest --durations="${PYTEST_DURATIONS:-10}";
+          fi'
         language: system
         pass_filenames: false

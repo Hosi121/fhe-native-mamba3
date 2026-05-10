@@ -8,19 +8,57 @@ ordinary pre-commit checks.
 Run:
 
 ```bash
-scripts/run_checks.sh
+scripts/run_fast_checks.sh
 ```
+
+If using `uv`, install the project extras with `uv sync --extra dev`. Do not use
+`uv sync --dev` for this repository; the dev tooling is currently modeled as the
+optional `dev` extra in `pyproject.toml`.
 
 This executes:
 
 - `ruff format --check`
 - `ruff check`
-- `pytest` with coverage when `pytest-cov` is installed
-- `pre-commit run --all-files`
+- `pytest` without coverage
+- `pytest --durations=10` so slow tests stay visible
 
-Coverage is measured for the Python library code, excluding `cli.py` because
-the CLI tests intentionally exercise it through subprocesses. The current
-minimum is 70%.
+Use this while iterating. The slowest tests are currently CLI/subprocess tests,
+so focused runs are often better than a full suite for TDD:
+
+```bash
+scripts/run_fast_checks.sh tests/test_checkpoint_profile.py
+```
+
+## Full Checks
+
+Run:
+
+```bash
+scripts/run_checks.sh
+```
+
+This executes ruff and coverage-enabled pytest once. It no longer calls
+`pre-commit run --all-files` by default because that duplicated the ruff and
+pytest work and made every full check pay for the suite twice. To explicitly
+exercise the hook runner:
+
+```bash
+RUN_PRECOMMIT=1 scripts/run_checks.sh
+```
+
+Coverage is measured for the Python library code, excluding `cli.py` because the
+CLI tests intentionally exercise it through subprocesses. The current minimum is
+70%.
+
+When `pytest-xdist` is installed, CI and local runs can parallelize pytest:
+
+```bash
+CHECK_JOBS=auto scripts/run_checks.sh
+CHECK_JOBS=auto scripts/run_fast_checks.sh
+```
+
+Pre-commit remains installed as the commit-time guard and runs ruff plus pytest
+once before accepting a commit.
 
 ## Native C++ Unit Tests
 

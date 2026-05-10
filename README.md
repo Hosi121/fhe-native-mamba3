@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.81`. Future changes should bump
+The project is currently at SemVer `0.2.82`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -48,14 +48,18 @@ References used for the prototype:
 
 ```bash
 python3 -m pip install --user -e '.[dev]'
+# or, with uv:
+uv sync --extra dev
 pre-commit install
+scripts/run_fast_checks.sh
 scripts/run_checks.sh
 ```
 
-`scripts/run_checks.sh` runs coverage when `pytest-cov` is installed. The
-testing split is documented in [docs/testing.md](docs/testing.md). The
-development workflow, PBI standard, benchmark artifact requirements, and review
-checklist are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+`scripts/run_fast_checks.sh` is the inner-loop check without coverage.
+`scripts/run_checks.sh` is the full coverage gate. The testing split is
+documented in [docs/testing.md](docs/testing.md). The development workflow, PBI
+standard, benchmark artifact requirements, and review checklist are documented
+in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Run a tiny CPU smoke train:
 
