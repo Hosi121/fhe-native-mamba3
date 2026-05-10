@@ -91,11 +91,7 @@ def build_range_scale_plan(
         msg = "scale targets must be positive"
         raise ValueError(msg)
 
-    rows = (
-        diagnostics_payload["rows"]
-        if isinstance(diagnostics_payload, dict)
-        else diagnostics_payload
-    )
+    rows = _diagnostic_rows(diagnostics_payload)
     by_layer: dict[int, list[dict[str, Any]]] = {}
     for row in rows:
         by_layer.setdefault(int(row["layer_index"]), []).append(row)
@@ -163,6 +159,65 @@ def build_range_scale_plan(
 
 def _scale_to_target(value: float, target: float) -> float:
     return min(1.0, target / value) if value > 0 else 1.0
+
+
+def _diagnostic_rows(payload: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return payload
+    if "rows" in payload:
+        return list(payload["rows"])
+    result = payload.get("result", {})
+    layers = result.get("layers")
+    if layers is None:
+        msg = "diagnostics payload must contain rows or result.layers"
+        raise ValueError(msg)
+    return [_profile_layer_to_row(layer) for layer in layers]
+
+
+def _profile_layer_to_row(layer: dict[str, Any]) -> dict[str, Any]:
+    ranges = layer.get("ranges", {})
+    return {
+        "layer_index": layer["layer_index"],
+        "ranges": ranges,
+        "range_groups": {
+            "activation": _range_group(
+                ranges,
+                (
+                    "rms_norm_output",
+                    "causal_conv_pre_silu",
+                    "gate_pre_silu",
+                ),
+            ),
+            "recurrence": _range_group(
+                ranges,
+                (
+                    "causal_conv_post_silu",
+                    "dynamic_b_terms",
+                    "dynamic_c_terms",
+                    "recurrence_rank_output",
+                    "rank_output_pre_gate",
+                    "rank_output_post_gate",
+                ),
+            ),
+            "residual": _range_group(
+                ranges,
+                (
+                    "final_block_delta",
+                    "final_block_output",
+                ),
+            ),
+        },
+    }
+
+
+def _range_group(ranges: dict[str, Any], stage_names: tuple[str, ...]) -> dict[str, Any]:
+    candidates = [
+        (stage, ranges[stage].get("abs_max", 0.0)) for stage in stage_names if stage in ranges
+    ]
+    if not candidates:
+        return {"range_score": 0.0, "range_score_stage": None}
+    stage, score = max(candidates, key=lambda item: float(item[1]))
+    return {"range_score": float(score), "range_score_stage": stage}
 
 
 def _max_group_abs(rows: list[dict[str, Any]], group: str) -> float:

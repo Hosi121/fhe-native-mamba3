@@ -36,7 +36,7 @@ def test_checkpoint_source_profile_script_runs(tmp_path) -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.83"
+    assert payload["version"] == "0.2.84"
     assert payload["stage"] == "mamba-checkpoint-source-profile"
     assert payload["passed"] is True
     assert payload["measurement_scope"]["encrypted"] is False

@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.83`. Future changes should bump
+The project is currently at SemVer `0.2.84`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -273,6 +273,12 @@ python3 scripts/run_checkpoint_source_profile.py \
   --prompt 1,2,3 \
   --position-buckets 4 \
   --output-json runs/mamba-source-profile.json
+python3 -m fhe_native_mamba3.cli source-diagnostics-scale-plan \
+  runs/mamba-source-profile.json \
+  --activation-target 6 \
+  --state-target 32 \
+  --encoded-target 32 \
+  --output-json runs/mamba-source-profile-scale-plan.json
 python3 scripts/probe_official_mamba_parity.py \
   runs/mamba/checkpoint.pt \
   --d-state 2 \

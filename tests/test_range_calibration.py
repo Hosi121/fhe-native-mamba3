@@ -29,6 +29,40 @@ def test_build_range_scale_plan_keeps_encoded_residual_bounded() -> None:
     assert plan.to_json_dict()["state_scaled_layer_count"] == 2
 
 
+def test_build_range_scale_plan_accepts_checkpoint_source_profile_payload() -> None:
+    profile_payload = {
+        "stage": "mamba-checkpoint-source-profile",
+        "result": {
+            "layers": [
+                {
+                    "layer_index": 0,
+                    "ranges": {
+                        "rms_norm_output": {"abs_max": 3.0},
+                        "gate_pre_silu": {"abs_max": 12.0},
+                        "recurrence_rank_output": {"abs_max": 80.0},
+                        "rank_output_post_gate": {"abs_max": 100.0},
+                        "final_block_delta": {"abs_max": 200.0},
+                        "final_block_output": {"abs_max": 150.0},
+                    },
+                }
+            ]
+        },
+    }
+
+    plan = build_range_scale_plan(
+        profile_payload,
+        activation_target=6.0,
+        state_target=32.0,
+        encoded_target=32.0,
+    )
+
+    assert plan.layers[0].activation_scale_to_target == 0.5
+    assert plan.layers[0].state_scale_to_target == 0.32
+    assert plan.layers[0].output_scale == 32.0 / 200.0
+    assert plan.layers[0].needs_activation_range_tuning is True
+    assert plan.layers[0].needs_state_scale is True
+
+
 def _row(*, layer: int, output: float, delta: float, activation: float, recurrence: float) -> dict:
     return {
         "layer_index": layer,
