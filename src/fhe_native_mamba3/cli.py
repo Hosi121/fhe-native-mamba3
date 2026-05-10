@@ -1360,6 +1360,18 @@ def _source_diagnostics_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "top_range_cases": [],
             "top_activation_cases": [],
             "top_recurrence_cases": [],
+            "mitigation_plan": {
+                "activation": {
+                    "action": "none",
+                    "reason": "no rows",
+                    "top_targets": [],
+                },
+                "recurrence": {
+                    "action": "none",
+                    "reason": "no rows",
+                    "top_targets": [],
+                },
+            },
         }
     score_row = max(rows, key=lambda row: row["range_score"])
     return {
@@ -1379,6 +1391,7 @@ def _source_diagnostics_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "top_range_cases": _source_diagnostics_top_range_cases(rows),
         "top_activation_cases": _source_diagnostics_top_group_cases(rows, group="activation"),
         "top_recurrence_cases": _source_diagnostics_top_group_cases(rows, group="recurrence"),
+        "mitigation_plan": _source_diagnostics_mitigation_plan(rows),
     }
 
 
@@ -1437,6 +1450,51 @@ def _source_diagnostics_top_group_cases(
 def _source_diagnostics_status_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     statuses = ("ok", "target-exceeded", "warn", "fail")
     return {status: sum(1 for row in rows if row["range_status"] == status) for status in statuses}
+
+
+def _source_diagnostics_mitigation_plan(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    activation_targets = _source_diagnostics_scale_targets(rows, group="activation")
+    recurrence_targets = _source_diagnostics_scale_targets(rows, group="recurrence")
+    activation_action = (
+        "range_loss_or_lora"
+        if any(target["range_score"] > 6.0 for target in activation_targets)
+        else "none"
+    )
+    recurrence_action = (
+        "state_or_output_scale_calibration"
+        if any(target["range_score"] > 512.0 for target in recurrence_targets)
+        else "ckks_scale_sizing"
+    )
+    return {
+        "activation": {
+            "action": activation_action,
+            "reason": "polynomial nonlinear inputs should fit the target approximation interval",
+            "top_targets": activation_targets,
+        },
+        "recurrence": {
+            "action": recurrence_action,
+            "reason": (
+                "large encrypted recurrence/output values drive CKKS scale and bootstrap pressure"
+            ),
+            "top_targets": recurrence_targets,
+        },
+    }
+
+
+def _source_diagnostics_scale_targets(
+    rows: list[dict[str, Any]], *, group: str, target: float = 6.0, limit: int = 5
+) -> list[dict[str, Any]]:
+    top_rows = _source_diagnostics_top_group_cases(rows, group=group, limit=limit)
+    targets: list[dict[str, Any]] = []
+    for row in top_rows:
+        score = float(row["range_score"])
+        targets.append(
+            {
+                **row,
+                "scale_to_target": min(1.0, target / score) if score > 0 else 1.0,
+            }
+        )
+    return targets
 
 
 def _source_diagnostics_group_status_counts(
