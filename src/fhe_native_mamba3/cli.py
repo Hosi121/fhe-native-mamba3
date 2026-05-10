@@ -192,6 +192,104 @@ def _parse_input_mode_list(value: str) -> tuple[str, ...]:
     return modes
 
 
+def _emit_json_payload(payload: dict[str, Any], *, output_json: str = "") -> None:
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    if output_json:
+        output_path = Path(output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(text + "\n", encoding="utf-8")
+    print(text)
+
+
+def _finalize_recurrence_payload(
+    payload: dict[str, Any],
+    *,
+    result: Any,
+    extracted: Any,
+    max_output_values: int,
+    output_json: str = "",
+) -> dict[str, Any]:
+    full_payload = {
+        **payload,
+        "extracted_problem": extracted.to_json_dict(),
+        "decrypted_outputs": result.decrypted_outputs,
+        "expected_outputs": result.expected_outputs,
+    }
+    if output_json:
+        output_path = Path(output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(full_payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if max_output_values < 0:
+        stdout_payload = full_payload
+    else:
+        stdout_payload = {
+            **payload,
+            "extracted_problem_summary": _recurrence_problem_summary(extracted),
+            "output_summary": {
+                "decrypted_outputs": _matrix_summary(
+                    result.decrypted_outputs,
+                    max_values=max_output_values,
+                ),
+                "expected_outputs": _matrix_summary(
+                    result.expected_outputs,
+                    max_values=max_output_values,
+                ),
+            },
+        }
+    if output_json:
+        stdout_payload["output_json"] = output_json
+    return stdout_payload
+
+
+def _recurrence_problem_summary(extracted: Any) -> dict[str, Any]:
+    problem = extracted.problem
+    return {
+        "bundle_dir": extracted.bundle_dir,
+        "layer_index": extracted.layer_index,
+        "token_ids": list(extracted.token_ids),
+        "problem": {
+            "seq_len": problem.seq_len,
+            "d_state": problem.d_state,
+            "mimo_rank": problem.mimo_rank,
+            "state_slots": problem.d_state * problem.mimo_rank,
+            "rank_inputs_abs_max": _matrix_abs_max(problem.rank_inputs),
+            "b_abs_max": _matrix_abs_max(problem.b),
+            "c_abs_max": _matrix_abs_max(problem.c),
+            "decay_min": min(problem.decay) if problem.decay else None,
+            "decay_max": max(problem.decay) if problem.decay else None,
+        },
+    }
+
+
+def _matrix_summary(matrix: tuple[tuple[float, ...], ...], *, max_values: int) -> dict[str, Any]:
+    total_values = sum(len(row) for row in matrix)
+    remaining = max(0, max_values)
+    values: list[list[float]] = []
+    for row in matrix:
+        if remaining <= 0:
+            break
+        take = min(len(row), remaining)
+        values.append([float(value) for value in row[:take]])
+        remaining -= take
+    included_values = max(0, max_values) - remaining
+    return {
+        "rows": len(matrix),
+        "cols_max": max((len(row) for row in matrix), default=0),
+        "value_count": total_values,
+        "included_value_count": included_values,
+        "truncated": included_values < total_values,
+        "values": values,
+    }
+
+
+def _matrix_abs_max(matrix: tuple[tuple[float, ...], ...]) -> float:
+    return max((abs(value) for row in matrix for value in row), default=0.0)
+
+
 def stage0_sweep_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.benchmarks.stage0_sweep import Stage0SweepConfig, run_stage0_sweep
 
@@ -566,11 +664,15 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             "setup_seconds": stats["setup_seconds"],
             "eval_seconds": stats["eval_seconds"],
         },
-        "extracted_problem": extracted.to_json_dict(),
-        "decrypted_outputs": result.decrypted_outputs,
-        "expected_outputs": result.expected_outputs,
     }
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    payload = _finalize_recurrence_payload(
+        payload,
+        result=result,
+        extracted=extracted,
+        max_output_values=args.max_output_values,
+        output_json=args.output_json,
+    )
+    _emit_json_payload(payload)
     return 0
 
 
@@ -882,11 +984,15 @@ def weight_bundle_recurrence_cmd(args: argparse.Namespace) -> int:
             "setup_seconds": stats["setup_seconds"],
             "eval_seconds": stats["eval_seconds"],
         },
-        "extracted_problem": extracted.to_json_dict(),
-        "decrypted_outputs": result.decrypted_outputs,
-        "expected_outputs": result.expected_outputs,
     }
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    payload = _finalize_recurrence_payload(
+        payload,
+        result=result,
+        extracted=extracted,
+        max_output_values=args.max_output_values,
+        output_json=args.output_json,
+    )
+    _emit_json_payload(payload)
     return 0
 
 
@@ -1260,6 +1366,17 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_smoke_parser.add_argument("--source-dtype", default="fp32")
     mamba_smoke_parser.add_argument("--max-plan-layers", type=int, default=8)
     mamba_smoke_parser.add_argument("--max-statuses", type=int, default=50)
+    mamba_smoke_parser.add_argument(
+        "--max-output-values",
+        type=int,
+        default=32,
+        help="maximum decrypted/expected output values to print; use -1 for full stdout",
+    )
+    mamba_smoke_parser.add_argument(
+        "--output-json",
+        default="",
+        help="optional path for the full recurrence smoke JSON payload",
+    )
     mamba_smoke_parser.set_defaults(func=mamba_checkpoint_recurrence_smoke_cmd)
 
     rotation_parser = subparsers.add_parser(
@@ -1358,6 +1475,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bundle_recurrence_parser.add_argument("--multiplicative-depth", type=int, default=8)
     bundle_recurrence_parser.add_argument("--scaling-mod-size", type=int, default=50)
+    bundle_recurrence_parser.add_argument(
+        "--max-output-values",
+        type=int,
+        default=32,
+        help="maximum decrypted/expected output values to print; use -1 for full stdout",
+    )
+    bundle_recurrence_parser.add_argument(
+        "--output-json",
+        default="",
+        help="optional path for the full recurrence smoke JSON payload",
+    )
     bundle_recurrence_parser.set_defaults(func=weight_bundle_recurrence_cmd)
 
     bundle_checkpoint_parser = subparsers.add_parser(
