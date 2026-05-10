@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.58`. Future changes should bump
+The project is currently at SemVer `0.2.59`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -245,6 +245,19 @@ multi-layer encrypted execution.
 Use `scripts/estimate_openfhe_stack_latency.py` with a sweep JSON and an
 OpenFHE segment-sample JSON to estimate full-stack recurrence latency with an
 explicit bootstrap cost.
+Measure the current OpenFHE Python bootstrap setup directly when the backend
+supports it:
+
+scripts/measure_openfhe_bootstrap_latency.py \
+  --batch-size 32768 \
+  --ring-dim 65536 \
+  --multiplicative-depth 28 \
+  --scaling-mod-size 40 \
+  --bootstrap-correction-factor 20 \
+  --iterations 1 \
+  --output-json runs/openfhe-bootstrap-latency.json
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch slurm/openfhe_bootstrap_latency.sbatch'
+
 python3 -m fhe_native_mamba3.cli mamba-checkpoint-source-diagnostics \
   runs/mamba/checkpoint.pt \
   --infer-shape \

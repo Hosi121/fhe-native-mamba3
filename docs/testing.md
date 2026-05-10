@@ -63,5 +63,6 @@ These probes produce benchmark JSON and are recorded in
 - `rank-reduce` readout is verified up to `mimo_rank=2` under the toy CKKS
   parameters; higher ranks are recorded as known failing configurations.
   `rank-local` is the scatter-free candidate path for the next B200 sweep.
-- Bootstrap scheduling has symbolic tests only. End-to-end bootstrap placement
-  still needs a dedicated integration probe.
+- Bootstrap scheduling has symbolic tests and a JSON-emitting OpenFHE bootstrap
+  latency probe. Full end-to-end recurrence execution with inserted bootstraps
+  is still the next integration gap.

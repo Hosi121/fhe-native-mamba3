@@ -9,12 +9,14 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     slurm = ROOT / "slurm" / "fideslib_stage0.sbatch"
     sweep_slurm = ROOT / "slurm" / "fideslib_stage0_sweep.sbatch"
     checkpoint_openfhe_slurm = ROOT / "slurm" / "mamba_checkpoint_openfhe_smoke.sbatch"
+    bootstrap_openfhe_slurm = ROOT / "slurm" / "openfhe_bootstrap_latency.sbatch"
 
     assert source.exists()
     assert cmake.exists()
     assert slurm.exists()
     assert sweep_slurm.exists()
     assert checkpoint_openfhe_slurm.exists()
+    assert bootstrap_openfhe_slurm.exists()
 
     source_text = source.read_text()
     assert "fideslib-static-mimo-recurrence" in source_text
@@ -47,3 +49,8 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "--backend openfhe" in checkpoint_openfhe_text
     assert "INSTALL_OPENFHE" in checkpoint_openfhe_text
     assert "recommended_multiplicative_depth" in checkpoint_openfhe_text
+
+    bootstrap_openfhe_text = bootstrap_openfhe_slurm.read_text()
+    assert "measure_openfhe_bootstrap_latency.py" in bootstrap_openfhe_text
+    assert "BOOTSTRAP_LEVEL_BUDGET" in bootstrap_openfhe_text
+    assert "INSTALL_OPENFHE" in bootstrap_openfhe_text

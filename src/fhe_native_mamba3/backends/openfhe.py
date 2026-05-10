@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from fhe_native_mamba3.backends.base import BackendStats
@@ -30,6 +31,25 @@ def ckks_ring_dimension_for_batch_size(batch_size: int, *, minimum: int = 32768)
     return 1 << (required - 1).bit_length()
 
 
+@dataclass(frozen=True)
+class OpenFheBootstrapConfig:
+    """OpenFHE CKKS bootstrap setup parameters."""
+
+    level_budget: tuple[int, int] = (5, 4)
+    dim1: tuple[int, int] = (0, 0)
+    slots: int | None = None
+    correction_factor: int = 0
+    precompute: bool = True
+    bts_slots_encoding: bool = False
+
+    def normalized_slots(self, default_slots: int) -> int:
+        slots = default_slots if self.slots is None else self.slots
+        if slots <= 0:
+            msg = "bootstrap slots must be positive"
+            raise ValueError(msg)
+        return slots
+
+
 class OpenFheCkksBackend:
     """Thin OpenFHE CKKS wrapper with operation counters."""
 
@@ -43,6 +63,8 @@ class OpenFheCkksBackend:
         multiplicative_depth: int,
         scaling_mod_size: int = 50,
         rotations: tuple[int, ...] = (),
+        bootstrap_config: OpenFheBootstrapConfig | None = None,
+        ring_dimension: int | None = None,
     ) -> None:
         if batch_size <= 0:
             msg = "batch_size must be positive"
@@ -66,21 +88,27 @@ class OpenFheCkksBackend:
         params.SetMultiplicativeDepth(multiplicative_depth)
         params.SetScalingModSize(scaling_mod_size)
         ckks_batch_size = ckks_batch_size_for_slots(batch_size)
-        ring_dimension = ckks_ring_dimension_for_batch_size(ckks_batch_size)
+        ring_dimension = _resolve_ring_dimension(ckks_batch_size, ring_dimension)
         params.SetBatchSize(ckks_batch_size)
         params.SetRingDim(ring_dimension)
         self.cc = GenCryptoContext(params)
+        self._batch_size = ckks_batch_size
+        self._multiplicative_depth = multiplicative_depth
+        self._scaling_mod_size = scaling_mod_size
+        self._bootstrap_config = bootstrap_config
         self.cc.Enable(PKESchemeFeature.PKE)
         self.cc.Enable(PKESchemeFeature.KEYSWITCH)
         self.cc.Enable(PKESchemeFeature.LEVELEDSHE)
+        if bootstrap_config is not None:
+            self.cc.Enable(PKESchemeFeature.ADVANCEDSHE)
+            self.cc.Enable(PKESchemeFeature.FHE)
         self.keys = self.cc.KeyGen()
         self.cc.EvalMultKeyGen(self.keys.secretKey)
         if rotations:
             self.cc.EvalRotateKeyGen(self.keys.secretKey, list(rotations))
+        if bootstrap_config is not None:
+            self._configure_bootstrap(bootstrap_config)
 
-        self._batch_size = ckks_batch_size
-        self._multiplicative_depth = multiplicative_depth
-        self._scaling_mod_size = scaling_mod_size
         self._stats = BackendStats(
             backend=self.name,
             encrypted=self.encrypted,
@@ -102,6 +130,10 @@ class OpenFheCkksBackend:
     @property
     def scaling_mod_size(self) -> int:
         return self._scaling_mod_size
+
+    @property
+    def bootstrap_config(self) -> OpenFheBootstrapConfig | None:
+        return self._bootstrap_config
 
     def encode(self, values: list[float] | tuple[float, ...]) -> Any:
         self._stats.encode_count += 1
@@ -149,3 +181,30 @@ class OpenFheCkksBackend:
             msg = f"got {len(values)} values for batch_size={self.batch_size}"
             raise ValueError(msg)
         return [float(v) for v in values] + [0.0] * (self.batch_size - len(values))
+
+    def _configure_bootstrap(self, config: OpenFheBootstrapConfig) -> None:
+        slots = config.normalized_slots(self.batch_size)
+        self.cc.EvalBootstrapSetup(
+            list(config.level_budget),
+            list(config.dim1),
+            slots,
+            config.correction_factor,
+            config.precompute,
+            config.bts_slots_encoding,
+        )
+        self.cc.EvalBootstrapKeyGen(self.keys.secretKey, slots)
+
+
+def _resolve_ring_dimension(batch_size: int, ring_dimension: int | None) -> int:
+    if ring_dimension is None:
+        return ckks_ring_dimension_for_batch_size(batch_size)
+    if ring_dimension <= 0:
+        msg = "ring_dimension must be positive"
+        raise ValueError(msg)
+    if ring_dimension < 2 * batch_size:
+        msg = f"ring_dimension={ring_dimension} cannot host batch_size={batch_size}"
+        raise ValueError(msg)
+    if ring_dimension & (ring_dimension - 1):
+        msg = "ring_dimension must be a power of two"
+        raise ValueError(msg)
+    return ring_dimension

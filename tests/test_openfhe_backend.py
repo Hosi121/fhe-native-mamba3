@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from fhe_native_mamba3.backends.openfhe import (
+    _resolve_ring_dimension,
     ckks_batch_size_for_slots,
     ckks_ring_dimension_for_batch_size,
 )
@@ -34,6 +35,14 @@ def test_ckks_ring_dimension_scales_with_batch_size() -> None:
     assert ckks_ring_dimension_for_batch_size(32768) == 65536
     with pytest.raises(ValueError, match="positive"):
         ckks_ring_dimension_for_batch_size(0)
+
+
+def test_explicit_openfhe_ring_dimension_is_validated() -> None:
+    assert _resolve_ring_dimension(batch_size=16, ring_dimension=65536) == 65536
+    with pytest.raises(ValueError, match="host"):
+        _resolve_ring_dimension(batch_size=16, ring_dimension=16)
+    with pytest.raises(ValueError, match="power"):
+        _resolve_ring_dimension(batch_size=16, ring_dimension=65535)
 
 
 def test_openfhe_static_recurrence_matches_plaintext() -> None:

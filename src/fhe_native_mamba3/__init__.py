@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.58"
+__version__ = "0.2.59"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -61,6 +61,11 @@ _LAZY_IMPORTS = {
     "OpenFheRecurrenceResult": (
         "fhe_native_mamba3.openfhe_backend",
         "OpenFheRecurrenceResult",
+    ),
+    "OpenFheBootstrapConfig": ("fhe_native_mamba3.backends.openfhe", "OpenFheBootstrapConfig"),
+    "OpenFheBootstrapLatencyConfig": (
+        "fhe_native_mamba3.bootstrap_latency",
+        "OpenFheBootstrapLatencyConfig",
     ),
     "OpenFheCkksBackend": ("fhe_native_mamba3.backends.openfhe", "OpenFheCkksBackend"),
     "PackingPlan": ("fhe_native_mamba3.ckks", "PackingPlan"),
@@ -134,6 +139,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.recurrence_latency",
         "estimate_recurrence_stack_latency",
     ),
+    "measure_openfhe_bootstrap_latency": (
+        "fhe_native_mamba3.bootstrap_latency",
+        "measure_openfhe_bootstrap_latency",
+    ),
     "build_recurrence_bootstrap_plan": (
         "fhe_native_mamba3.recurrence_depth",
         "build_recurrence_bootstrap_plan",
@@ -205,6 +214,8 @@ __all__ = [
     "MambaLayerPlan",
     "MambaLayerReferenceResult",
     "MambaSourceDeltaResult",
+    "OpenFheBootstrapConfig",
+    "OpenFheBootstrapLatencyConfig",
     "OpenFheCkksBackend",
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
@@ -246,6 +257,7 @@ __all__ = [
     "load_weight_bundle_model",
     "make_demo_problem",
     "map_state_dict",
+    "measure_openfhe_bootstrap_latency",
     "plaintext_recurrence_trace",
     "plaintext_static_recurrence",
     "plan_mamba_checkpoint",
