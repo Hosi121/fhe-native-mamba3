@@ -72,6 +72,39 @@ class MambaSourceDeltaResult:
 
 
 @dataclass(frozen=True)
+class MambaStageRange:
+    """Range statistics for one source-style Mamba intermediate tensor."""
+
+    shape: tuple[int, ...]
+    min: float
+    max: float
+    abs_max: float
+    mean_abs: float
+    finite: bool
+
+
+@dataclass(frozen=True)
+class MambaSourceLayerDiagnostics:
+    """Source-style per-stage diagnostics for one Mamba-family layer."""
+
+    layer_index: int
+    d_model: int
+    d_state: int
+    mimo_rank: int
+    dt_rank: int
+    seq_len: int
+    ranges: dict[str, MambaStageRange]
+    range_score: float
+    range_score_stage: str
+    notes: tuple[str, ...] = ()
+
+    def to_json_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["notes"] = list(self.notes)
+        return payload
+
+
+@dataclass(frozen=True)
 class _LayerTensors:
     norm_weight: Tensor
     in_rank_weight: Tensor
@@ -431,6 +464,101 @@ def build_mamba_source_recurrence_problem(
         b_by_token=b_by_token,
         c_by_token=c_by_token,
         d_skip=_tensor_vector(tensors.d_skip.detach().cpu()),
+    )
+
+
+def diagnose_mamba_source_layer(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    norm_eps: float = 1e-5,
+) -> MambaSourceLayerDiagnostics:
+    """Collect source-style range diagnostics for one Mamba-family layer.
+
+    This intentionally uses the same transparent source-style formula as
+    ``build_mamba_source_recurrence_problem``: RMSNorm, SiLU causal conv,
+    token-dependent B/C, state-rank decay, skip/gate, and optional out_proj.
+    It is a Stage-0 design diagnostic, not a claim of official kernel parity.
+    """
+
+    if layer_input.ndim != 3:
+        msg = "layer_input must have shape [batch, seq_len, d_model]"
+        raise ValueError(msg)
+
+    plan = plan_mamba_checkpoint(state_dict)
+    if layer_index >= len(plan.layers):
+        msg = f"layer_index {layer_index} is not present in the state_dict"
+        raise ValueError(msg)
+    layer = plan.layers[layer_index]
+    resolved_d_state = d_state if d_state is not None else layer.source_d_state
+    resolved_rank = mimo_rank if mimo_rank is not None else layer.source_inner_dim
+    if resolved_d_state is None or resolved_rank is None:
+        msg = "d_state and mimo_rank must be provided when they cannot be inferred"
+        raise ValueError(msg)
+
+    tensors = _build_layer_tensors(
+        state_dict,
+        layer_index=layer_index,
+        d_model=int(layer_input.shape[-1]),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        include_gate=True,
+    )
+    stages = _run_source_dynamic_formula(layer_input, tensors, norm_eps=norm_eps)
+
+    ranges: dict[str, MambaStageRange] = {
+        "layer_input": _stage_range(layer_input),
+        "rms_norm_output": _stage_range(stages.rms_norm_output),
+        "projected_rank_input": _stage_range(stages.projected_rank_input),
+        "causal_conv_pre_silu": _stage_range(stages.causal_conv_pre_silu),
+        "causal_conv_post_silu": _stage_range(stages.causal_conv_post_silu),
+        "dynamic_b_terms": _stage_range(stages.dynamic_b_terms),
+        "dynamic_c_terms": _stage_range(stages.dynamic_c_terms),
+        "recurrence_rank_output": _stage_range(stages.recurrence_rank_output),
+    }
+    if stages.decay_by_token is not None:
+        ranges["decay_by_token"] = _stage_range(stages.decay_by_token)
+
+    dtype = layer_input.dtype
+    device = layer_input.device
+    if tensors.gate_weight is not None:
+        gate_pre = functional.linear(
+            stages.rms_norm_output,
+            tensors.gate_weight.to(device=device, dtype=dtype),
+        )
+        gate = functional.silu(gate_pre)
+        ranges["gate_pre_silu"] = _stage_range(gate_pre)
+        ranges["gate_post_silu"] = _stage_range(gate)
+        rank_output = stages.recurrence_rank_output + stages.causal_conv_post_silu * (
+            tensors.d_skip.to(device=device, dtype=dtype)
+        )
+        ranges["rank_output_pre_gate"] = _stage_range(rank_output)
+        ranges["rank_output_post_gate"] = _stage_range(rank_output * gate)
+    if stages.final_block_output is not None:
+        ranges["final_block_delta"] = _stage_range(stages.final_block_output - layer_input)
+        ranges["final_block_output"] = _stage_range(stages.final_block_output)
+
+    score_stage, score = max(
+        ((name, summary.abs_max) for name, summary in ranges.items()),
+        key=lambda item: item[1],
+    )
+    return MambaSourceLayerDiagnostics(
+        layer_index=layer_index,
+        d_model=int(layer_input.shape[-1]),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        dt_rank=0 if tensors.dt_in_weight is None else int(tensors.dt_in_weight.shape[0]),
+        seq_len=int(layer_input.shape[1]),
+        ranges=ranges,
+        range_score=score,
+        range_score_stage=score_stage,
+        notes=(
+            "source-style diagnostics are formula-based and not official kernel parity",
+            "range_score is the maximum absolute value over reported stage tensors",
+        ),
     )
 
 
@@ -886,3 +1014,26 @@ def _optional_max_abs_error(a: Tensor | None, b: Tensor | None) -> float | None:
     if a is None or b is None:
         return float("inf")
     return _max_abs_error(a, b)
+
+
+def _stage_range(tensor: Tensor) -> MambaStageRange:
+    detached = tensor.detach()
+    finite = bool(torch.isfinite(detached).all().cpu())
+    if detached.numel() == 0:
+        return MambaStageRange(
+            shape=tuple(int(dim) for dim in detached.shape),
+            min=0.0,
+            max=0.0,
+            abs_max=0.0,
+            mean_abs=0.0,
+            finite=finite,
+        )
+    stats = detached.float()
+    return MambaStageRange(
+        shape=tuple(int(dim) for dim in detached.shape),
+        min=float(stats.min().cpu()),
+        max=float(stats.max().cpu()),
+        abs_max=float(stats.abs().max().cpu()),
+        mean_abs=float(stats.abs().mean().cpu()),
+        finite=finite,
+    )

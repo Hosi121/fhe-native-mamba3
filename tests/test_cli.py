@@ -31,7 +31,7 @@ def test_inspect_cli_outputs_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["cost_per_block"]["seq_len"] == 8
 
 
@@ -62,7 +62,7 @@ def test_cost_model_cli_outputs_ckks_payload() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["integrated_cost"]["effective_window"] == 4
     assert payload["integrated_cost"]["head_packing"]["heads_per_ciphertext"] >= 1
     assert payload["integrated_cost"]["block_cost"]["rotations"] == 2
@@ -121,7 +121,7 @@ def test_stage0_tracking_cli_outputs_benchmark_json() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["stage"] == "0"
     assert payload["backend"] == "tracking"
     assert payload["encrypted"] is False
@@ -152,7 +152,7 @@ def test_stage0_sweep_cli_outputs_summary() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["result_count"] == 4
     assert payload["summary"]["max_abs_error_max"] < 1e-12
 
@@ -214,7 +214,7 @@ def test_profile_synthetic_cli_outputs_profile() -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["profile"]["seq_len"] == 8
     assert payload["profile"]["blocks"][0]["lambda_by_beta"]["0.5"] >= 0.0
 
@@ -242,7 +242,7 @@ def test_planning_cli_commands_output_json() -> None:
             text=True,
         )
         payload = json.loads(completed.stdout)
-        assert payload["version"] == "0.2.41"
+        assert payload["version"] == "0.2.42"
 
 
 def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
@@ -279,7 +279,7 @@ def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
         text=True,
     )
     export_payload = json.loads(export_completed.stdout)
-    assert export_payload["version"] == "0.2.41"
+    assert export_payload["version"] == "0.2.42"
     assert export_payload["summary"]["tensor_count"] > 0
     assert export_payload["summary"]["parameter_count"] > 0
     assert (bundle_dir / "manifest.json").exists()
@@ -298,7 +298,7 @@ def test_weight_bundle_cli_exports_and_inspects_manifest(tmp_path) -> None:
         text=True,
     )
     inspect_payload = json.loads(inspect_completed.stdout)
-    assert inspect_payload["version"] == "0.2.41"
+    assert inspect_payload["version"] == "0.2.42"
     assert inspect_payload["summary"] == export_payload["summary"]
     assert inspect_payload["weight_bundle"]["model_config"]["scan_mode"] == "ssd"
 
@@ -353,7 +353,7 @@ def test_weight_bundle_eval_cli_runs_loaded_bundle(tmp_path) -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["bundle_dir"] == str(bundle_dir)
     assert payload["input_shape"] == [2, 6]
     assert payload["logits_shape"] == [2, 6, 16]
@@ -409,7 +409,7 @@ def test_weight_bundle_generate_cli_runs_client_side_argmax(tmp_path) -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["decoding_mode"] == "client-side-argmax"
     assert payload["prompt_token_ids"] == [1, 2, 3]
     assert len(payload["new_token_ids"]) == 3
@@ -472,7 +472,7 @@ def test_weight_bundle_recurrence_cli_runs_tracking_backend(tmp_path) -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["stage"] == "bundle-recurrence"
     assert payload["source"] == "weight-bundle"
     assert payload["backend"] == "tracking"
@@ -521,7 +521,7 @@ def test_mamba_checkpoint_to_bundle_cli_adapts_common_checkpoint(tmp_path) -> No
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["state_dict_key"] == "model"
     assert payload["adapter_shape"] == {"source": "cli", "d_state": 2, "mimo_rank": 3}
     assert payload["summary"]["tensor_count"] > 0
@@ -560,7 +560,7 @@ def test_mamba_checkpoint_to_bundle_cli_can_infer_adapter_shape(tmp_path) -> Non
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["adapter_shape"] == {"source": "checkpoint", "d_state": 3, "mimo_rank": 6}
     assert payload["weight_bundle"]["model_config"]["d_state"] == 3
     assert payload["weight_bundle"]["model_config"]["mimo_rank"] == 6
@@ -589,7 +589,7 @@ def test_mamba_checkpoint_plan_cli_reports_detected_layout(tmp_path) -> None:
 
     payload = json.loads(completed.stdout)
     plan = payload["mamba_checkpoint_plan"]
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["state_dict_key"] == "model"
     assert plan["embedding_key"] == "backbone.embedding.weight"
     assert plan["final_norm_key"] == "backbone.norm_f.weight"
@@ -643,7 +643,7 @@ def test_mamba_checkpoint_recurrence_smoke_cli_runs_tracking_backend(tmp_path) -
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["stage"] == "mamba-checkpoint-recurrence-smoke"
     assert payload["backend"] == "tracking"
     assert payload["encrypted"] is False
@@ -700,7 +700,7 @@ def test_mamba_checkpoint_recurrence_smoke_cli_runs_source_dynamic_bc(tmp_path) 
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["model"]["recurrence_source"] == "source-dynamic"
     assert payload["model"]["input_mode"] == "encrypted-dynamic-bc"
     assert payload["operation_counts"]["ct_ct_mul"] == 2 * payload["model"]["seq_len"]
@@ -751,7 +751,7 @@ def test_mamba_checkpoint_recurrence_sweep_cli_reports_rows(tmp_path) -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["stage"] == "mamba-checkpoint-recurrence-sweep"
     assert payload["summary"]["row_count"] == 4
     assert payload["summary"]["layer_count"] == 1
@@ -801,7 +801,7 @@ def test_mamba_checkpoint_compare_reference_cli_reports_stage_errors(tmp_path) -
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["stage"] == "mamba-checkpoint-compare-reference"
     assert payload["state_dict_key"] == "model"
     assert payload["adapter_shape"] == {"source": "checkpoint", "d_state": 3, "mimo_rank": 6}
@@ -817,6 +817,54 @@ def test_mamba_checkpoint_compare_reference_cli_reports_stage_errors(tmp_path) -
     assert (
         payload["source_delta"]["reference_formula"] == "source-style-dynamic-bc-state-rank-decay"
     )
+
+
+def test_mamba_checkpoint_source_diagnostics_cli_reports_ranges(tmp_path) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_json = tmp_path / "source-diagnostics.json"
+    torch.save({"model": _fake_mamba_state_dict()}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fhe_native_mamba3.cli",
+            "mamba-checkpoint-source-diagnostics",
+            str(checkpoint_path),
+            "--infer-shape",
+            "--n-layers",
+            "1",
+            "--max-seq-len",
+            "8",
+            "--prompt",
+            "1,2",
+            "--seq-lens",
+            "1,2",
+            "--all-layers",
+            "--max-statuses",
+            "2",
+            "--max-plan-layers",
+            "1",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["version"] == "0.2.42"
+    assert payload["stage"] == "mamba-checkpoint-source-diagnostics"
+    assert payload["summary"]["row_count"] == 2
+    assert payload["summary"]["layer_count"] == 1
+    assert payload["summary"]["seq_lens"] == [1, 2]
+    assert payload["summary"]["max_range_score"] > 0
+    assert payload["summary"]["by_layer"][0]["layer_index"] == 0
+    assert payload["summary"]["top_range_cases"]
+    assert payload["rows"][0]["ranges"]["causal_conv_post_silu"]["abs_max"] >= 0
+    assert payload["rows"][0]["range_score_stage"] in payload["rows"][0]["ranges"]
+    assert json.loads(output_json.read_text(encoding="utf-8"))["summary"]["row_count"] == 2
 
 
 def test_weight_bundle_cli_converts_checkpoint(tmp_path) -> None:
@@ -849,7 +897,7 @@ def test_weight_bundle_cli_converts_checkpoint(tmp_path) -> None:
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["summary"]["tensor_count"] == len(model.state_dict())
     assert payload["weight_bundle"]["model_config"]["vocab_size"] == 16
 
@@ -874,7 +922,7 @@ def test_checkpoint_inspect_cli_outputs_tensor_shapes(tmp_path) -> None:
     )
     payload = json.loads(completed.stdout)
     inspection = payload["checkpoint_inspection"]
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert inspection["state_dict_key"] == "model"
     assert inspection["tensor_count"] == 2
     assert inspection["parameter_count"] == 10
@@ -916,7 +964,7 @@ def test_checkpoint_map_report_cli_compares_against_target_model(tmp_path) -> No
     )
     payload = json.loads(completed.stdout)
     report = payload["mapping_report"]
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert report["is_complete"] is True
     assert report["mapped_count"] == len(model.state_dict())
     assert len(report["statuses"]) == 2
@@ -962,7 +1010,7 @@ def test_checkpoint_map_template_cli_writes_reusable_rules_json(tmp_path) -> Non
     )
     template_payload = json.loads(template_completed.stdout)
     template = template_payload["mapping_template"]
-    assert template_payload["version"] == "0.2.41"
+    assert template_payload["version"] == "0.2.42"
     assert template["unique_shape_count"] == 1
     assert rules_path.exists()
 
@@ -1035,7 +1083,7 @@ def test_checkpoint_map_to_bundle_cli_exports_complete_mapping(tmp_path) -> None
         text=True,
     )
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.41"
+    assert payload["version"] == "0.2.42"
     assert payload["mapping_report"]["is_complete"] is True
     assert payload["summary"]["tensor_count"] == len(model.state_dict())
     assert (bundle_dir / "manifest.json").exists()

@@ -1167,6 +1167,113 @@ def mamba_checkpoint_compare_reference_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def mamba_checkpoint_source_diagnostics_cmd(args: argparse.Namespace) -> int:
+    import torch
+
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.mamba_checkpoint import (
+        adapt_mamba_state_dict_to_model,
+        plan_mamba_checkpoint,
+    )
+    from fhe_native_mamba3.mamba_reference import diagnose_mamba_source_layer
+
+    source_state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key or None,
+        map_location=args.map_location,
+    )
+    plan = plan_mamba_checkpoint(source_state_dict)
+    d_state, mimo_rank, adapter_shape = _resolve_mamba_adapter_shape(args, source_state_dict)
+    seq_lens = tuple(sorted(set(args.seq_lens)))
+    layer_indices = (
+        tuple(range(plan.complete_layer_count))
+        if args.all_layers
+        else tuple(sorted(set(args.layer_indices)))
+    )
+    if not seq_lens or min(seq_lens) <= 0:
+        msg = "seq_lens must contain positive lengths"
+        raise ValueError(msg)
+    if not layer_indices or min(layer_indices) < 0:
+        msg = "layer_indices must contain non-negative indices"
+        raise ValueError(msg)
+    if max(seq_lens) > args.max_seq_len:
+        msg = "max seq_len exceeds max_seq_len"
+        raise ValueError(msg)
+
+    token_seed = _parse_int_list(args.prompt)
+    if not token_seed:
+        msg = "prompt must contain at least one token id"
+        raise ValueError(msg)
+    required_layers = max(args.n_layers, max(layer_indices) + 1)
+    model, report = adapt_mamba_state_dict_to_model(
+        source_state_dict,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        n_layers=required_layers,
+        max_seq_len=args.max_seq_len,
+        seed=args.seed,
+    )
+    invalid = [token for token in token_seed if token < 0 or token >= model.config.vocab_size]
+    if invalid:
+        msg = f"token ids out of range for vocab_size={model.config.vocab_size}: {invalid}"
+        raise ValueError(msg)
+    model.eval()
+
+    rows: list[dict[str, Any]] = []
+    for seq_len in seq_lens:
+        token_ids = _tokens_for_seq_len(token_seed, seq_len)
+        with torch.inference_mode():
+            input_ids = torch.tensor([token_ids], dtype=torch.long)
+            embedded = model.embed(input_ids) + model.pos[:seq_len].unsqueeze(0)
+            layer_inputs: dict[int, Any] = {}
+            x = embedded
+            for block_index, block in enumerate(model.blocks[:required_layers]):
+                if block_index in layer_indices:
+                    layer_inputs[block_index] = x
+                x = block(x)
+
+            for layer_index in layer_indices:
+                diagnostics = diagnose_mamba_source_layer(
+                    source_state_dict,
+                    layer_inputs[layer_index],
+                    layer_index=layer_index,
+                    d_state=d_state,
+                    mimo_rank=mimo_rank,
+                    norm_eps=args.norm_eps,
+                )
+                row = diagnostics.to_json_dict()
+                row.update(
+                    {
+                        "seq_len": seq_len,
+                        "token_ids": list(token_ids),
+                    }
+                )
+                rows.append(row)
+
+    payload = {
+        "version": __version__,
+        "stage": "mamba-checkpoint-source-diagnostics",
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "adapter_shape": adapter_shape,
+        "mamba_checkpoint_plan": _mamba_checkpoint_plan_payload(
+            source_state_dict,
+            max_layers=args.max_plan_layers,
+        ),
+        "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
+        "diagnostics_config": {
+            "all_layers": args.all_layers,
+            "seq_lens": list(seq_lens),
+            "layer_indices": list(layer_indices),
+            "norm_eps": args.norm_eps,
+        },
+        "summary": _source_diagnostics_summary(rows),
+        "rows": rows,
+    }
+    _emit_json_payload(payload, output_json=args.output_json)
+    return 0
+
+
 def _mamba_reference_exact_errors(comparison: Any) -> dict[str, float]:
     fields = (
         "projected_rank_input_max_abs_error",
@@ -1182,6 +1289,65 @@ def _mamba_reference_exact_errors(comparison: Any) -> dict[str, float]:
         if value is not None:
             errors[field] = float(value)
     return errors
+
+
+def _source_diagnostics_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "layer_count": 0,
+            "seq_lens": [],
+            "max_range_score": 0.0,
+            "max_range_case": None,
+            "by_layer": [],
+            "top_range_cases": [],
+        }
+    score_row = max(rows, key=lambda row: row["range_score"])
+    return {
+        "row_count": len(rows),
+        "layer_count": len({row["layer_index"] for row in rows}),
+        "seq_lens": sorted({row["seq_len"] for row in rows}),
+        "max_range_score": score_row["range_score"],
+        "max_range_case": {
+            "layer_index": score_row["layer_index"],
+            "seq_len": score_row["seq_len"],
+            "range_score_stage": score_row["range_score_stage"],
+        },
+        "by_layer": _source_diagnostics_by_layer(rows),
+        "top_range_cases": _source_diagnostics_top_range_cases(rows),
+    }
+
+
+def _source_diagnostics_by_layer(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_layer: list[dict[str, Any]] = []
+    for layer_index in sorted({row["layer_index"] for row in rows}):
+        layer_rows = [row for row in rows if row["layer_index"] == layer_index]
+        score_row = max(layer_rows, key=lambda row: row["range_score"])
+        by_layer.append(
+            {
+                "layer_index": layer_index,
+                "row_count": len(layer_rows),
+                "max_range_score": score_row["range_score"],
+                "max_range_score_stage": score_row["range_score_stage"],
+                "seq_len_at_max": score_row["seq_len"],
+            }
+        )
+    return by_layer
+
+
+def _source_diagnostics_top_range_cases(
+    rows: list[dict[str, Any]], *, limit: int = 5
+) -> list[dict[str, Any]]:
+    top_rows = sorted(rows, key=lambda row: row["range_score"], reverse=True)[:limit]
+    return [
+        {
+            "layer_index": row["layer_index"],
+            "seq_len": row["seq_len"],
+            "range_score": row["range_score"],
+            "range_score_stage": row["range_score_stage"],
+        }
+        for row in top_rows
+    ]
 
 
 def profile_cmd(args: argparse.Namespace) -> int:
@@ -1984,6 +2150,37 @@ def build_parser() -> argparse.ArgumentParser:
     mamba_compare_parser.add_argument("--max-statuses", type=int, default=50)
     mamba_compare_parser.add_argument("--output-json", default="")
     mamba_compare_parser.set_defaults(func=mamba_checkpoint_compare_reference_cmd)
+
+    mamba_diagnostics_parser = subparsers.add_parser(
+        "mamba-checkpoint-source-diagnostics",
+        help="report source-style Mamba layer range diagnostics for Stage-0 scale design",
+    )
+    mamba_diagnostics_parser.add_argument("checkpoint")
+    mamba_diagnostics_parser.add_argument("--state-dict-key", default="")
+    mamba_diagnostics_parser.add_argument("--map-location", default="cpu")
+    mamba_diagnostics_parser.add_argument("--d-state", type=int, default=1)
+    mamba_diagnostics_parser.add_argument("--mimo-rank", type=int, default=1)
+    mamba_diagnostics_parser.add_argument(
+        "--infer-shape",
+        action="store_true",
+        help="derive d_state and mimo_rank from the detected checkpoint tensors",
+    )
+    mamba_diagnostics_parser.add_argument("--n-layers", type=int, default=1)
+    mamba_diagnostics_parser.add_argument("--max-seq-len", type=int, default=8)
+    mamba_diagnostics_parser.add_argument("--seed", type=int, default=0)
+    mamba_diagnostics_parser.add_argument("--prompt", default="1,2,3,4")
+    mamba_diagnostics_parser.add_argument("--seq-lens", type=_parse_int_list, default=(1, 2, 4))
+    mamba_diagnostics_parser.add_argument("--layer-indices", type=_parse_int_list, default=(0,))
+    mamba_diagnostics_parser.add_argument(
+        "--all-layers",
+        action="store_true",
+        help="diagnose every complete Mamba layer detected in the checkpoint",
+    )
+    mamba_diagnostics_parser.add_argument("--norm-eps", type=float, default=1e-5)
+    mamba_diagnostics_parser.add_argument("--max-plan-layers", type=int, default=8)
+    mamba_diagnostics_parser.add_argument("--max-statuses", type=int, default=50)
+    mamba_diagnostics_parser.add_argument("--output-json", default="")
+    mamba_diagnostics_parser.set_defaults(func=mamba_checkpoint_source_diagnostics_cmd)
 
     rotation_parser = subparsers.add_parser(
         "rotation-inventory",

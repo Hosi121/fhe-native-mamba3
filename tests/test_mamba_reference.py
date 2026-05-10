@@ -6,6 +6,7 @@ from fhe_native_mamba3.mamba_reference import (
     build_mamba_source_recurrence_problem,
     compare_mamba_layer_reference,
     compare_mamba_source_delta,
+    diagnose_mamba_source_layer,
 )
 
 
@@ -108,6 +109,29 @@ def test_mamba_source_recurrence_problem_uses_dynamic_bc_and_state_decay() -> No
     assert problem.decay_state_by_token is not None
     assert len(problem.b_by_token[0]) == 2
     assert len(problem.b_by_token[0][0]) == 4
+
+
+def test_mamba_source_layer_diagnostics_reports_stage_ranges() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    diagnostics = diagnose_mamba_source_layer(
+        state_dict,
+        layer_input,
+        layer_index=0,
+        d_state=2,
+        mimo_rank=4,
+    )
+
+    assert diagnostics.seq_len == 3
+    assert diagnostics.ranges["layer_input"].shape == (1, 3, 8)
+    assert diagnostics.ranges["causal_conv_post_silu"].abs_max > 0
+    assert diagnostics.ranges["dynamic_b_terms"].shape == (1, 3, 2)
+    assert diagnostics.ranges["dynamic_c_terms"].shape == (1, 3, 2)
+    assert diagnostics.ranges["decay_by_token"].shape == (1, 3, 4, 2)
+    assert diagnostics.range_score >= diagnostics.ranges["causal_conv_post_silu"].abs_max
+    assert diagnostics.range_score_stage in diagnostics.ranges
+    json.dumps(diagnostics.to_json_dict())
 
 
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:
