@@ -72,7 +72,7 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.85"
+    assert payload["version"] == "0.2.86"
     assert payload["measurements"]["checkpoint_source_profile"]["range_score_layer"] == 7
     assert payload["measurements"]["client_decode_smoke"]["new_token_ids"] == [42]
     assert payload["bottlenecks"][0]["name"] == "range"

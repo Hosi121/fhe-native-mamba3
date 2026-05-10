@@ -41,6 +41,40 @@ def test_all_layer_script_sizes_adapter_to_selected_subset() -> None:
         module._required_adapter_layers(())
 
 
+def test_all_layer_script_selects_checkpoint_complete_count_by_default() -> None:
+    module = _load_script()
+
+    assert module._selected_layer_indices(
+        all_layers=True,
+        layer_indices=(),
+        n_layers=0,
+        complete_layer_count=3,
+    ) == (0, 1, 2)
+    assert module._selected_layer_indices(
+        all_layers=True,
+        layer_indices=(),
+        n_layers=24,
+        complete_layer_count=3,
+    ) == (0, 1, 2)
+    assert module._selected_layer_indices(
+        all_layers=True,
+        layer_indices=(),
+        n_layers=2,
+        complete_layer_count=3,
+    ) == (0, 1)
+
+
+def test_all_layer_script_subset_selection_does_not_use_default_layer_count() -> None:
+    module = _load_script()
+
+    assert module._selected_layer_indices(
+        all_layers=False,
+        layer_indices=(0,),
+        n_layers=24,
+        complete_layer_count=1,
+    ) == (0,)
+
+
 def test_all_layer_script_rejects_legacy_execution_schedule_mismatch() -> None:
     module = _load_script()
 

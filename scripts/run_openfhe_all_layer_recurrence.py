@@ -54,7 +54,12 @@ def main() -> int:
         msg = "could not infer d_state/mimo_rank; pass --d-state and --mimo-rank"
         raise ValueError(msg)
 
-    layer_indices = tuple(range(args.n_layers)) if args.all_layers else args.layer_indices
+    layer_indices = _selected_layer_indices(
+        all_layers=args.all_layers,
+        layer_indices=args.layer_indices,
+        n_layers=args.n_layers,
+        complete_layer_count=plan.complete_layer_count,
+    )
     if not layer_indices:
         msg = "no layer indices selected"
         raise ValueError(msg)
@@ -554,6 +559,24 @@ def _required_adapter_layers(layer_indices: tuple[int, ...]) -> int:
     return max(layer_indices) + 1
 
 
+def _selected_layer_indices(
+    *,
+    all_layers: bool,
+    layer_indices: tuple[int, ...],
+    n_layers: int,
+    complete_layer_count: int,
+) -> tuple[int, ...]:
+    if complete_layer_count <= 0:
+        msg = "checkpoint has no complete layers"
+        raise ValueError(msg)
+    if all_layers:
+        selected_count = (
+            complete_layer_count if n_layers <= 0 else min(n_layers, complete_layer_count)
+        )
+        return tuple(range(selected_count))
+    return layer_indices
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint")
@@ -564,7 +587,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--map-location", default="cpu")
     parser.add_argument("--d-state", type=int, default=0)
     parser.add_argument("--mimo-rank", type=int, default=0)
-    parser.add_argument("--n-layers", type=int, default=24)
+    parser.add_argument(
+        "--n-layers",
+        type=int,
+        default=0,
+        help="optional cap for --all-layers; 0 means checkpoint complete_layer_count",
+    )
     parser.add_argument("--max-seq-len", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--prompt", default="1,2,3,4")

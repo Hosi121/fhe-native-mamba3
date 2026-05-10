@@ -38,7 +38,7 @@ def test_checkpoint_visible_projection_sweep_script_runs_tracking_backend(tmp_pa
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.85"
+    assert payload["version"] == "0.2.86"
     assert payload["stage"] == "mamba-checkpoint-visible-projection-sweep"
     assert payload["backend"] == "tracking"
     assert payload["passed"] is True
