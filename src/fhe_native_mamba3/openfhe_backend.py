@@ -25,7 +25,7 @@ from fhe_native_mamba3.layout import (
 )
 
 InputMode = Literal["server-bx", "client-update", "encrypted-dynamic-bc"]
-CiphertextTraceOutputLayout = Literal["readout", "expanded-rank-input"]
+CiphertextTraceOutputLayout = Literal["readout", "expanded-rank-input", "visible-output"]
 
 
 @dataclass(frozen=True)

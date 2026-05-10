@@ -24,7 +24,9 @@ from fhe_native_mamba3.mamba_reference import (
     compare_mamba_layer_reference,
 )
 from fhe_native_mamba3.openfhe_backend import (
+    CiphertextLayoutContract,
     InputMode,
+    LayoutBoundCiphertexts,
     readout_output_slots,
     required_readout_rotations,
     run_static_mimo_recurrence_ciphertexts_with_backend,
@@ -117,7 +119,10 @@ class CheckpointFullLayerCiphertextTrace:
     encrypted: bool
     input_mode: str
     readout_strategy: str
+    output_layout: str
     output_slots: tuple[int, ...]
+    layout_contract: CiphertextLayoutContract
+    required_rotations: tuple[int, ...]
     output_ciphertexts: tuple[Any, ...]
     expected_outputs: tuple[tuple[float, ...], ...]
     backend_handle: FHEBackend
@@ -142,7 +147,17 @@ class CheckpointFullLayerCiphertextTrace:
             "encrypted": self.encrypted,
             "input_mode": self.input_mode,
             "readout_strategy": self.readout_strategy,
+            "output_layout": self.output_layout,
             "output_slots": list(self.output_slots),
+            "layout_contract": {
+                "output_layout": self.layout_contract.output_layout,
+                "d_state": self.layout_contract.d_state,
+                "mimo_rank": self.layout_contract.mimo_rank,
+                "readout_strategy": self.layout_contract.readout_strategy,
+                "output_slots": list(self.layout_contract.output_slots),
+                "required_rotations": list(self.layout_contract.required_rotations),
+            },
+            "required_rotations": list(self.required_rotations),
             "output_ciphertext_count": len(self.output_ciphertexts),
             "expected_outputs": [list(row) for row in self.expected_outputs],
             "recurrence_ciphertext": self.recurrence_ciphertext,
@@ -449,6 +464,22 @@ def run_checkpoint_full_layer_ciphertexts_with_backend(
     )
     full_visible_output_checked = checked_visible_dim == visible.d_model
     partial_visible_output_checked = checked_visible_dim < visible.d_model
+    output_slots = tuple(range(checked_visible_dim))
+    required_rotations = required_full_layer_visible_rotations(
+        d_model=visible.d_model,
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        readout_strategy=readout_strategy,
+        visible_dim_limit=visible_dim_limit,
+    )
+    layout_contract = CiphertextLayoutContract(
+        output_layout="visible-output",
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        readout_strategy=readout_strategy,
+        output_slots=output_slots,
+        required_rotations=required_rotations,
+    )
     notes = [
         "checks source-style full-layer visible output, not official fused kernel parity",
         "input-dependent pre-recurrence tensors are still plaintext-precomputed in Stage 0",
@@ -472,8 +503,14 @@ def run_checkpoint_full_layer_ciphertexts_with_backend(
         encrypted=bool(resolved_backend.stats().encrypted),
         input_mode=input_mode,
         readout_strategy=readout_strategy,
-        output_slots=tuple(range(checked_visible_dim)),
-        output_ciphertexts=tuple(output_ciphertexts),
+        output_layout="visible-output",
+        output_slots=output_slots,
+        layout_contract=layout_contract,
+        required_rotations=required_rotations,
+        output_ciphertexts=LayoutBoundCiphertexts(
+            tuple(output_ciphertexts),
+            layout_contract=layout_contract,
+        ),
         expected_outputs=expected_rows,
         backend_handle=resolved_backend,
         recurrence_ciphertext=True,

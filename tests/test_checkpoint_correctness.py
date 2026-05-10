@@ -13,6 +13,10 @@ from fhe_native_mamba3.checkpoint_correctness import (
 from fhe_native_mamba3.checkpoint_full_layer_sweep import (
     run_checkpoint_full_layer_ciphertext_sweep,
 )
+from fhe_native_mamba3.openfhe_backend import (
+    OpenFheRecurrenceProblem,
+    run_static_mimo_recurrence_ciphertexts_with_backend,
+)
 
 
 def test_checkpoint_recurrence_correctness_gate_uses_backend_reference() -> None:
@@ -187,8 +191,20 @@ def test_checkpoint_full_layer_ciphertext_trace_does_not_decrypt_outputs() -> No
 
     assert trace.decrypt_count_delta == 0
     assert len(trace.output_ciphertexts) == 2
+    assert trace.output_layout == "visible-output"
     assert trace.output_slots == tuple(range(trace.checked_visible_dim))
+    assert trace.layout_contract.output_layout == "visible-output"
+    assert trace.layout_contract.output_slots == trace.output_slots
+    assert trace.layout_contract.required_rotations == trace.required_rotations
+    assert trace.output_ciphertexts.layout_contract == trace.layout_contract
+    assert trace.required_rotations == required_full_layer_visible_rotations(
+        d_model=trace.d_model,
+        d_state=trace.d_state,
+        mimo_rank=trace.mimo_rank,
+        readout_strategy="rank-local",
+    )
     assert trace.visible_handoff_ciphertext is True
+    assert payload["output_layout"] == "visible-output"
     assert payload["output_ciphertext_count"] == 2
     assert "output_ciphertexts" not in payload
 
@@ -215,6 +231,47 @@ def test_checkpoint_full_layer_ciphertext_trace_outputs_match_source_when_decryp
     for actual_row, expected_row in zip(actual, trace.expected_outputs, strict=True):
         assert actual_row == pytest.approx(expected_row)
     assert backend.stats().decrypt_count == trace.seq_len
+
+
+def test_checkpoint_full_layer_visible_ciphertexts_cannot_be_rank_input_handoff() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(16, dtype=torch.float32).view(1, 2, 8) / 20.0
+    backend = TrackingBackend(batch_size=8)
+
+    trace = run_checkpoint_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        input_mode="encrypted-dynamic-bc",
+        readout_strategy="rank-local",
+    )
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0)),
+        decay=(0.0, 0.0, 0.0, 0.0),
+        b=((1.0, 1.0, 1.0, 1.0), (1.0, 1.0, 1.0, 1.0)),
+        c=((1.0, 1.0, 1.0, 1.0), (1.0, 1.0, 1.0, 1.0)),
+    )
+
+    with pytest.raises(ValueError, match="expanded-rank-input"):
+        run_static_mimo_recurrence_ciphertexts_with_backend(
+            problem,
+            backend=backend,
+            multiplicative_depth=8,
+            readout_strategy="rank-local",
+            input_mode="server-bx",
+            rank_input_ciphertexts=trace.output_ciphertexts,
+        )
+    with pytest.raises(ValueError, match="layout contract"):
+        run_static_mimo_recurrence_ciphertexts_with_backend(
+            problem,
+            backend=backend,
+            multiplicative_depth=8,
+            readout_strategy="rank-local",
+            input_mode="server-bx",
+            rank_input_ciphertexts=tuple(trace.output_ciphertexts),
+        )
 
 
 def test_checkpoint_full_layer_ciphertext_gate_requires_visible_projection() -> None:
