@@ -1175,7 +1175,10 @@ def mamba_checkpoint_source_diagnostics_cmd(args: argparse.Namespace) -> int:
         adapt_mamba_state_dict_to_model,
         plan_mamba_checkpoint,
     )
-    from fhe_native_mamba3.mamba_reference import diagnose_mamba_source_layer
+    from fhe_native_mamba3.mamba_reference import (
+        diagnose_mamba_source_layer,
+        run_mamba_source_layer,
+    )
 
     source_state_dict, resolved_key = load_checkpoint_state_dict(
         args.checkpoint,
@@ -1224,13 +1227,25 @@ def mamba_checkpoint_source_diagnostics_cmd(args: argparse.Namespace) -> int:
         token_ids = _tokens_for_seq_len(token_seed, seq_len)
         with torch.inference_mode():
             input_ids = torch.tensor([token_ids], dtype=torch.long)
-            embedded = model.embed(input_ids) + model.pos[:seq_len].unsqueeze(0)
+            embedded = model.embed(input_ids)
+            if args.input_propagation == "prototype":
+                embedded = embedded + model.pos[:seq_len].unsqueeze(0)
             layer_inputs: dict[int, Any] = {}
             x = embedded
             for block_index, block in enumerate(model.blocks[:required_layers]):
                 if block_index in layer_indices:
                     layer_inputs[block_index] = x
-                x = block(x)
+                if args.input_propagation == "source":
+                    x = run_mamba_source_layer(
+                        source_state_dict,
+                        x,
+                        layer_index=block_index,
+                        d_state=d_state,
+                        mimo_rank=mimo_rank,
+                        norm_eps=args.norm_eps,
+                    )
+                else:
+                    x = block(x)
 
             for layer_index in layer_indices:
                 diagnostics = diagnose_mamba_source_layer(
@@ -1271,6 +1286,7 @@ def mamba_checkpoint_source_diagnostics_cmd(args: argparse.Namespace) -> int:
             "all_layers": args.all_layers,
             "seq_lens": list(seq_lens),
             "layer_indices": list(layer_indices),
+            "input_propagation": args.input_propagation,
             "norm_eps": args.norm_eps,
             "range_target": args.range_target,
             "range_warn": args.range_warn,
@@ -2209,6 +2225,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--all-layers",
         action="store_true",
         help="diagnose every complete Mamba layer detected in the checkpoint",
+    )
+    mamba_diagnostics_parser.add_argument(
+        "--input-propagation",
+        choices=["source", "prototype"],
+        default="source",
+        help="propagate hidden states with the source-style formula or the prototype block",
     )
     mamba_diagnostics_parser.add_argument("--norm-eps", type=float, default=1e-5)
     mamba_diagnostics_parser.add_argument(

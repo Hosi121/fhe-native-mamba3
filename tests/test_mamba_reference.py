@@ -7,6 +7,7 @@ from fhe_native_mamba3.mamba_reference import (
     compare_mamba_layer_reference,
     compare_mamba_source_delta,
     diagnose_mamba_source_layer,
+    run_mamba_source_layer,
 )
 
 
@@ -132,6 +133,23 @@ def test_mamba_source_layer_diagnostics_reports_stage_ranges() -> None:
     assert diagnostics.range_score >= diagnostics.ranges["causal_conv_post_silu"].abs_max
     assert diagnostics.range_score_stage in diagnostics.ranges
     json.dumps(diagnostics.to_json_dict())
+
+
+def test_run_mamba_source_layer_returns_final_block_output() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    output = run_mamba_source_layer(
+        state_dict,
+        layer_input,
+        layer_index=0,
+        d_state=2,
+        mimo_rank=4,
+    )
+
+    assert output.shape == layer_input.shape
+    assert torch.isfinite(output).all()
+    assert not torch.equal(output, layer_input)
 
 
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:

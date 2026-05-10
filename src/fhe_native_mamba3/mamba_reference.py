@@ -562,6 +562,47 @@ def diagnose_mamba_source_layer(
     )
 
 
+def run_mamba_source_layer(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    norm_eps: float = 1e-5,
+) -> Tensor:
+    """Run one transparent source-style Mamba layer and return its block output."""
+
+    if layer_input.ndim != 3:
+        msg = "layer_input must have shape [batch, seq_len, d_model]"
+        raise ValueError(msg)
+
+    plan = plan_mamba_checkpoint(state_dict)
+    if layer_index >= len(plan.layers):
+        msg = f"layer_index {layer_index} is not present in the state_dict"
+        raise ValueError(msg)
+    layer = plan.layers[layer_index]
+    resolved_d_state = d_state if d_state is not None else layer.source_d_state
+    resolved_rank = mimo_rank if mimo_rank is not None else layer.source_inner_dim
+    if resolved_d_state is None or resolved_rank is None:
+        msg = "d_state and mimo_rank must be provided when they cannot be inferred"
+        raise ValueError(msg)
+
+    tensors = _build_layer_tensors(
+        state_dict,
+        layer_index=layer_index,
+        d_model=int(layer_input.shape[-1]),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        include_gate=True,
+    )
+    stages = _run_source_dynamic_formula(layer_input, tensors, norm_eps=norm_eps)
+    if stages.final_block_output is None:
+        msg = f"layer {layer_index} is missing out_proj or gate tensors needed for propagation"
+        raise ValueError(msg)
+    return stages.final_block_output
+
+
 def _build_layer_tensors(
     state_dict: dict[str, Tensor],
     *,
