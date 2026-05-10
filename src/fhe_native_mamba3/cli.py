@@ -602,7 +602,10 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         adapt_mamba_state_dict_to_model,
         save_mamba_checkpoint_bundle,
     )
-    from fhe_native_mamba3.mamba_reference import build_mamba_source_recurrence_problem
+    from fhe_native_mamba3.mamba_reference import (
+        build_mamba_source_recurrence_problem,
+        run_mamba_source_layer,
+    )
     from fhe_native_mamba3.openfhe_backend import (
         required_readout_rotations,
         run_static_mimo_recurrence_with_backend,
@@ -661,9 +664,20 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         model.eval()
         with torch.inference_mode():
             input_ids = torch.tensor([token_ids], dtype=torch.long)
-            x = model.embed(input_ids) + model.pos[: len(token_ids)].unsqueeze(0)
-            for block in model.blocks[: args.layer_index]:
-                x = block(x)
+            x = model.embed(input_ids)
+            if args.input_propagation == "prototype":
+                x = x + model.pos[: len(token_ids)].unsqueeze(0)
+            for block_index, block in enumerate(model.blocks[: args.layer_index]):
+                if args.input_propagation == "source":
+                    x = run_mamba_source_layer(
+                        source_state_dict,
+                        x,
+                        layer_index=block_index,
+                        d_state=d_state,
+                        mimo_rank=mimo_rank,
+                    )
+                else:
+                    x = block(x)
             problem = build_mamba_source_recurrence_problem(
                 source_state_dict,
                 x,
@@ -736,6 +750,7 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             "readout_strategy": args.readout_strategy,
             "input_mode": args.input_mode,
             "recurrence_source": args.recurrence_source,
+            "input_propagation": args.input_propagation,
             "state_scale": args.state_scale,
         },
         "ckks": {
@@ -2290,6 +2305,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--input-mode",
         choices=["server-bx", "client-update", "encrypted-dynamic-bc"],
         default="client-update",
+    )
+    mamba_smoke_parser.add_argument(
+        "--input-propagation",
+        choices=["source", "prototype"],
+        default="source",
+        help="propagate layer inputs with source-style layers or prototype blocks",
     )
     mamba_smoke_parser.add_argument("--multiplicative-depth", type=int, default=8)
     mamba_smoke_parser.add_argument("--scaling-mod-size", type=int, default=50)
