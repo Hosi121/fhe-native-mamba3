@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from fhe_native_mamba3.backends.openfhe import (
@@ -20,6 +22,22 @@ from fhe_native_mamba3.openfhe_backend import (
     scale_recurrence_state,
     scale_recurrence_state_and_output,
 )
+
+_RECURRENCE_RUNNERS: tuple[Callable[..., object], ...] = (
+    run_static_mimo_recurrence_with_backend,
+    run_static_mimo_recurrence_ciphertexts_with_backend,
+)
+
+
+def _validation_problem(**overrides: object) -> OpenFheRecurrenceProblem:
+    params: dict[str, object] = {
+        "rank_inputs": ((1.0, -2.0), (0.5, 0.25)),
+        "decay": (0.1, 0.2),
+        "b": ((0.25, -0.5),),
+        "c": ((2.0, -1.0),),
+    }
+    params.update(overrides)
+    return OpenFheRecurrenceProblem(**params)
 
 
 def test_ckks_batch_size_rounds_to_power_of_two() -> None:
@@ -256,6 +274,109 @@ def test_recurrence_runner_rejects_invalid_bootstrap_token() -> None:
             backend=TrackingBackend(batch_size=4),
             multiplicative_depth=8,
             bootstrap_after_tokens=(3,),
+        )
+
+
+@pytest.mark.parametrize("runner", _RECURRENCE_RUNNERS)
+def test_recurrence_runners_reject_bad_decay_by_token_length(
+    runner: Callable[..., object],
+) -> None:
+    problem = _validation_problem(decay_by_token=((0.5, 0.6),))
+
+    with pytest.raises(ValueError, match="decay_by_token length must match seq_len"):
+        runner(
+            problem,
+            backend=TrackingBackend(batch_size=2),
+            multiplicative_depth=8,
+            readout_strategy="rank-local",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        (
+            "decay_state_by_token",
+            (((0.5, 0.6), (0.7, 0.8)), ((0.9, 1.0),)),
+            r"decay_state_by_token\[0\] must have d_state=1 rows",
+        ),
+        (
+            "b_by_token",
+            (((0.25, -0.5),),),
+            "b_by_token length must match seq_len",
+        ),
+        (
+            "c_by_token",
+            (((2.0,),), ((-1.0,),)),
+            r"each c_by_token\[0\] row must match mimo_rank=2",
+        ),
+    ],
+)
+@pytest.mark.parametrize("runner", _RECURRENCE_RUNNERS)
+def test_recurrence_runners_validate_token_matrices(
+    runner: Callable[..., object],
+    field_name: str,
+    value: object,
+    message: str,
+) -> None:
+    problem = _validation_problem(**{field_name: value})
+
+    with pytest.raises(ValueError, match=message):
+        runner(
+            problem,
+            backend=TrackingBackend(batch_size=2),
+            multiplicative_depth=8,
+            readout_strategy="rank-local",
+        )
+
+
+@pytest.mark.parametrize("runner", _RECURRENCE_RUNNERS)
+def test_recurrence_runners_reject_rank_input_ciphertext_length(
+    runner: Callable[..., object],
+) -> None:
+    problem = _validation_problem()
+
+    with pytest.raises(ValueError, match="rank_input_ciphertexts length must match seq_len"):
+        runner(
+            problem,
+            backend=TrackingBackend(batch_size=2),
+            multiplicative_depth=8,
+            readout_strategy="rank-local",
+            input_mode="server-bx",
+            rank_input_ciphertexts=(object(),),
+        )
+
+
+@pytest.mark.parametrize("runner", _RECURRENCE_RUNNERS)
+def test_recurrence_runners_reject_rank_input_ciphertexts_with_client_update(
+    runner: Callable[..., object],
+) -> None:
+    problem = _validation_problem()
+
+    with pytest.raises(
+        ValueError,
+        match="rank_input_ciphertexts require server-bx or encrypted-dynamic-bc input mode",
+    ):
+        runner(
+            problem,
+            backend=TrackingBackend(batch_size=2),
+            multiplicative_depth=8,
+            readout_strategy="rank-local",
+            input_mode="client-update",
+            rank_input_ciphertexts=(object(), object()),
+        )
+
+
+def test_ciphertext_recurrence_trace_rejects_invalid_output_layout() -> None:
+    problem = _validation_problem()
+
+    with pytest.raises(ValueError, match="unsupported output_layout: dense"):
+        run_static_mimo_recurrence_ciphertexts_with_backend(
+            problem,
+            backend=TrackingBackend(batch_size=2),
+            multiplicative_depth=8,
+            readout_strategy="rank-local",
+            output_layout="dense",
         )
 
 

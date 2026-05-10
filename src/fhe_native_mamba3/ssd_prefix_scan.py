@@ -1,0 +1,468 @@
+"""Plaintext SSD prefix-scan prefill helpers.
+
+This module models the prefix-product and causal-weight tensors needed by an
+SSD prefill lowering while keeping the first slice entirely in plaintext
+PyTorch. The scan metadata is deliberately explicit so a later CKKS backend can
+reuse the same schedule accounting without changing the reference math.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal, Protocol
+
+import torch
+from torch import Tensor
+
+DecayMode = Literal["scalar", "state_rank"]
+ScanAlgorithm = Literal["hillis_steele", "blelloch"]
+ScanPhase = Literal["inclusive", "up_sweep", "down_sweep"]
+
+
+@dataclass(frozen=True)
+class PrefixScanStep:
+    """One logical combine round in a prefix-scan schedule."""
+
+    algorithm: ScanAlgorithm
+    phase: ScanPhase
+    round_index: int
+    stride: int
+    active_items: int
+
+
+@dataclass(frozen=True)
+class PrefixScanMetadata:
+    """Backend-neutral scan schedule metrics."""
+
+    seq_len: int
+    window: int
+    algorithm: ScanAlgorithm
+    scan_depth: int
+    scan_work_items: int
+    steps: tuple[PrefixScanStep, ...]
+
+
+@dataclass(frozen=True)
+class SsdPrefixScanResult:
+    """Plaintext SSD prefix-scan prefill result and schedule metrics."""
+
+    output: Tensor
+    scan_depth: int
+    scan_work_items: int
+    window: int
+    decay_mode: DecayMode
+    algorithm: ScanAlgorithm
+    metadata: PrefixScanMetadata
+
+
+class PrefixScanKernel(Protocol):
+    """Protocol shape for future backend-specific prefix-scan kernels."""
+
+    def prefix_products(
+        self,
+        decay: Tensor,
+        *,
+        seq_len: int,
+        decay_mode: DecayMode,
+        d_state: int | None = None,
+        rank: int | None = None,
+    ) -> Tensor:
+        """Return inclusive prefix products for the provided decay sequence."""
+
+    def causal_weights(
+        self,
+        decay: Tensor,
+        *,
+        seq_len: int,
+        decay_mode: DecayMode,
+        window: int | None = None,
+        d_state: int | None = None,
+        rank: int | None = None,
+    ) -> Tensor:
+        """Return causal weights induced by the provided decay sequence."""
+
+
+class PlaintextPrefixScanKernel:
+    """Plaintext implementation of the prefix-scan kernel protocol."""
+
+    def prefix_products(
+        self,
+        decay: Tensor,
+        *,
+        seq_len: int,
+        decay_mode: DecayMode,
+        d_state: int | None = None,
+        rank: int | None = None,
+    ) -> Tensor:
+        return prefix_decay_products(
+            decay,
+            seq_len=seq_len,
+            decay_mode=decay_mode,
+            d_state=d_state,
+            rank=rank,
+        )
+
+    def causal_weights(
+        self,
+        decay: Tensor,
+        *,
+        seq_len: int,
+        decay_mode: DecayMode,
+        window: int | None = None,
+        d_state: int | None = None,
+        rank: int | None = None,
+    ) -> Tensor:
+        return causal_decay_weights(
+            decay,
+            seq_len=seq_len,
+            decay_mode=decay_mode,
+            window=window,
+            d_state=d_state,
+            rank=rank,
+        )
+
+
+def build_prefix_scan_metadata(
+    *,
+    seq_len: int,
+    window: int | None = None,
+    algorithm: ScanAlgorithm = "hillis_steele",
+) -> PrefixScanMetadata:
+    """Build logical scan depth/work metrics for an effective causal window."""
+
+    effective_window = _effective_window(seq_len=seq_len, window=window)
+    if algorithm == "hillis_steele":
+        steps = _hillis_steele_steps(seq_len=seq_len, window=effective_window)
+    elif algorithm == "blelloch":
+        steps = _blelloch_steps(window=effective_window)
+    else:
+        msg = f"unsupported scan algorithm: {algorithm}"
+        raise ValueError(msg)
+    return PrefixScanMetadata(
+        seq_len=seq_len,
+        window=effective_window,
+        algorithm=algorithm,
+        scan_depth=len(steps),
+        scan_work_items=sum(step.active_items for step in steps),
+        steps=steps,
+    )
+
+
+def prefix_decay_products(
+    decay: Tensor,
+    *,
+    seq_len: int,
+    decay_mode: DecayMode,
+    d_state: int | None = None,
+    rank: int | None = None,
+) -> Tensor:
+    """Return inclusive prefix products for scalar or state-rank decay.
+
+    Scalar decay returns shape ``[seq_len, rank]``. State-rank decay returns
+    shape ``[seq_len, d_state, rank]``. The input decay may be static for the
+    whole sequence or already token-indexed.
+    """
+
+    decay_sequence = _canonical_decay_sequence(
+        decay,
+        seq_len=seq_len,
+        decay_mode=decay_mode,
+        d_state=d_state,
+        rank=rank,
+    )
+    return torch.cumprod(decay_sequence, dim=0)
+
+
+def causal_decay_weights(
+    decay: Tensor,
+    *,
+    seq_len: int,
+    decay_mode: DecayMode,
+    window: int | None = None,
+    d_state: int | None = None,
+    rank: int | None = None,
+) -> Tensor:
+    """Return the causal decay weights used by SSD prefill.
+
+    For token ``t`` and source token ``j``, the weight is the product of decays
+    from ``j + 1`` through ``t``. Sources older than ``window`` are zeroed.
+    """
+
+    effective_window = _effective_window(seq_len=seq_len, window=window)
+    decay_sequence = _canonical_decay_sequence(
+        decay,
+        seq_len=seq_len,
+        decay_mode=decay_mode,
+        d_state=d_state,
+        rank=rank,
+    )
+    if decay_mode == "scalar":
+        return _scalar_causal_weights(decay_sequence, window=effective_window)
+    if decay_mode == "state_rank":
+        return _state_rank_causal_weights(decay_sequence, window=effective_window)
+    msg = f"unsupported decay_mode: {decay_mode}"
+    raise ValueError(msg)
+
+
+def ssd_prefix_scan_prefill(
+    rank_input: Tensor,
+    b_terms: Tensor,
+    c_terms: Tensor,
+    decay: Tensor,
+    *,
+    decay_mode: DecayMode,
+    window: int | None = None,
+    algorithm: ScanAlgorithm = "hillis_steele",
+) -> SsdPrefixScanResult:
+    """Evaluate static SSD prefill using plaintext prefix-scan weights."""
+
+    _, seq_len, rank = _validate_prefill_inputs(rank_input, b_terms, c_terms)
+    metadata = build_prefix_scan_metadata(
+        seq_len=seq_len,
+        window=window,
+        algorithm=algorithm,
+    )
+    dtype = torch.promote_types(
+        torch.promote_types(rank_input.dtype, b_terms.dtype),
+        torch.promote_types(c_terms.dtype, decay.dtype),
+    )
+    rank_input = rank_input.to(dtype=dtype)
+    b_terms = b_terms.to(dtype=dtype, device=rank_input.device)
+    c_terms = c_terms.to(dtype=dtype, device=rank_input.device)
+    decay = decay.to(dtype=dtype, device=rank_input.device)
+
+    weights = causal_decay_weights(
+        decay,
+        seq_len=seq_len,
+        decay_mode=decay_mode,
+        window=metadata.window,
+        d_state=b_terms.shape[0],
+        rank=rank,
+    )
+    bc_gain = b_terms * c_terms
+    if decay_mode == "scalar":
+        output = torch.einsum("bjr,tjr,r->btr", rank_input, weights, bc_gain.sum(dim=0))
+    elif decay_mode == "state_rank":
+        output = torch.einsum("bjr,tjnr,nr->btr", rank_input, weights, bc_gain)
+    else:
+        msg = f"unsupported decay_mode: {decay_mode}"
+        raise ValueError(msg)
+
+    return SsdPrefixScanResult(
+        output=output,
+        scan_depth=metadata.scan_depth,
+        scan_work_items=metadata.scan_work_items,
+        window=metadata.window,
+        decay_mode=decay_mode,
+        algorithm=algorithm,
+        metadata=metadata,
+    )
+
+
+def ssd_prefix_scan(
+    rank_input: Tensor,
+    b_terms: Tensor,
+    c_terms: Tensor,
+    decay: Tensor,
+    *,
+    decay_mode: DecayMode,
+    window: int | None = None,
+    algorithm: ScanAlgorithm = "hillis_steele",
+) -> SsdPrefixScanResult:
+    """Alias for :func:`ssd_prefix_scan_prefill`."""
+
+    return ssd_prefix_scan_prefill(
+        rank_input,
+        b_terms,
+        c_terms,
+        decay,
+        decay_mode=decay_mode,
+        window=window,
+        algorithm=algorithm,
+    )
+
+
+def _validate_prefill_inputs(
+    rank_input: Tensor,
+    b_terms: Tensor,
+    c_terms: Tensor,
+) -> tuple[int, int, int]:
+    if rank_input.ndim != 3:
+        msg = "rank_input must have shape [batch, seq_len, rank]"
+        raise ValueError(msg)
+    if not torch.is_floating_point(rank_input):
+        msg = "rank_input must be a floating-point tensor"
+        raise ValueError(msg)
+    if rank_input.shape[1] <= 0:
+        msg = "rank_input sequence length must be positive"
+        raise ValueError(msg)
+    if b_terms.ndim != 2 or c_terms.ndim != 2:
+        msg = "b_terms and c_terms must have shape [d_state, rank]"
+        raise ValueError(msg)
+    if b_terms.shape != c_terms.shape:
+        msg = "b_terms and c_terms must have identical shape"
+        raise ValueError(msg)
+    if b_terms.shape[0] <= 0:
+        msg = "b_terms/c_terms d_state dimension must be positive"
+        raise ValueError(msg)
+    if rank_input.shape[2] != b_terms.shape[1]:
+        msg = "rank_input rank dimension must match b_terms/c_terms"
+        raise ValueError(msg)
+    return rank_input.shape
+
+
+def _canonical_decay_sequence(
+    decay: Tensor,
+    *,
+    seq_len: int,
+    decay_mode: DecayMode,
+    d_state: int | None,
+    rank: int | None,
+) -> Tensor:
+    if seq_len <= 0:
+        msg = "seq_len must be positive"
+        raise ValueError(msg)
+    rank = _resolve_rank(decay, rank)
+    if decay_mode == "scalar":
+        if decay.numel() == rank:
+            return decay.reshape(1, rank).expand(seq_len, rank)
+        if decay.numel() == seq_len * rank:
+            return decay.reshape(seq_len, rank)
+        msg = f"scalar decay must contain {rank} or {seq_len * rank} values"
+        raise ValueError(msg)
+    if decay_mode == "state_rank":
+        d_state = _resolve_d_state(decay, d_state)
+        if decay.numel() == d_state * rank:
+            return decay.reshape(1, d_state, rank).expand(seq_len, d_state, rank)
+        if decay.numel() == seq_len * d_state * rank:
+            return decay.reshape(seq_len, d_state, rank)
+        msg = f"state_rank decay must contain {d_state * rank} or {seq_len * d_state * rank} values"
+        raise ValueError(msg)
+    msg = f"unsupported decay_mode: {decay_mode}"
+    raise ValueError(msg)
+
+
+def _resolve_rank(decay: Tensor, rank: int | None) -> int:
+    if rank is not None:
+        if rank <= 0:
+            msg = "rank must be positive"
+            raise ValueError(msg)
+        return rank
+    if decay.ndim == 0 or decay.shape[-1] <= 0:
+        msg = "rank must be provided when decay has no trailing rank dimension"
+        raise ValueError(msg)
+    return int(decay.shape[-1])
+
+
+def _resolve_d_state(decay: Tensor, d_state: int | None) -> int:
+    if d_state is not None:
+        if d_state <= 0:
+            msg = "d_state must be positive"
+            raise ValueError(msg)
+        return d_state
+    if decay.ndim < 2 or decay.shape[-2] <= 0:
+        msg = "d_state must be provided for state_rank decay"
+        raise ValueError(msg)
+    return int(decay.shape[-2])
+
+
+def _effective_window(*, seq_len: int, window: int | None) -> int:
+    if seq_len <= 0:
+        msg = "seq_len must be positive"
+        raise ValueError(msg)
+    if window is not None and window <= 0:
+        msg = "window must be positive when provided"
+        raise ValueError(msg)
+    return min(window or seq_len, seq_len)
+
+
+def _hillis_steele_steps(*, seq_len: int, window: int) -> tuple[PrefixScanStep, ...]:
+    steps: list[PrefixScanStep] = []
+    stride = 1
+    round_index = 0
+    while stride < window:
+        steps.append(
+            PrefixScanStep(
+                algorithm="hillis_steele",
+                phase="inclusive",
+                round_index=round_index,
+                stride=stride,
+                active_items=max(seq_len - stride, 0),
+            )
+        )
+        stride *= 2
+        round_index += 1
+    return tuple(steps)
+
+
+def _blelloch_steps(*, window: int) -> tuple[PrefixScanStep, ...]:
+    if window <= 1:
+        return ()
+    padded_window = 1 << (window - 1).bit_length()
+    strides = tuple(2**idx for idx in range((padded_window - 1).bit_length()))
+    up_sweep = tuple(
+        PrefixScanStep(
+            algorithm="blelloch",
+            phase="up_sweep",
+            round_index=round_index,
+            stride=stride,
+            active_items=padded_window // (2 * stride),
+        )
+        for round_index, stride in enumerate(strides)
+    )
+    down_sweep = tuple(
+        PrefixScanStep(
+            algorithm="blelloch",
+            phase="down_sweep",
+            round_index=round_index,
+            stride=stride,
+            active_items=padded_window // (2 * stride),
+        )
+        for round_index, stride in enumerate(reversed(strides))
+    )
+    return up_sweep + down_sweep
+
+
+def _scalar_causal_weights(decay_sequence: Tensor, *, window: int) -> Tensor:
+    seq_len, rank = decay_sequence.shape
+    weights = decay_sequence.new_zeros((seq_len, seq_len, rank))
+    one = torch.ones(rank, dtype=decay_sequence.dtype, device=decay_sequence.device)
+    for target_index in range(seq_len):
+        running = one
+        weights[target_index, target_index] = running
+        start_index = max(0, target_index - window + 1)
+        for source_index in range(target_index - 1, start_index - 1, -1):
+            running = running * decay_sequence[source_index + 1]
+            weights[target_index, source_index] = running
+    return weights
+
+
+def _state_rank_causal_weights(decay_sequence: Tensor, *, window: int) -> Tensor:
+    seq_len, d_state, rank = decay_sequence.shape
+    weights = decay_sequence.new_zeros((seq_len, seq_len, d_state, rank))
+    one = torch.ones(d_state, rank, dtype=decay_sequence.dtype, device=decay_sequence.device)
+    for target_index in range(seq_len):
+        running = one
+        weights[target_index, target_index] = running
+        start_index = max(0, target_index - window + 1)
+        for source_index in range(target_index - 1, start_index - 1, -1):
+            running = running * decay_sequence[source_index + 1]
+            weights[target_index, source_index] = running
+    return weights
+
+
+__all__ = [
+    "DecayMode",
+    "PlaintextPrefixScanKernel",
+    "PrefixScanKernel",
+    "PrefixScanMetadata",
+    "PrefixScanStep",
+    "ScanAlgorithm",
+    "ScanPhase",
+    "SsdPrefixScanResult",
+    "build_prefix_scan_metadata",
+    "causal_decay_weights",
+    "prefix_decay_products",
+    "ssd_prefix_scan",
+    "ssd_prefix_scan_prefill",
+]

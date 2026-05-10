@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.66"
+__version__ = "0.2.67"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -55,6 +55,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.range_calibration",
         "RangeScalePlan",
     ),
+    "SsdPrefixScanResult": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "SsdPrefixScanResult",
+    ),
     "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
     "FheCostEstimate": ("fhe_native_mamba3.cost", "FheCostEstimate"),
@@ -98,6 +102,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.rotation_inventory",
         "build_rotation_inventory",
     ),
+    "build_prefix_scan_metadata": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "build_prefix_scan_metadata",
+    ),
     "build_mamba_source_recurrence_problem": (
         "fhe_native_mamba3.mamba_reference",
         "build_mamba_source_recurrence_problem",
@@ -105,6 +113,10 @@ _LAZY_IMPORTS = {
     "calibrate_weight_values": (
         "fhe_native_mamba3.weight_encoding",
         "calibrate_weight_values",
+    ),
+    "causal_decay_weights": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "causal_decay_weights",
     ),
     "compare_mamba_layer_reference": (
         "fhe_native_mamba3.mamba_reference",
@@ -139,10 +151,26 @@ _LAZY_IMPORTS = {
         "ckks_ring_dimension_for_batch_size",
     ),
     "client_side_argmax": ("fhe_native_mamba3.decoding", "client_side_argmax"),
+    "client_side_decode_scores": (
+        "fhe_native_mamba3.decoding",
+        "client_side_decode_scores",
+    ),
+    "client_side_decode_ciphertext": (
+        "fhe_native_mamba3.decoding",
+        "client_side_decode_ciphertext",
+    ),
     "decoding_policies": ("fhe_native_mamba3.decoding", "decoding_policies"),
     "draft_mapping_rules": ("fhe_native_mamba3.state_dict_mapping", "draft_mapping_rules"),
     "estimate_block_cost": ("fhe_native_mamba3.cost", "estimate_block_cost"),
     "estimate_integrated_cost": ("fhe_native_mamba3.cost", "estimate_integrated_cost"),
+    "estimate_cumulative_log_contraction": (
+        "fhe_native_mamba3.profiling",
+        "estimate_cumulative_log_contraction",
+    ),
+    "estimate_high_decay_burst_len": (
+        "fhe_native_mamba3.profiling",
+        "estimate_high_decay_burst_len",
+    ),
     "estimate_recurrence_depth": (
         "fhe_native_mamba3.recurrence_depth",
         "estimate_recurrence_depth",
@@ -176,6 +204,11 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "plaintext_recurrence_trace",
     ),
+    "prefix_decay_products": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "prefix_decay_products",
+    ),
+    "profile_model_batch": ("fhe_native_mamba3.profiling", "profile_model_batch"),
     "plan_mamba_checkpoint": (
         "fhe_native_mamba3.mamba_checkpoint",
         "plan_mamba_checkpoint",
@@ -195,6 +228,11 @@ _LAZY_IMPORTS = {
     "scale_recurrence_state_and_output": (
         "fhe_native_mamba3.openfhe_backend",
         "scale_recurrence_state_and_output",
+    ),
+    "ssd_prefix_scan": ("fhe_native_mamba3.ssd_prefix_scan", "ssd_prefix_scan"),
+    "ssd_prefix_scan_prefill": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "ssd_prefix_scan_prefill",
     ),
     "run_stage0_mimo": ("fhe_native_mamba3.benchmarks.stage0_mimo", "run_stage0_mimo"),
     "run_stage0_sweep": ("fhe_native_mamba3.benchmarks.stage0_sweep", "run_stage0_sweep"),
@@ -243,6 +281,7 @@ __all__ = [
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
     "PackingPlan",
+    "SsdPrefixScanResult",
     "Stage0MimoConfig",
     "Stage0SweepConfig",
     "StateDictMappingDraft",
@@ -257,6 +296,7 @@ __all__ = [
     "adapt_mamba_state_dict_to_model",
     "backend_capability_matrix",
     "build_mamba_source_recurrence_problem",
+    "build_prefix_scan_metadata",
     "build_recurrence_bootstrap_plan",
     "build_rotation_inventory",
     "build_stage0_status_report",
@@ -264,14 +304,19 @@ __all__ = [
     "build_weight_bundle_recurrence_problem",
     "calibrate_weight_tensor",
     "calibrate_weight_values",
+    "causal_decay_weights",
     "ckks_batch_size_for_slots",
     "ckks_ring_dimension_for_batch_size",
     "client_side_argmax",
+    "client_side_decode_ciphertext",
+    "client_side_decode_scores",
     "compare_mamba_layer_reference",
     "compare_mamba_source_delta",
     "decoding_policies",
     "draft_mapping_rules",
     "estimate_block_cost",
+    "estimate_cumulative_log_contraction",
+    "estimate_high_decay_burst_len",
     "estimate_integrated_cost",
     "estimate_recurrence_depth",
     "estimate_recurrence_stack_latency",
@@ -285,6 +330,8 @@ __all__ = [
     "plaintext_recurrence_trace",
     "plaintext_static_recurrence",
     "plan_mamba_checkpoint",
+    "prefix_decay_products",
+    "profile_model_batch",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
@@ -296,6 +343,8 @@ __all__ = [
     "save_weight_bundle_from_mapped_checkpoint",
     "scale_recurrence_state",
     "scale_recurrence_state_and_output",
+    "ssd_prefix_scan",
+    "ssd_prefix_scan_prefill",
 ]
 
 

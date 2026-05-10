@@ -1961,7 +1961,7 @@ def weight_bundle_eval_cmd(args: argparse.Namespace) -> int:
 def weight_bundle_generate_cmd(args: argparse.Namespace) -> int:
     import torch
 
-    from fhe_native_mamba3.decoding import client_side_argmax
+    from fhe_native_mamba3.decoding import client_side_decode_scores
     from fhe_native_mamba3.weight_bundle import load_weight_bundle_model
 
     prompt = list(_parse_int_list(args.prompt))
@@ -1986,22 +1986,28 @@ def weight_bundle_generate_cmd(args: argparse.Namespace) -> int:
         raise ValueError(msg)
 
     generated = list(prompt)
+    decode_steps = []
     started = time.perf_counter()
     with torch.inference_mode():
         for _ in range(args.steps):
             input_ids = torch.tensor([generated], dtype=torch.long, device=device)
             logits = model(input_ids)["logits"][0, -1].detach().cpu().tolist()
-            generated.append(client_side_argmax(logits))
+            decode_result = client_side_decode_scores(logits)
+            generated.append(decode_result.selected_token)
+            decode_steps.append(decode_result.to_json_dict())
     elapsed = time.perf_counter() - started
     payload = {
         "version": __version__,
         "bundle_dir": args.bundle_dir,
         "device": str(device),
         "decoding_mode": "client-side-argmax",
+        "client_decrypt_count": sum(step["client_decrypt_count"] for step in decode_steps),
+        "output_payload_width": model.config.vocab_size,
         "weight_bundle": manifest.to_json_dict(),
         "prompt_token_ids": prompt,
         "new_token_ids": generated[len(prompt) :],
         "generated_token_ids": generated,
+        "decode_steps": decode_steps,
         "elapsed_sec": round(elapsed, 6),
         "tokens_per_sec": round(args.steps / elapsed, 3) if elapsed > 0 else 0.0,
     }

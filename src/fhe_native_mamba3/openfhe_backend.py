@@ -100,6 +100,14 @@ class OpenFheRecurrenceCiphertextTrace:
     bootstrap_after_tokens: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class _RecurrenceRunPlan:
+    d_state: int
+    rank: int
+    slots: int
+    bootstrap_tokens: frozenset[int]
+
+
 def make_demo_problem(
     *,
     seq_len: int = 3,
@@ -301,6 +309,88 @@ def _validate_token_matrices(
         if bad_rows:
             msg = f"each {name}[{token_index}] row must match mimo_rank={rank}"
             raise ValueError(msg)
+
+
+def _prepare_recurrence_run_plan(
+    problem: OpenFheRecurrenceProblem,
+    *,
+    backend: FHEBackend,
+    input_mode: str,
+    bootstrap_every_tokens: int,
+    bootstrap_after_tokens: tuple[int, ...],
+    rank_input_ciphertexts: tuple[Any, ...] | None,
+    output_layout: str,
+) -> _RecurrenceRunPlan:
+    d_state = problem.d_state
+    rank = problem.mimo_rank
+    slots = d_state * rank
+    bootstrap_tokens = _resolve_bootstrap_after_tokens(
+        seq_len=problem.seq_len,
+        every=bootstrap_every_tokens,
+        explicit=bootstrap_after_tokens,
+    )
+    if input_mode not in {"server-bx", "client-update", "encrypted-dynamic-bc"}:
+        msg = f"unsupported input_mode: {input_mode}"
+        raise ValueError(msg)
+    if output_layout not in {"readout", "expanded-rank-input"}:
+        msg = f"unsupported output_layout: {output_layout}"
+        raise ValueError(msg)
+    if rank_input_ciphertexts is not None:
+        if len(rank_input_ciphertexts) != problem.seq_len:
+            msg = "rank_input_ciphertexts length must match seq_len"
+            raise ValueError(msg)
+        if input_mode == "client-update":
+            msg = "rank_input_ciphertexts require server-bx or encrypted-dynamic-bc input mode"
+            raise ValueError(msg)
+    if backend.batch_size < slots:
+        msg = f"backend batch_size={backend.batch_size} is smaller than required slots={slots}"
+        raise ValueError(msg)
+    if problem.d_skip is not None and len(problem.d_skip) != rank:
+        msg = f"d_skip length must match mimo_rank={rank}"
+        raise ValueError(msg)
+    if problem.decay_by_token is not None:
+        if len(problem.decay_by_token) != problem.seq_len:
+            msg = "decay_by_token length must match seq_len"
+            raise ValueError(msg)
+        bad_rows = [len(row) for row in problem.decay_by_token if len(row) != rank]
+        if bad_rows:
+            msg = f"each decay_by_token row must match mimo_rank={rank}"
+            raise ValueError(msg)
+    if problem.decay_state_by_token is not None:
+        _validate_token_matrices(
+            problem.decay_state_by_token,
+            seq_len=problem.seq_len,
+            d_state=d_state,
+            rank=rank,
+            name="decay_state_by_token",
+        )
+    if problem.b_by_token is not None:
+        _validate_token_matrices(
+            problem.b_by_token,
+            seq_len=problem.seq_len,
+            d_state=d_state,
+            rank=rank,
+            name="b_by_token",
+        )
+    if problem.c_by_token is not None:
+        _validate_token_matrices(
+            problem.c_by_token,
+            seq_len=problem.seq_len,
+            d_state=d_state,
+            rank=rank,
+            name="c_by_token",
+        )
+    if input_mode == "encrypted-dynamic-bc" and (
+        problem.b_by_token is None or problem.c_by_token is None
+    ):
+        msg = "encrypted-dynamic-bc input mode requires b_by_token and c_by_token"
+        raise ValueError(msg)
+    return _RecurrenceRunPlan(
+        d_state=d_state,
+        rank=rank,
+        slots=slots,
+        bootstrap_tokens=frozenset(bootstrap_tokens),
+    )
 
 
 def _d_skip_output_vector(
@@ -554,70 +644,19 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
 ) -> OpenFheRecurrenceCiphertextTrace:
     """Evaluate recurrence and return ciphertext outputs without decrypting."""
 
-    d_state = problem.d_state
-    rank = problem.mimo_rank
-    slots = d_state * rank
-    bootstrap_tokens = _resolve_bootstrap_after_tokens(
-        seq_len=problem.seq_len,
-        every=bootstrap_every_tokens,
-        explicit=bootstrap_after_tokens,
+    plan = _prepare_recurrence_run_plan(
+        problem,
+        backend=backend,
+        input_mode=input_mode,
+        bootstrap_every_tokens=bootstrap_every_tokens,
+        bootstrap_after_tokens=bootstrap_after_tokens,
+        rank_input_ciphertexts=rank_input_ciphertexts,
+        output_layout=output_layout,
     )
-    if input_mode not in {"server-bx", "client-update", "encrypted-dynamic-bc"}:
-        msg = f"unsupported input_mode: {input_mode}"
-        raise ValueError(msg)
-    if output_layout not in {"readout", "expanded-rank-input"}:
-        msg = f"unsupported output_layout: {output_layout}"
-        raise ValueError(msg)
-    if rank_input_ciphertexts is not None:
-        if len(rank_input_ciphertexts) != problem.seq_len:
-            msg = "rank_input_ciphertexts length must match seq_len"
-            raise ValueError(msg)
-        if input_mode == "client-update":
-            msg = "rank_input_ciphertexts require server-bx or encrypted-dynamic-bc input mode"
-            raise ValueError(msg)
-    if backend.batch_size < slots:
-        msg = f"backend batch_size={backend.batch_size} is smaller than required slots={slots}"
-        raise ValueError(msg)
-    if problem.d_skip is not None and len(problem.d_skip) != rank:
-        msg = f"d_skip length must match mimo_rank={rank}"
-        raise ValueError(msg)
-    if problem.decay_by_token is not None:
-        if len(problem.decay_by_token) != problem.seq_len:
-            msg = "decay_by_token length must match seq_len"
-            raise ValueError(msg)
-        bad_rows = [len(row) for row in problem.decay_by_token if len(row) != rank]
-        if bad_rows:
-            msg = f"each decay_by_token row must match mimo_rank={rank}"
-            raise ValueError(msg)
-    if problem.decay_state_by_token is not None:
-        _validate_token_matrices(
-            problem.decay_state_by_token,
-            seq_len=problem.seq_len,
-            d_state=d_state,
-            rank=rank,
-            name="decay_state_by_token",
-        )
-    if problem.b_by_token is not None:
-        _validate_token_matrices(
-            problem.b_by_token,
-            seq_len=problem.seq_len,
-            d_state=d_state,
-            rank=rank,
-            name="b_by_token",
-        )
-    if problem.c_by_token is not None:
-        _validate_token_matrices(
-            problem.c_by_token,
-            seq_len=problem.seq_len,
-            d_state=d_state,
-            rank=rank,
-            name="c_by_token",
-        )
-    if input_mode == "encrypted-dynamic-bc" and (
-        problem.b_by_token is None or problem.c_by_token is None
-    ):
-        msg = "encrypted-dynamic-bc input mode requires b_by_token and c_by_token"
-        raise ValueError(msg)
+    d_state = plan.d_state
+    rank = plan.rank
+    slots = plan.slots
+    bootstrap_tokens = plan.bootstrap_tokens
 
     started = time.perf_counter()
     state_ct = backend.encrypt([0.0] * backend.batch_size)

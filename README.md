@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.66`. Future changes should bump
+The project is currently at SemVer `0.2.67`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -273,6 +273,12 @@ scripts/run_ciphertext_handoff_smoke.py \
   --bootstrap-after-layers 2,4
 ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,RUN_NAME=openfhe-ciphertext-handoff-v064,WIDTH=8,LAYERS=4 slurm/openfhe_ciphertext_handoff.sbatch'
 ```
+
+For the OpenFHE backend, keep `WIDTH` a power of two for this smoke. The
+handoff kernel uses cyclic diagonal rotations over the whole CKKS batch, while
+OpenFHE rounds batch sizes up to a power of two. Non-power-of-two widths need a
+masked padding design before they are safe; the smoke fails early instead of
+building an expensive context with a mismatched layout.
 
 Build a compact Stage 0 status report from the latest measured artifacts:
 

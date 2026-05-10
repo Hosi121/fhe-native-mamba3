@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from fhe_native_mamba3.backends.capabilities import backend_capability_matrix
-from fhe_native_mamba3.decoding import client_side_argmax, get_decoding_policy
+from fhe_native_mamba3.backends.tracking import TrackingBackend
+from fhe_native_mamba3.decoding import (
+    client_side_argmax,
+    client_side_decode_ciphertext,
+    client_side_decode_scores,
+    get_decoding_policy,
+)
 from fhe_native_mamba3.rotation_inventory import build_rotation_inventory
 from fhe_native_mamba3.weight_encoding import (
     WeightEncodingConfig,
@@ -37,6 +43,35 @@ def test_decoding_policy_defaults_to_client_side_generation() -> None:
     assert policy.interactive is True
     assert policy.encrypted_argmax is False
     assert client_side_argmax([0.1, 0.9, -1.0]) == 1
+
+
+def test_client_side_decode_scores_reports_boundary_metadata() -> None:
+    result = client_side_decode_scores([0.1, 0.9, -1.0, 0.7])
+
+    assert result.decoding_mode == "client-side-argmax"
+    assert result.selected_token == 1
+    assert result.output_payload_width == 4
+    assert result.client_decrypt_count == 1
+    assert result.top1_score == 0.9
+    assert result.top2_score == 0.7
+    assert round(result.top1_top2_gap or 0.0, 6) == 0.2
+    assert result.scores_abs_max == 1.0
+    assert result.to_json_dict()["selected_token"] == 1
+
+
+def test_client_side_decode_ciphertext_decrypts_once_at_client_boundary() -> None:
+    backend = TrackingBackend(batch_size=4)
+    encrypted_scores = backend.encrypt([0.1, 0.9, -1.0, 0.7])
+
+    result = client_side_decode_ciphertext(
+        backend,
+        encrypted_scores,
+        output_payload_width=4,
+    )
+
+    assert result.selected_token == 1
+    assert result.client_decrypt_count == 1
+    assert backend.stats().decrypt_count == 1
 
 
 def test_weight_calibration_rescales_large_fp32_weights() -> None:
