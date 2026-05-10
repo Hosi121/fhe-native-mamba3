@@ -14,6 +14,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     all_layer_openfhe_slurm = ROOT / "slurm" / "openfhe_all_layer_recurrence.sbatch"
     full_layer_gate_slurm = ROOT / "slurm" / "mamba_checkpoint_full_layer_gate.sbatch"
     full_layer_sweep_slurm = ROOT / "slurm" / "mamba_checkpoint_full_layer_sweep.sbatch"
+    visible_projection_sweep_slurm = (
+        ROOT / "slurm" / "mamba_checkpoint_visible_projection_sweep.sbatch"
+    )
     handoff_openfhe_slurm = ROOT / "slurm" / "openfhe_ciphertext_handoff.sbatch"
     recurrence_chain_openfhe_slurm = ROOT / "slurm" / "openfhe_recurrence_chain.sbatch"
 
@@ -27,6 +30,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert all_layer_openfhe_slurm.exists()
     assert full_layer_gate_slurm.exists()
     assert full_layer_sweep_slurm.exists()
+    assert visible_projection_sweep_slurm.exists()
     assert handoff_openfhe_slurm.exists()
     assert recurrence_chain_openfhe_slurm.exists()
 
@@ -92,6 +96,11 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "LAYER_COUNT" in full_layer_sweep_text
     assert "VISIBLE_DIM_LIMIT" in full_layer_sweep_text
     assert "full-layer sweep" in full_layer_sweep_text
+
+    visible_projection_sweep_text = visible_projection_sweep_slurm.read_text()
+    assert "run_checkpoint_visible_projection_sweep.py" in visible_projection_sweep_text
+    assert "VISIBLE_DIM_LIMITS" in visible_projection_sweep_text
+    assert "MAX_ROTATION_KEYS" in visible_projection_sweep_text
 
     handoff_openfhe_text = handoff_openfhe_slurm.read_text()
     assert "run_ciphertext_handoff_smoke.py" in handoff_openfhe_text

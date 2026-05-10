@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.75"
+__version__ = "0.2.76"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -39,6 +39,14 @@ _LAZY_IMPORTS = {
     "CheckpointFullLayerSweepResult": (
         "fhe_native_mamba3.checkpoint_full_layer_sweep",
         "CheckpointFullLayerSweepResult",
+    ),
+    "CheckpointVisibleProjectionSweepResult": (
+        "fhe_native_mamba3.checkpoint_visible_projection_sweep",
+        "CheckpointVisibleProjectionSweepResult",
+    ),
+    "CheckpointVisibleProjectionSweepRow": (
+        "fhe_native_mamba3.checkpoint_visible_projection_sweep",
+        "CheckpointVisibleProjectionSweepRow",
     ),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
     "CiphertextHandoffLayer": (
@@ -303,6 +311,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_full_layer_sweep",
         "run_checkpoint_full_layer_ciphertext_sweep",
     ),
+    "run_checkpoint_visible_projection_sweep": (
+        "fhe_native_mamba3.checkpoint_visible_projection_sweep",
+        "run_checkpoint_visible_projection_sweep",
+    ),
     "required_full_layer_visible_rotations": (
         "fhe_native_mamba3.checkpoint_correctness",
         "required_full_layer_visible_rotations",
@@ -368,6 +380,8 @@ __all__ = [
     "CheckpointInspection",
     "CheckpointRecurrenceCorrectnessGate",
     "CheckpointTensorSpec",
+    "CheckpointVisibleProjectionSweepResult",
+    "CheckpointVisibleProjectionSweepRow",
     "CiphertextHandoffLayer",
     "CiphertextHandoffResult",
     "CkksConfig",
@@ -461,6 +475,7 @@ __all__ = [
     "run_checkpoint_full_layer_ciphertext_gate",
     "run_checkpoint_full_layer_ciphertext_sweep",
     "run_checkpoint_recurrence_correctness_gate",
+    "run_checkpoint_visible_projection_sweep",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
