@@ -41,6 +41,7 @@ class FheMamba3Config:
     dropout: float = 0.0
     fixed_scale_norm: bool = True
     pad_token_id: int = 0
+    conv_kernel_size: int = 4
 
     def __post_init__(self) -> None:
         if self.d_model <= 0:
@@ -69,6 +70,9 @@ class FheMamba3Config:
             raise ValueError(msg)
         if self.effective_window is not None and self.effective_window <= 0:
             msg = "effective_window must be positive when set"
+            raise ValueError(msg)
+        if self.conv_kernel_size <= 0:
+            msg = "conv_kernel_size must be positive"
             raise ValueError(msg)
 
 
@@ -126,6 +130,8 @@ class FheMamba3Block(nn.Module):
         self.config = config
         self.in_norm = FixedScaleNorm(config.d_model) if config.fixed_scale_norm else nn.Identity()
         self.in_rank = nn.Linear(config.d_model, config.mimo_rank)
+        self.conv1d_weight = nn.Parameter(torch.empty(config.mimo_rank, config.conv_kernel_size))
+        self.conv1d_bias = nn.Parameter(torch.zeros(config.mimo_rank))
         self.skip = nn.Linear(config.d_model, config.d_model)
         self.out_rank = nn.Linear(config.mimo_rank, config.d_model, bias=False)
         self.d_skip = nn.Parameter(torch.ones(config.mimo_rank))
@@ -153,6 +159,10 @@ class FheMamba3Block(nn.Module):
     def reset_parameters(self) -> None:
         nn.init.xavier_uniform_(self.in_rank.weight)
         nn.init.zeros_(self.in_rank.bias)
+        nn.init.zeros_(self.conv1d_weight)
+        with torch.no_grad():
+            self.conv1d_weight[:, -1] = 1.0
+        nn.init.zeros_(self.conv1d_bias)
         nn.init.xavier_uniform_(self.skip.weight)
         nn.init.zeros_(self.skip.bias)
         nn.init.xavier_uniform_(self.out_rank.weight)
@@ -166,6 +176,21 @@ class FheMamba3Block(nn.Module):
         if self.config.decay_mode == "scalar":
             return decay.view(1, 1, self.config.mimo_rank)
         return decay.unsqueeze(0)
+
+    def _causal_rank_conv(self, rank_input: Tensor) -> Tensor:
+        """Depthwise causal convolution over the projected rank channels."""
+
+        weight = self.conv1d_weight.to(dtype=rank_input.dtype, device=rank_input.device)
+        bias = self.conv1d_bias.to(dtype=rank_input.dtype, device=rank_input.device)
+        transposed = rank_input.transpose(1, 2)
+        padded = functional.pad(transposed, (self.config.conv_kernel_size - 1, 0))
+        convolved = functional.conv1d(
+            padded,
+            weight.view(self.config.mimo_rank, 1, self.config.conv_kernel_size),
+            bias=bias,
+            groups=self.config.mimo_rank,
+        )
+        return convolved.transpose(1, 2)
 
     def _forward_static_windowed(
         self,
@@ -214,7 +239,7 @@ class FheMamba3Block(nn.Module):
         batch, seq_len, _ = x.shape
         residual = x
         x = self.in_norm(x)
-        rank_input = self.in_rank(x)
+        rank_input = self._causal_rank_conv(self.in_rank(x))
         decay = self._decay(dtype=x.dtype, device=x.device)
         state = x.new_zeros(batch, self.config.d_state, self.config.mimo_rank)
         outputs: list[Tensor] = []

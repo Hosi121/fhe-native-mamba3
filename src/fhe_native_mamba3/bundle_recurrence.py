@@ -76,7 +76,8 @@ def build_weight_bundle_recurrence_problem(
         if block.b_static is None or block.c_static is None:
             msg = "selected block does not contain static B/C parameters"
             raise ValueError(msg)
-        rank_input = block.in_rank(block.in_norm(x))[0].detach().cpu()
+        x_norm = block.in_norm(x)
+        rank_input = block._causal_rank_conv(block.in_rank(x_norm))[0].detach().cpu()
         decay = block._decay(dtype=rank_input.dtype, device=rank_input.device).view(-1)
         b_static = block.b_static.detach().cpu()
         c_static = block.c_static.detach().cpu()

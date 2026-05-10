@@ -358,6 +358,28 @@ def _adapt_layer(
         )
     block.in_rank.bias.zero_()
     statuses.append(_initialized_status(f"blocks.{layer_index}.in_rank.bias", block.in_rank.bias))
+    if conv1d_weight_key is not None:
+        _copy_exact_or_fit(
+            block.conv1d_weight,
+            _conv1d_weight_source(source_state_dict[conv1d_weight_key]),
+            target=f"blocks.{layer_index}.conv1d_weight",
+            source=conv1d_weight_key,
+            statuses=statuses,
+        )
+    else:
+        statuses.append(
+            _initialized_status(f"blocks.{layer_index}.conv1d_weight", block.conv1d_weight)
+        )
+    if conv1d_bias_key is not None:
+        _copy_exact_or_fit(
+            block.conv1d_bias,
+            source_state_dict[conv1d_bias_key],
+            target=f"blocks.{layer_index}.conv1d_bias",
+            source=conv1d_bias_key,
+            statuses=statuses,
+        )
+    else:
+        statuses.append(_initialized_status(f"blocks.{layer_index}.conv1d_bias", block.conv1d_bias))
 
     if out_proj_key is not None:
         _copy_exact_or_fit(
@@ -430,8 +452,6 @@ def _adapt_layer(
     for key, target_name in (
         (dt_proj_weight_key, "dt_proj.weight"),
         (dt_proj_bias_key, "dt_proj.bias"),
-        (conv1d_weight_key, "conv1d.weight"),
-        (conv1d_bias_key, "conv1d.bias"),
     ):
         if key is not None:
             statuses.append(
@@ -477,6 +497,13 @@ def _decay_logits_from_a_log(a_log: torch.Tensor, *, target_rank: int) -> torch.
     fitted = _fit_tensor(raw, (target_rank,))
     decay = torch.exp(-torch.exp(fitted)).clamp(min=1e-4, max=1 - 1e-4)
     return torch.log(decay / (1 - decay))
+
+
+def _conv1d_weight_source(source: torch.Tensor) -> torch.Tensor:
+    raw = source.detach().float().cpu()
+    if raw.ndim == 3 and raw.shape[1] == 1:
+        return raw[:, 0, :]
+    return raw
 
 
 def _copy_exact_or_fit(

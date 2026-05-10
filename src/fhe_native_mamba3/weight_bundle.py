@@ -231,7 +231,7 @@ def _migrate_state_dict_for_model(
     model_state = model.state_dict()
     migrated = dict(state_dict)
     for name, tensor in model_state.items():
-        if name.endswith(".d_skip") and name not in migrated:
+        if name.endswith((".conv1d_weight", ".conv1d_bias", ".d_skip")) and name not in migrated:
             migrated[name] = tensor.detach().clone()
     return migrated
 

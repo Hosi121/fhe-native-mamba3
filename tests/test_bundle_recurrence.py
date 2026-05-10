@@ -23,6 +23,11 @@ def test_weight_bundle_recurrence_problem_uses_saved_static_weights(tmp_path) ->
         decay_mode="scalar",
     )
     model = FheMamba3ForCausalLM(config)
+    with torch.no_grad():
+        model.blocks[0].conv1d_weight.zero_()
+        model.blocks[0].conv1d_weight[:, -1] = torch.tensor([1.0, 2.0, 3.0])
+        model.blocks[0].conv1d_weight[:, -2] = torch.tensor([0.25, -0.5, 0.75])
+        model.blocks[0].conv1d_bias.copy_(torch.tensor([0.1, -0.2, 0.3]))
     save_weight_bundle(model, tmp_path)
 
     extracted = build_weight_bundle_recurrence_problem(
@@ -42,6 +47,12 @@ def test_weight_bundle_recurrence_problem_uses_saved_static_weights(tmp_path) ->
     assert extracted.problem.d_skip == tuple(
         float(value) for value in model.blocks[0].d_skip.tolist()
     )
+    input_ids = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
+    with torch.inference_mode():
+        x = model.embed(input_ids) + model.pos[:4].unsqueeze(0)
+        raw_rank_input = model.blocks[0].in_rank(model.blocks[0].in_norm(x))
+        expected_rank_input = model.blocks[0]._causal_rank_conv(raw_rank_input)[0]
+    assert torch.allclose(torch.tensor(extracted.problem.rank_inputs), expected_rank_input)
 
     result = run_static_mimo_recurrence_with_backend(
         extracted.problem,
