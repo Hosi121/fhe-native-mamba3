@@ -29,6 +29,34 @@ CiphertextTraceOutputLayout = Literal["readout", "expanded-rank-input"]
 
 
 @dataclass(frozen=True)
+class CiphertextLayoutContract:
+    """Slot-layout metadata attached to ciphertext trace outputs."""
+
+    output_layout: CiphertextTraceOutputLayout
+    d_state: int
+    mimo_rank: int
+    readout_strategy: ReadoutStrategy
+    output_slots: tuple[int, ...]
+    required_rotations: tuple[int, ...]
+
+
+class LayoutBoundCiphertexts(tuple):
+    """Tuple of ciphertexts carrying their slot-layout contract."""
+
+    layout_contract: CiphertextLayoutContract
+
+    def __new__(
+        cls,
+        values: tuple[Any, ...],
+        *,
+        layout_contract: CiphertextLayoutContract,
+    ) -> LayoutBoundCiphertexts:
+        instance = super().__new__(cls, values)
+        instance.layout_contract = layout_contract
+        return instance
+
+
+@dataclass(frozen=True)
 class OpenFheRecurrenceProblem:
     """Plain inputs for an encrypted MIMO recurrence run."""
 
@@ -88,6 +116,8 @@ class OpenFheRecurrenceCiphertextTrace:
 
     output_ciphertexts: tuple[Any, ...]
     output_slots: tuple[int, ...]
+    output_layout: CiphertextTraceOutputLayout
+    layout_contract: CiphertextLayoutContract
     ring_dimension: int
     batch_size: int
     multiplicative_depth: int
@@ -369,6 +399,11 @@ def _prepare_recurrence_run_plan(
         if input_mode == "client-update":
             msg = "rank_input_ciphertexts require server-bx or encrypted-dynamic-bc input mode"
             raise ValueError(msg)
+        _validate_rank_input_ciphertext_contract(
+            rank_input_ciphertexts,
+            d_state=d_state,
+            rank=rank,
+        )
     if backend.batch_size < slots:
         msg = f"backend batch_size={backend.batch_size} is smaller than required slots={slots}"
         raise ValueError(msg)
@@ -418,6 +453,33 @@ def _prepare_recurrence_run_plan(
         slots=slots,
         bootstrap_tokens=frozenset(bootstrap_tokens),
     )
+
+
+def _validate_rank_input_ciphertext_contract(
+    rank_input_ciphertexts: tuple[Any, ...],
+    *,
+    d_state: int,
+    rank: int,
+) -> None:
+    contract = getattr(rank_input_ciphertexts, "layout_contract", None)
+    if contract is None:
+        return
+    if contract.output_layout != "expanded-rank-input":
+        msg = "rank_input_ciphertexts must use expanded-rank-input output_layout"
+        raise ValueError(msg)
+    if contract.d_state != d_state or contract.mimo_rank != rank:
+        msg = (
+            "rank_input_ciphertexts layout contract must match d_state and mimo_rank; "
+            f"got d_state={contract.d_state}, mimo_rank={contract.mimo_rank}"
+        )
+        raise ValueError(msg)
+    expected_slots = tuple(r * d_state for r in range(rank))
+    if contract.output_slots != expected_slots:
+        msg = (
+            "rank_input_ciphertexts expanded-rank-input contract has incompatible output_slots; "
+            f"expected {expected_slots}, got {contract.output_slots}"
+        )
+        raise ValueError(msg)
 
 
 def _d_skip_output_vector(
@@ -471,6 +533,34 @@ def required_recurrence_chain_rotations(
         )
     )
     return tuple(sorted(rotations))
+
+
+def _output_layout_rotations(
+    *,
+    d_state: int,
+    rank: int,
+    readout_strategy: ReadoutStrategy,
+    output_layout: CiphertextTraceOutputLayout,
+) -> tuple[int, ...]:
+    if output_layout == "expanded-rank-input":
+        return required_recurrence_chain_rotations(
+            d_state=d_state,
+            mimo_rank=rank,
+            readout_strategy=readout_strategy,
+        )
+    return required_readout_rotations(
+        d_state=d_state,
+        mimo_rank=rank,
+        readout_strategy=readout_strategy,
+    )
+
+
+def _bind_ciphertext_layout(
+    ciphertexts: tuple[Any, ...],
+    *,
+    layout_contract: CiphertextLayoutContract,
+) -> LayoutBoundCiphertexts:
+    return LayoutBoundCiphertexts(ciphertexts, layout_contract=layout_contract)
 
 
 def readout_output_slots(
@@ -752,7 +842,10 @@ def run_static_mimo_recurrence_ciphertext_chain_with_backend(
         )
         rank_input_ciphertexts = trace.output_ciphertexts
         if layer_index + 1 in bootstrap_after:
-            rank_input_ciphertexts = tuple(backend.bootstrap(ct) for ct in rank_input_ciphertexts)
+            rank_input_ciphertexts = _bind_ciphertext_layout(
+                tuple(backend.bootstrap(ct) for ct in rank_input_ciphertexts),
+                layout_contract=trace.layout_contract,
+            )
     if trace is None:
         msg = "problems must not be empty"
         raise ValueError(msg)
@@ -986,18 +1079,33 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
         output_ciphertexts.append(output_ct)
     eval_seconds = time.perf_counter() - started
     backend.stats().eval_seconds += eval_seconds
+    rotations = _output_layout_rotations(
+        d_state=d_state,
+        rank=rank,
+        readout_strategy=readout_strategy,
+        output_layout=output_layout,
+    )
+    layout_contract = CiphertextLayoutContract(
+        output_layout=output_layout,
+        d_state=d_state,
+        mimo_rank=rank,
+        readout_strategy=readout_strategy,
+        output_slots=output_slots,
+        required_rotations=rotations,
+    )
 
     return OpenFheRecurrenceCiphertextTrace(
-        output_ciphertexts=tuple(output_ciphertexts),
+        output_ciphertexts=_bind_ciphertext_layout(
+            tuple(output_ciphertexts),
+            layout_contract=layout_contract,
+        ),
         output_slots=output_slots,
+        output_layout=output_layout,
+        layout_contract=layout_contract,
         ring_dimension=backend.ring_dimension,
         batch_size=backend.batch_size,
         multiplicative_depth=multiplicative_depth,
-        rotations=required_readout_rotations(
-            d_state=d_state,
-            mimo_rank=rank,
-            readout_strategy=readout_strategy,
-        ),
+        rotations=rotations,
         backend_stats=backend.stats().to_json_dict(),
         latency_sec_per_token=eval_seconds / problem.seq_len,
         readout_strategy=readout_strategy,

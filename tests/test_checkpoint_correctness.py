@@ -143,6 +143,8 @@ def test_checkpoint_full_layer_ciphertext_gate_matches_source_visible_output() -
 
     assert gate.passed is True
     assert gate.checked_visible_dim == gate.d_model
+    assert gate.full_visible_output_checked is True
+    assert gate.partial_visible_output_checked is False
     assert gate.full_layer_formula_checked is True
     assert gate.official_mamba_parity is False
     assert gate.full_model_correctness_claimed is False
@@ -192,6 +194,9 @@ def test_checkpoint_full_layer_ciphertext_gate_can_check_partial_visible_output(
     assert gate.passed is True
     assert gate.d_model == 8
     assert gate.checked_visible_dim == 3
+    assert gate.full_visible_output_checked is False
+    assert gate.partial_visible_output_checked is True
+    assert gate.full_layer_formula_checked is False
     assert gate.max_abs_error < 1e-6
     assert gate.backend_stats["decrypt_count"] == 3
 
@@ -215,6 +220,9 @@ def test_checkpoint_full_layer_ciphertext_sweep_covers_multiple_source_layers() 
     assert result.passed is True
     assert result.layer_count == 2
     assert result.layers[0].checked_visible_dim == 8
+    assert result.layers[0].full_visible_output_checked is True
+    assert result.layers[0].partial_visible_output_checked is False
+    assert result.layers[0].full_layer_formula_checked is True
     assert result.failing_layers == ()
     assert result.measurement_scope["inter_layer_ciphertext_handoff"] is False
     assert result.measurement_scope["layer_inputs_plaintext_propagated"] is True

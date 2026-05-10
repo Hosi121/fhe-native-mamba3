@@ -206,9 +206,53 @@ def test_ciphertext_recurrence_trace_can_handoff_without_decrypting() -> None:
     )
 
     assert first.bootstrap_after_tokens == (1,)
+    assert first.output_layout == "expanded-rank-input"
+    assert first.output_slots == (0, 2)
+    assert first.rotations == required_recurrence_chain_rotations(
+        d_state=2,
+        mimo_rank=2,
+        readout_strategy="rank-local",
+    )
+    assert first.layout_contract.output_layout == "expanded-rank-input"
+    assert first.layout_contract.required_rotations == first.rotations
+    assert first.output_ciphertexts.layout_contract == first.layout_contract
     assert second.output_slots == (0, 2)
     assert backend.stats().decrypt_count == 0
     assert backend.stats().bootstrap_count == 1
+
+
+def test_readout_trace_ciphertexts_cannot_be_used_as_rank_input_handoff() -> None:
+    backend = TrackingBackend(batch_size=4)
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((1.0, -2.0), (0.5, 0.25)),
+        decay=(0.0, 0.0),
+        b=((1.0, 1.0), (0.0, 0.0)),
+        c=((1.0, 1.0), (0.0, 0.0)),
+    )
+    readout_trace = run_static_mimo_recurrence_ciphertexts_with_backend(
+        problem,
+        backend=backend,
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="server-bx",
+        output_layout="readout",
+    )
+
+    assert readout_trace.output_layout == "readout"
+    assert readout_trace.rotations == required_readout_rotations(
+        d_state=2,
+        mimo_rank=2,
+        readout_strategy="rank-local",
+    )
+    with pytest.raises(ValueError, match="expanded-rank-input"):
+        run_static_mimo_recurrence_ciphertexts_with_backend(
+            problem,
+            backend=backend,
+            multiplicative_depth=8,
+            readout_strategy="rank-local",
+            input_mode="server-bx",
+            rank_input_ciphertexts=readout_trace.output_ciphertexts,
+        )
 
 
 def test_rank_local_handoff_expands_readout_slots_for_d_state_greater_than_one() -> None:

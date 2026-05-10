@@ -72,6 +72,8 @@ class CheckpointFullLayerCiphertextGate:
     layer_index: int
     d_model: int
     checked_visible_dim: int
+    full_visible_output_checked: bool
+    partial_visible_output_checked: bool
     d_state: int
     mimo_rank: int
     seq_len: int
@@ -327,10 +329,24 @@ def run_checkpoint_full_layer_ciphertext_gate(
     no_intermediate_decrypt = (
         resolved_backend.stats().decrypt_count - started_decrypts == visible.seq_len
     )
+    full_visible_output_checked = checked_visible_dim == visible.d_model
+    partial_visible_output_checked = checked_visible_dim < visible.d_model
+    notes = [
+        "checks source-style full-layer visible output, not official fused kernel parity",
+        "input-dependent pre-recurrence tensors are still plaintext-precomputed in Stage 0",
+    ]
+    if partial_visible_output_checked:
+        notes.append(
+            "visible output is partially checked because visible_dim_limit is smaller than d_model"
+        )
+    else:
+        notes.append("visible output check covers the full d_model")
     return CheckpointFullLayerCiphertextGate(
         layer_index=layer_index,
         d_model=visible.d_model,
         checked_visible_dim=checked_visible_dim,
+        full_visible_output_checked=full_visible_output_checked,
+        partial_visible_output_checked=partial_visible_output_checked,
         d_state=problem.d_state,
         mimo_rank=problem.mimo_rank,
         seq_len=problem.seq_len,
@@ -344,7 +360,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
         recurrence_ciphertext=True,
         visible_handoff_ciphertext=True,
         no_intermediate_decrypt=no_intermediate_decrypt,
-        full_layer_formula_checked=True,
+        full_layer_formula_checked=full_visible_output_checked,
         official_mamba_parity=False,
         full_model_correctness_claimed=False,
         plaintext_precomputed_stages=(
@@ -356,11 +372,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
             "gate_values",
         ),
         backend_stats=resolved_backend.stats().to_json_dict(),
-        notes=(
-            "checks source-style full-layer visible output, not official fused kernel parity",
-            "input-dependent pre-recurrence tensors are still plaintext-precomputed in Stage 0",
-            "visible output may be truncated when visible_dim_limit is set",
-        ),
+        notes=tuple(notes),
     )
 
 

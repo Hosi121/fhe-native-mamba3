@@ -4,6 +4,9 @@ import json
 
 import pytest
 
+from fhe_native_mamba3 import (
+    greedy_bootstrap_schedule as public_greedy_bootstrap_schedule,
+)
 from fhe_native_mamba3.bootstrap_schedule import (
     REASON_FORCED_BOOTSTRAP,
     REASON_LEVEL_OK,
@@ -13,6 +16,17 @@ from fhe_native_mamba3.bootstrap_schedule import (
     build_bootstrap_execution_schedule,
     greedy_bootstrap_schedule,
 )
+
+
+def test_public_greedy_bootstrap_schedule_exports_new_scheduler_api() -> None:
+    schedule = public_greedy_bootstrap_schedule(
+        [("gate", 2), ("readout", 1)],
+        max_level=6,
+        min_level=1,
+    )
+
+    assert schedule.max_level == 6
+    assert schedule.final_level == 3
 
 
 def test_greedy_bootstrap_schedule_needs_no_bootstrap_when_budget_fits() -> None:

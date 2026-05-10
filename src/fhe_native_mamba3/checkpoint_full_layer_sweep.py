@@ -33,6 +33,9 @@ class CheckpointFullLayerSweepLayer:
     max_abs_error: float
     d_model: int
     checked_visible_dim: int
+    full_visible_output_checked: bool
+    partial_visible_output_checked: bool
+    full_layer_formula_checked: bool
     d_state: int
     mimo_rank: int
     seq_len: int
@@ -162,6 +165,12 @@ def run_checkpoint_full_layer_ciphertext_sweep(
 
     failing_layers = tuple(layer.layer_index for layer in layer_results if not layer.passed)
     max_abs_error_max = max((layer.max_abs_error for layer in layer_results), default=0.0)
+    all_full_visible_outputs_checked = all(
+        layer.full_visible_output_checked for layer in layer_results
+    )
+    any_partial_visible_outputs_checked = any(
+        layer.partial_visible_output_checked for layer in layer_results
+    )
     return CheckpointFullLayerSweepResult(
         layer_count=resolved_layer_count,
         seq_len=int(initial_layer_input.shape[1]),
@@ -175,14 +184,16 @@ def run_checkpoint_full_layer_ciphertext_sweep(
         failing_layers=failing_layers,
         layers=tuple(layer_results),
         measurement_scope={
-            "source_style_full_layer_formula": True,
+            "source_style_full_layer_formula": all_full_visible_outputs_checked,
+            "full_visible_output_checked": all_full_visible_outputs_checked,
+            "partial_visible_output_checked": any_partial_visible_outputs_checked,
             "official_mamba_parity": False,
             "full_model_correctness_claimed": False,
             "inter_layer_ciphertext_handoff": False,
             "layer_inputs_plaintext_propagated": True,
             "visible_dim_limit": visible_dim_limit,
             "claim": (
-                "per-layer source-style full visible output sweep; next-layer "
+                "per-layer source-style visible output sweep; next-layer "
                 "inputs are propagated in plaintext between checked layers"
             ),
         },
@@ -206,6 +217,9 @@ def _sweep_layer_from_gate(
         max_abs_error=gate.max_abs_error,
         d_model=gate.d_model,
         checked_visible_dim=gate.checked_visible_dim,
+        full_visible_output_checked=gate.full_visible_output_checked,
+        partial_visible_output_checked=gate.partial_visible_output_checked,
+        full_layer_formula_checked=gate.full_layer_formula_checked,
         d_state=gate.d_state,
         mimo_rank=gate.mimo_rank,
         seq_len=gate.seq_len,

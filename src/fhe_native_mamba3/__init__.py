@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.77"
+__version__ = "0.2.78"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -56,6 +56,10 @@ _LAZY_IMPORTS = {
     "CiphertextHandoffResult": (
         "fhe_native_mamba3.ciphertext_handoff",
         "CiphertextHandoffResult",
+    ),
+    "CiphertextLayoutContract": (
+        "fhe_native_mamba3.openfhe_backend",
+        "CiphertextLayoutContract",
     ),
     "apply_handoff_bootstrap_schedule": (
         "fhe_native_mamba3.ciphertext_handoff",
@@ -272,7 +276,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.recurrence_depth",
         "build_recurrence_bootstrap_plan",
     ),
-    "greedy_bootstrap_schedule": ("fhe_native_mamba3.cost", "greedy_bootstrap_schedule"),
+    "greedy_bootstrap_schedule": (
+        "fhe_native_mamba3.bootstrap_schedule",
+        "greedy_bootstrap_schedule",
+    ),
     "inspect_checkpoint": ("fhe_native_mamba3.checkpoint", "inspect_checkpoint"),
     "load_mapping_rules": ("fhe_native_mamba3.state_dict_mapping", "load_mapping_rules"),
     "make_demo_problem": ("fhe_native_mamba3.openfhe_backend", "make_demo_problem"),
@@ -392,6 +399,7 @@ __all__ = [
     "CheckpointVisibleProjectionSweepRow",
     "CiphertextHandoffLayer",
     "CiphertextHandoffResult",
+    "CiphertextLayoutContract",
     "CkksConfig",
     "CkksTrace",
     "FHEBackend",

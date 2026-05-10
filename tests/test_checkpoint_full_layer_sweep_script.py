@@ -42,7 +42,7 @@ def test_checkpoint_full_layer_sweep_script_runs_tracking_backend(tmp_path) -> N
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.77"
+    assert payload["version"] == "0.2.78"
     assert payload["stage"] == "mamba-checkpoint-full-layer-sweep"
     assert payload["backend"] == "tracking"
     assert payload["passed"] is True
@@ -50,7 +50,11 @@ def test_checkpoint_full_layer_sweep_script_runs_tracking_backend(tmp_path) -> N
     assert payload["config"]["visible_dim_limit"] == 3
     assert payload["result"]["measurement_scope"]["full_model_correctness_claimed"] is False
     assert payload["result"]["measurement_scope"]["layer_inputs_plaintext_propagated"] is True
+    assert payload["result"]["measurement_scope"]["source_style_full_layer_formula"] is False
+    assert payload["result"]["measurement_scope"]["partial_visible_output_checked"] is True
     assert payload["result"]["layers"][0]["checked_visible_dim"] == 3
+    assert payload["result"]["layers"][0]["partial_visible_output_checked"] is True
+    assert payload["result"]["layers"][0]["full_layer_formula_checked"] is False
     assert payload["result"]["layers"][0]["operation_counts"]["decrypt"] == 2
     assert payload["result"]["layers"][1]["passed"] is True
     assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
