@@ -9,6 +9,9 @@ from fhe_native_mamba3.checkpoint_correctness import (
     run_checkpoint_full_layer_ciphertext_gate,
     run_checkpoint_recurrence_correctness_gate,
 )
+from fhe_native_mamba3.checkpoint_full_layer_sweep import (
+    run_checkpoint_full_layer_ciphertext_sweep,
+)
 
 
 def test_checkpoint_recurrence_correctness_gate_uses_backend_reference() -> None:
@@ -172,6 +175,40 @@ def test_checkpoint_full_layer_ciphertext_gate_requires_visible_projection() -> 
         )
 
 
+def test_checkpoint_full_layer_ciphertext_sweep_covers_multiple_source_layers() -> None:
+    state_dict = _tiny_hf_mamba_state_dict(layer_count=2)
+    layer_input = torch.arange(16, dtype=torch.float32).view(1, 2, 8) / 20.0
+
+    result = run_checkpoint_full_layer_ciphertext_sweep(
+        state_dict,
+        layer_input,
+        layer_count=2,
+        d_state=2,
+        mimo_rank=4,
+        input_mode="encrypted-dynamic-bc",
+        readout_strategy="rank-local",
+        atol=1e-5,
+    )
+    payload = result.to_json_dict()
+
+    assert result.passed is True
+    assert result.layer_count == 2
+    assert result.failing_layers == ()
+    assert result.measurement_scope["inter_layer_ciphertext_handoff"] is False
+    assert result.measurement_scope["layer_inputs_plaintext_propagated"] is True
+    assert [layer.layer_index for layer in result.layers] == [0, 1]
+    assert all(layer.rotation_key_count > 0 for layer in result.layers)
+    assert all(layer.operation_counts["decrypt"] == 2 for layer in result.layers)
+    assert payload["layers"][0]["plaintext_precomputed_stages"] == [
+        "rms_norm",
+        "causal_conv_silu",
+        "dynamic_b",
+        "dynamic_c",
+        "state_rank_decay",
+        "gate_values",
+    ]
+
+
 def test_full_layer_visible_rotation_inventory_covers_rank_projection() -> None:
     rotations = required_full_layer_visible_rotations(
         d_model=8,
@@ -185,37 +222,48 @@ def test_full_layer_visible_rotation_inventory_covers_rank_projection() -> None:
     assert 1 in rotations
 
 
-def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:
-    return {
+def _tiny_hf_mamba_state_dict(layer_count: int = 1) -> dict[str, torch.Tensor]:
+    state_dict = {
         "backbone.embeddings.weight": torch.arange(88, dtype=torch.float32).view(11, 8) / 100.0,
-        "backbone.layers.0.norm.weight": torch.ones(8),
-        "backbone.layers.0.mixer.in_proj.weight": torch.arange(
-            96,
-            dtype=torch.float32,
-        ).view(12, 8)
-        / 100.0,
-        "backbone.layers.0.mixer.x_proj.weight": torch.arange(
-            48,
-            dtype=torch.float32,
-        ).view(8, 6)
-        / 100.0,
-        "backbone.layers.0.mixer.dt_proj.weight": torch.arange(
-            12,
-            dtype=torch.float32,
-        ).view(6, 2)
-        / 100.0,
-        "backbone.layers.0.mixer.dt_proj.bias": torch.arange(6, dtype=torch.float32) / 100.0,
-        "backbone.layers.0.mixer.out_proj.weight": torch.arange(
-            48,
-            dtype=torch.float32,
-        ).view(8, 6)
-        / 100.0,
-        "backbone.layers.0.mixer.D": torch.arange(6, dtype=torch.float32) / 100.0,
-        "backbone.layers.0.mixer.conv1d.weight": torch.arange(
-            24,
-            dtype=torch.float32,
-        ).view(6, 1, 4)
-        / 100.0,
-        "backbone.layers.0.mixer.conv1d.bias": torch.arange(6, dtype=torch.float32) / 100.0,
-        "backbone.layers.0.mixer.A_log": torch.zeros(6, 2),
     }
+    for layer_index in range(layer_count):
+        offset = 0.01 * layer_index
+        prefix = f"backbone.layers.{layer_index}"
+        state_dict.update(
+            {
+                f"{prefix}.norm.weight": torch.ones(8),
+                f"{prefix}.mixer.in_proj.weight": torch.arange(
+                    96,
+                    dtype=torch.float32,
+                ).view(12, 8)
+                / 100.0
+                + offset,
+                f"{prefix}.mixer.x_proj.weight": torch.arange(
+                    48,
+                    dtype=torch.float32,
+                ).view(8, 6)
+                / 100.0
+                + offset,
+                f"{prefix}.mixer.dt_proj.weight": torch.arange(
+                    12,
+                    dtype=torch.float32,
+                ).view(6, 2)
+                / 100.0,
+                f"{prefix}.mixer.dt_proj.bias": torch.arange(6, dtype=torch.float32) / 100.0,
+                f"{prefix}.mixer.out_proj.weight": torch.arange(
+                    48,
+                    dtype=torch.float32,
+                ).view(8, 6)
+                / 100.0
+                + offset,
+                f"{prefix}.mixer.D": torch.arange(6, dtype=torch.float32) / 100.0,
+                f"{prefix}.mixer.conv1d.weight": torch.arange(
+                    24,
+                    dtype=torch.float32,
+                ).view(6, 1, 4)
+                / 100.0,
+                f"{prefix}.mixer.conv1d.bias": torch.arange(6, dtype=torch.float32) / 100.0,
+                f"{prefix}.mixer.A_log": torch.zeros(6, 2),
+            }
+        )
+    return state_dict
