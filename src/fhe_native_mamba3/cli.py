@@ -611,6 +611,10 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
         run_static_mimo_recurrence_with_backend,
         scale_recurrence_state_and_output,
     )
+    from fhe_native_mamba3.recurrence_scales import (
+        load_recurrence_scale_plan,
+        resolve_recurrence_layer_scales,
+    )
     from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
 
     source_state_dict, resolved_key = load_checkpoint_state_dict(
@@ -695,7 +699,12 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     else:
         msg = f"unsupported recurrence_source: {args.recurrence_source}"
         raise ValueError(msg)
-    state_scale, output_scale, scale_plan = _resolve_recurrence_smoke_scales(args)
+    state_scale, output_scale, scale_plan = resolve_recurrence_layer_scales(
+        args.layer_index,
+        state_scale=args.state_scale,
+        output_scale=args.output_scale,
+        scale_plan=load_recurrence_scale_plan(args.scale_plan_json),
+    )
     problem = scale_recurrence_state_and_output(
         extracted.problem,
         state_scale=state_scale,
@@ -796,72 +805,6 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
-def _resolve_recurrence_smoke_scales(
-    args: argparse.Namespace,
-) -> tuple[float, float, dict[str, Any] | None]:
-    return _resolve_recurrence_layer_scales(
-        args.layer_index,
-        state_scale=args.state_scale,
-        output_scale=args.output_scale,
-        scale_plan=_load_recurrence_scale_plan(args.scale_plan_json),
-    )
-
-
-def _load_recurrence_scale_plan(
-    scale_plan_json: str,
-) -> tuple[str, dict[str, Any]] | None:
-    if not scale_plan_json:
-        return None
-    scale_plan_path = Path(scale_plan_json)
-    payload = json.loads(scale_plan_path.read_text(encoding="utf-8"))
-    return str(scale_plan_path), payload.get("scale_plan", payload)
-
-
-def _resolve_recurrence_layer_scales(
-    layer_index: int,
-    *,
-    state_scale: float | None,
-    output_scale: float | None,
-    scale_plan: tuple[str, dict[str, Any]] | None,
-) -> tuple[float, float, dict[str, Any] | None]:
-    resolved_state_scale = state_scale if state_scale is not None else 1.0
-    resolved_output_scale = output_scale if output_scale is not None else 1.0
-    if scale_plan is None:
-        return resolved_state_scale, resolved_output_scale, None
-
-    scale_plan_path, scale_plan_payload = scale_plan
-    layer_plan = _find_scale_plan_layer(scale_plan_payload, layer_index)
-    if state_scale is None:
-        resolved_state_scale = float(layer_plan["state_scale_to_target"])
-    if output_scale is None:
-        resolved_output_scale = float(layer_plan["output_scale"])
-    return (
-        resolved_state_scale,
-        resolved_output_scale,
-        {
-            "path": scale_plan_path,
-            "layer_index": int(layer_plan["layer_index"]),
-            "state_scale_to_target": float(layer_plan["state_scale_to_target"]),
-            "output_scale": float(layer_plan["output_scale"]),
-            "used_state_scale": resolved_state_scale,
-            "used_output_scale": resolved_output_scale,
-            "cli_state_scale_override": state_scale is not None,
-            "cli_output_scale_override": output_scale is not None,
-        },
-    )
-
-
-def _find_scale_plan_layer(
-    scale_plan_payload: dict[str, Any],
-    layer_index: int,
-) -> dict[str, Any]:
-    for layer in scale_plan_payload.get("layers", []):
-        if int(layer["layer_index"]) == layer_index:
-            return layer
-    msg = f"scale plan does not contain layer_index={layer_index}"
-    raise ValueError(msg)
-
-
 def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
     import torch
 
@@ -884,6 +827,10 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
         required_readout_rotations,
         run_static_mimo_recurrence_with_backend,
         scale_recurrence_state_and_output,
+    )
+    from fhe_native_mamba3.recurrence_scales import (
+        load_recurrence_scale_plan,
+        resolve_recurrence_layer_scales,
     )
     from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
 
@@ -909,7 +856,7 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
     if max(seq_lens) > args.max_seq_len:
         msg = "max seq_len exceeds max_seq_len"
         raise ValueError(msg)
-    scale_plan = _load_recurrence_scale_plan(args.scale_plan_json)
+    scale_plan = load_recurrence_scale_plan(args.scale_plan_json)
 
     sources = args.recurrence_sources
     token_seed = _parse_int_list(args.prompt)
@@ -994,7 +941,7 @@ def mamba_checkpoint_recurrence_sweep_cmd(args: argparse.Namespace) -> int:
                         manifest=manifest,
                     )
                     input_mode = args.source_dynamic_input_mode
-                state_scale, output_scale, scale_plan_layer = _resolve_recurrence_layer_scales(
+                state_scale, output_scale, scale_plan_layer = resolve_recurrence_layer_scales(
                     layer_index,
                     state_scale=args.state_scale,
                     output_scale=args.output_scale,

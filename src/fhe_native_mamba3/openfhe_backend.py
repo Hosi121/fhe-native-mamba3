@@ -9,8 +9,21 @@ from typing import Any, Literal
 
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
+from fhe_native_mamba3.layout import (
+    ReadoutStrategy,
+    readout_reduce_mask,
+    readout_reduce_steps,
+    readout_scatter_mask,
+    readout_scatter_shifts,
+    state_slot,
+)
+from fhe_native_mamba3.layout import (
+    readout_output_slots as layout_readout_output_slots,
+)
+from fhe_native_mamba3.layout import (
+    required_readout_rotations as layout_required_readout_rotations,
+)
 
-ReadoutStrategy = Literal["slotwise", "rank-reduce", "rank-local"]
 InputMode = Literal["server-bx", "client-update", "encrypted-dynamic-bc"]
 
 
@@ -291,27 +304,10 @@ def required_readout_rotations(
 ) -> tuple[int, ...]:
     """Rotations needed to reduce state slots into per-rank output slots."""
 
-    if readout_strategy in {"rank-reduce", "rank-local"}:
-        reduce_steps = {2**stage for stage in range(max(0, (d_state - 1).bit_length()))}
-        scatter_steps = (
-            set()
-            if readout_strategy == "rank-local"
-            else {r * d_state - r for r in range(mimo_rank) if r * d_state - r != 0}
-        )
-        return tuple(sorted(reduce_steps | scatter_steps))
-    if readout_strategy != "slotwise":
-        msg = f"unsupported readout_strategy: {readout_strategy}"
-        raise ValueError(msg)
-
-    return tuple(
-        sorted(
-            {
-                r * d_state + n - r
-                for r in range(mimo_rank)
-                for n in range(d_state)
-                if r * d_state + n - r != 0
-            }
-        )
+    return layout_required_readout_rotations(
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        readout_strategy=readout_strategy,
     )
 
 
@@ -323,12 +319,11 @@ def readout_output_slots(
 ) -> tuple[int, ...]:
     """Slots that contain the per-rank readout after the selected layout."""
 
-    if readout_strategy in {"slotwise", "rank-reduce"}:
-        return tuple(range(mimo_rank))
-    if readout_strategy == "rank-local":
-        return tuple(rank * d_state for rank in range(mimo_rank))
-    msg = f"unsupported readout_strategy: {readout_strategy}"
-    raise ValueError(msg)
+    return layout_readout_output_slots(
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        readout_strategy=readout_strategy,
+    )
 
 
 def _readout_ciphertext(
@@ -368,7 +363,7 @@ def _readout_slotwise(
     output_ct = backend.encrypt([0.0] * backend.batch_size)
     for r in range(rank):
         for n in range(d_state):
-            source = r * d_state + n
+            source = state_slot(d_state=d_state, rank_index=r, state_index=n)
             target = r
             mask = [0.0] * backend.batch_size
             mask[source] = 1.0
@@ -389,29 +384,30 @@ def _readout_rank_reduce(
     dense_output: bool,
 ) -> Any:
     reduced = contrib_ct
-    stage = 0
-    step = 1
-    while step < d_state:
-        mask = []
-        for _r in range(rank):
-            for n in range(d_state):
-                mask.append(1.0 if n + step < d_state and n % (2 * step) == 0 else 0.0)
+    for step in readout_reduce_steps(d_state):
+        mask = readout_reduce_mask(
+            d_state=d_state,
+            mimo_rank=rank,
+            step=step,
+            batch_size=backend.batch_size,
+        )
         rotated = backend.rotate(reduced, step)
         reduced = backend.add(reduced, backend.mul_plain(rotated, backend.encode(mask)))
-        stage += 1
-        step = 2**stage
 
     if not dense_output:
         return reduced
 
     output_ct = backend.encrypt([0.0] * backend.batch_size)
-    for r in range(rank):
-        source = r * d_state
-        target = r if dense_output else source
-        mask = [0.0] * backend.batch_size
-        mask[source] = 1.0
+    for r, shift in enumerate(
+        readout_scatter_shifts(d_state=d_state, mimo_rank=rank, dense_output=dense_output)
+    ):
+        mask = readout_scatter_mask(
+            d_state=d_state,
+            mimo_rank=rank,
+            rank_index=r,
+            batch_size=backend.batch_size,
+        )
         term = backend.mul_plain(reduced, backend.encode(mask))
-        shift = source - target
         if shift:
             term = backend.rotate(term, shift)
         output_ct = backend.add(output_ct, term)
