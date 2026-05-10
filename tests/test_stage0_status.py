@@ -70,6 +70,42 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
                 ],
             },
         },
+        checkpoint_full_layer_gate={
+            "backend": "openfhe-ckks",
+            "encrypted": True,
+            "passed": True,
+            "max_abs_error": 8e-7,
+            "model": {
+                "seq_len": 3,
+                "d_model": 768,
+                "checked_visible_dim": 768,
+                "d_state": 16,
+                "mimo_rank": 1536,
+                "input_mode": "encrypted-dynamic-bc",
+                "readout_strategy": "rank-local",
+            },
+            "ckks": {"rotation_count": 1559},
+            "measurement_scope": {
+                "source_style_full_layer_formula": True,
+                "full_visible_output_checked": True,
+                "partial_visible_output_checked": False,
+                "full_model_correctness_claimed": False,
+                "plaintext_precomputed_stages": [
+                    "rms_norm",
+                    "causal_conv_silu",
+                    "dynamic_b",
+                    "dynamic_c",
+                    "state_rank_decay",
+                    "gate_values",
+                ],
+            },
+            "result": {
+                "recurrence_ciphertext": True,
+                "visible_handoff_ciphertext": True,
+                "no_intermediate_decrypt": True,
+            },
+            "operation_counts": {"decrypt": 3},
+        },
         client_decode_smoke={
             "passed": True,
             "result": {
@@ -149,6 +185,8 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
     assert report["measurements"]["checkpoint_source_profile"]["seq_len"] == 64
     assert report["measurements"]["checkpoint_source_profile"]["range_score_layer"] == 23
     assert report["measurements"]["checkpoint_source_profile"]["range_score"] == 179541.0
+    assert report["measurements"]["checkpoint_full_layer_gate"]["passed"] is True
+    assert report["measurements"]["checkpoint_full_layer_gate"]["rotation_count"] == 1559
     assert report["measurements"]["client_decode_smoke"]["new_token_ids"] == [44191]
     assert report["measurements"]["segment_samples"]["bootstrap_enabled_sample_count"] == 1
     assert report["measurements"]["all_layer_recurrence"]["success_count"] == 24
@@ -163,6 +201,7 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
     assert any("true inter-layer ciphertext chain" in item for item in report["remaining_items"])
     assert any("scheduled bootstrap probe" in item for item in report["completed_items"])
     assert any("ciphertext handoff smoke" in item for item in report["completed_items"])
+    assert any("full-layer ciphertext gate" in item for item in report["completed_items"])
     assert any("client-side decode smoke" in item for item in report["completed_items"])
 
 
@@ -171,6 +210,7 @@ def test_stage0_status_report_handles_missing_artifacts() -> None:
 
     assert report["measurements"]["bootstrap_latency"]["available"] is False
     assert report["measurements"]["checkpoint_source_profile"]["available"] is False
+    assert report["measurements"]["checkpoint_full_layer_gate"]["available"] is False
     assert report["measurements"]["client_decode_smoke"]["available"] is False
     assert report["measurements"]["segment_samples"]["available"] is False
     assert report["measurements"]["ciphertext_handoff"]["available"] is False

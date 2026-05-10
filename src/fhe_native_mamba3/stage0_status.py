@@ -12,6 +12,7 @@ def build_stage0_status_report(
     stack_latency_estimate: dict[str, Any] | None = None,
     checkpoint_bootstrap_smoke: dict[str, Any] | None = None,
     checkpoint_source_profile: dict[str, Any] | None = None,
+    checkpoint_full_layer_gate: dict[str, Any] | None = None,
     client_decode_smoke: dict[str, Any] | None = None,
     segment_samples: dict[str, Any] | None = None,
     all_layer_recurrence: dict[str, Any] | None = None,
@@ -24,6 +25,9 @@ def build_stage0_status_report(
         "stack_latency_estimate": _stack_latency_summary(stack_latency_estimate),
         "checkpoint_bootstrap_smoke": _checkpoint_smoke_summary(checkpoint_bootstrap_smoke),
         "checkpoint_source_profile": _checkpoint_source_profile_summary(checkpoint_source_profile),
+        "checkpoint_full_layer_gate": _checkpoint_full_layer_gate_summary(
+            checkpoint_full_layer_gate
+        ),
         "client_decode_smoke": _client_decode_smoke_summary(client_decode_smoke),
         "segment_samples": _segment_sample_summary(segment_samples),
         "all_layer_recurrence": _all_layer_recurrence_summary(all_layer_recurrence),
@@ -56,14 +60,25 @@ def build_stage0_status_report(
 
 def _remaining_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
     all_layer = measurements["all_layer_recurrence"]
+    full_gate = measurements["checkpoint_full_layer_gate"]
     if all_layer.get("actual_scheduled_bootstraps") and all_layer.get("bootstrap_probe_only"):
-        first_item = "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
-    elif all_layer.get("actual_scheduled_bootstraps"):
         first_item = (
-            "wire checkpoint gate/out-projection/residual into ciphertext handoff"
-            if measurements["ciphertext_handoff"].get("no_intermediate_decrypt")
-            else "connect scheduled boundary bootstrap smoke to true inter-layer ciphertext handoff"
+            "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
+            " using full-layer ciphertext trace"
+            if full_gate.get("visible_handoff_ciphertext")
+            else "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
         )
+    elif all_layer.get("actual_scheduled_bootstraps"):
+        if full_gate.get("visible_handoff_ciphertext"):
+            first_item = (
+                "connect full-layer visible ciphertext trace to encrypted next-layer pre-recurrence"
+            )
+        elif measurements["ciphertext_handoff"].get("no_intermediate_decrypt"):
+            first_item = "wire checkpoint gate/out-projection/residual into ciphertext handoff"
+        else:
+            first_item = (
+                "connect scheduled boundary bootstrap smoke to true inter-layer ciphertext handoff"
+            )
     else:
         first_item = "run 24-layer encrypted recurrence with scheduled inter-layer bootstraps"
     return [
@@ -158,6 +173,43 @@ def _checkpoint_source_profile_summary(payload: dict[str, Any] | None) -> dict[s
         "range_score_stage": range_stage,
         "logits_abs_max": global_maxima.get("logits_abs_max"),
         "elapsed_sec": result.get("elapsed_sec"),
+    }
+
+
+def _checkpoint_full_layer_gate_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {"available": False}
+    result = payload.get("result", {})
+    scope = payload.get("measurement_scope", {})
+    model = payload.get("model", {})
+    ckks = payload.get("ckks", {})
+    operation_counts = payload.get("operation_counts", {})
+    return {
+        "available": True,
+        "backend": payload.get("backend"),
+        "encrypted": payload.get("encrypted"),
+        "passed": payload.get("passed"),
+        "max_abs_error": payload.get("max_abs_error", result.get("max_abs_error")),
+        "d_model": model.get("d_model", result.get("d_model")),
+        "checked_visible_dim": model.get(
+            "checked_visible_dim",
+            result.get("checked_visible_dim"),
+        ),
+        "d_state": model.get("d_state", result.get("d_state")),
+        "mimo_rank": model.get("mimo_rank", result.get("mimo_rank")),
+        "seq_len": model.get("seq_len", result.get("seq_len")),
+        "input_mode": model.get("input_mode", result.get("input_mode")),
+        "readout_strategy": model.get("readout_strategy", result.get("readout_strategy")),
+        "source_style_full_layer_formula": bool(scope.get("source_style_full_layer_formula")),
+        "full_visible_output_checked": bool(scope.get("full_visible_output_checked")),
+        "partial_visible_output_checked": bool(scope.get("partial_visible_output_checked")),
+        "recurrence_ciphertext": bool(result.get("recurrence_ciphertext")),
+        "visible_handoff_ciphertext": bool(result.get("visible_handoff_ciphertext")),
+        "no_intermediate_decrypt": bool(result.get("no_intermediate_decrypt")),
+        "full_model_correctness_claimed": bool(scope.get("full_model_correctness_claimed")),
+        "plaintext_precomputed_stages": scope.get("plaintext_precomputed_stages", []),
+        "rotation_count": ckks.get("rotation_count"),
+        "decrypt_count": operation_counts.get("decrypt"),
     }
 
 
@@ -273,6 +325,16 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         items.append("insert and execute an actual bootstrap in real-checkpoint recurrence")
     if measurements["checkpoint_source_profile"].get("available"):
         items.append("profile real checkpoint ranges, decay bursts, updates, and logit gaps")
+    full_gate = measurements["checkpoint_full_layer_gate"]
+    if (
+        full_gate.get("passed")
+        and full_gate.get("visible_handoff_ciphertext")
+        and full_gate.get("no_intermediate_decrypt")
+    ):
+        items.append(
+            "run source-style full-layer ciphertext gate through recurrence, skip, gate, "
+            "out-projection, and residual"
+        )
     if measurements["client_decode_smoke"].get("passed"):
         items.append("run real checkpoint source-style client-side decode smoke")
     if measurements["segment_samples"].get("bootstrap_enabled_sample_count"):
