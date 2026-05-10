@@ -1,0 +1,61 @@
+name: Benchmark artifact
+description: Record a benchmark/probe artifact and its claims.
+title: "Benchmark: "
+labels: ["benchmark"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Repo version / commit
+      placeholder: "0.2.x / abc1234"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Backend, hardware, CKKS parameters, SLURM job id if any.
+      value: |
+        - backend:
+        - hardware:
+        - ckks:
+        - job:
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      render: bash
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Result summary
+      description: Latency, operation counts, error, bootstrap count, rotation key count.
+      value: |
+        - latency:
+        - max_abs_error:
+        - bootstrap_count:
+        - rotation_key_count:
+    validations:
+      required: true
+  - type: textarea
+    id: artifact
+    attributes:
+      label: Artifact path or attached JSON
+      value: "- "
+    validations:
+      required: true
+  - type: textarea
+    id: claims
+    attributes:
+      label: Claims and non-claims
+      value: |
+        - proves:
+        - does not prove:
+        - next bottleneck:
+    validations:
+      required: true
+

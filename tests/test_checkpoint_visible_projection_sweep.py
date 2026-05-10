@@ -29,6 +29,11 @@ def test_checkpoint_visible_projection_sweep_tracks_width_scaling() -> None:
     assert result.bottleneck == "none_observed"
     assert [row.checked_visible_dim for row in result.rows] == [2, 4, 8]
     assert result.rows[-1].full_visible_output is True
+    assert result.rows[-1].full_visible_output_checked is True
+    assert result.rows[0].partial_visible_output_checked is True
+    assert result.measurement_scope["source_style_full_layer_formula"] is True
+    assert result.measurement_scope["full_visible_output_checked"] is True
+    assert result.measurement_scope["partial_visible_output_checked"] is True
     assert result.rows[0].operation_counts is not None
     assert result.rows[0].operation_counts["decrypt"] == 2
     assert payload["measurement_scope"]["full_model_correctness_claimed"] is False
@@ -47,11 +52,17 @@ def test_checkpoint_visible_projection_sweep_records_rotation_guard_skip() -> No
         max_rotation_keys=1,
     )
 
-    assert result.passed is True
+    assert result.passed is False
     assert result.skipped_count == 2
+    assert result.passed_count == 0
     assert result.max_checked_visible_dim_passed is None
     assert result.bottleneck == "rotation_key_guard"
+    assert result.measurement_scope["source_style_full_layer_formula"] is False
+    assert result.measurement_scope["full_visible_output_checked"] is False
+    assert result.measurement_scope["partial_visible_output_checked"] is False
     assert result.rows[0].status == "skipped"
+    assert result.rows[0].full_visible_output_checked is False
+    assert result.rows[0].partial_visible_output_checked is False
     assert "rotation_key_count" in result.rows[0].reason
 
 

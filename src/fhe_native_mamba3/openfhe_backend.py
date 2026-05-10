@@ -463,7 +463,8 @@ def _validate_rank_input_ciphertext_contract(
 ) -> None:
     contract = getattr(rank_input_ciphertexts, "layout_contract", None)
     if contract is None:
-        return
+        msg = "rank_input_ciphertexts must carry a ciphertext layout contract"
+        raise ValueError(msg)
     if contract.output_layout != "expanded-rank-input":
         msg = "rank_input_ciphertexts must use expanded-rank-input output_layout"
         raise ValueError(msg)

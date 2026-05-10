@@ -31,6 +31,16 @@ def test_all_layer_script_prefers_execution_schedule_layers() -> None:
     assert bootstraps == 2
 
 
+def test_all_layer_script_sizes_adapter_to_selected_subset() -> None:
+    module = _load_script()
+
+    assert module._required_adapter_layers((0,)) == 1
+    assert module._required_adapter_layers((3,)) == 4
+    assert module._required_adapter_layers((0, 2)) == 3
+    with pytest.raises(ValueError, match="must not be empty"):
+        module._required_adapter_layers(())
+
+
 def test_all_layer_script_rejects_legacy_execution_schedule_mismatch() -> None:
     module = _load_script()
 

@@ -253,6 +253,15 @@ def test_readout_trace_ciphertexts_cannot_be_used_as_rank_input_handoff() -> Non
             input_mode="server-bx",
             rank_input_ciphertexts=readout_trace.output_ciphertexts,
         )
+    with pytest.raises(ValueError, match="layout contract"):
+        run_static_mimo_recurrence_ciphertexts_with_backend(
+            problem,
+            backend=backend,
+            multiplicative_depth=8,
+            readout_strategy="rank-local",
+            input_mode="server-bx",
+            rank_input_ciphertexts=tuple(readout_trace.output_ciphertexts),
+        )
 
 
 def test_rank_local_handoff_expands_readout_slots_for_d_state_greater_than_one() -> None:

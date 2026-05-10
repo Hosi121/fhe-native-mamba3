@@ -32,6 +32,8 @@ class CheckpointVisibleProjectionSweepRow:
     checked_visible_dim: int
     d_model: int
     full_visible_output: bool
+    full_visible_output_checked: bool
+    partial_visible_output_checked: bool
     rotation_key_count: int
     status: ProjectionSweepStatus
     passed: bool
@@ -72,7 +74,7 @@ class CheckpointVisibleProjectionSweepResult:
 
     @property
     def passed(self) -> bool:
-        return self.failed_count == 0 and self.error_count == 0
+        return self.row_count > 0 and self.passed_count == self.row_count
 
     def to_json_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -195,6 +197,8 @@ def _run_projection_row(
             checked_visible_dim=checked_visible_dim,
             d_model=d_model,
             full_visible_output=checked_visible_dim == d_model,
+            full_visible_output_checked=False,
+            partial_visible_output_checked=False,
             rotation_key_count=len(rotations),
             status="skipped",
             passed=False,
@@ -225,6 +229,8 @@ def _run_projection_row(
             checked_visible_dim=checked_visible_dim,
             d_model=d_model,
             full_visible_output=checked_visible_dim == d_model,
+            full_visible_output_checked=False,
+            partial_visible_output_checked=False,
             rotation_key_count=len(rotations),
             status="error",
             passed=False,
@@ -237,6 +243,8 @@ def _run_projection_row(
         checked_visible_dim=checked_visible_dim,
         d_model=d_model,
         full_visible_output=checked_visible_dim == d_model,
+        full_visible_output_checked=gate.full_visible_output_checked,
+        partial_visible_output_checked=gate.partial_visible_output_checked,
         rotation_key_count=len(rotations),
         status="passed" if gate.passed else "failed",
         passed=gate.passed,
@@ -276,6 +284,8 @@ def _summarize_projection_sweep(
 ) -> CheckpointVisibleProjectionSweepResult:
     passed_rows = tuple(row for row in rows if row.status == "passed")
     first_non_passed = next((row for row in rows if row.status != "passed"), None)
+    full_visible_output_checked = any(row.full_visible_output_checked for row in rows)
+    partial_visible_output_checked = any(row.partial_visible_output_checked for row in rows)
     return CheckpointVisibleProjectionSweepResult(
         layer_index=layer_index,
         seq_len=seq_len,
@@ -299,7 +309,9 @@ def _summarize_projection_sweep(
         bottleneck=_infer_bottleneck(rows),
         rows=rows,
         measurement_scope={
-            "source_style_full_layer_formula": True,
+            "source_style_full_layer_formula": full_visible_output_checked,
+            "full_visible_output_checked": full_visible_output_checked,
+            "partial_visible_output_checked": partial_visible_output_checked,
             "official_mamba_parity": False,
             "full_model_correctness_claimed": False,
             "pre_recurrence_stages_plaintext_precomputed": True,

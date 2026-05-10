@@ -38,7 +38,7 @@ def test_checkpoint_visible_projection_sweep_script_runs_tracking_backend(tmp_pa
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.78"
+    assert payload["version"] == "0.2.79"
     assert payload["stage"] == "mamba-checkpoint-visible-projection-sweep"
     assert payload["backend"] == "tracking"
     assert payload["passed"] is True
@@ -46,7 +46,11 @@ def test_checkpoint_visible_projection_sweep_script_runs_tracking_backend(tmp_pa
     assert payload["result"]["max_checked_visible_dim_passed"] == 8
     assert payload["result"]["bottleneck"] == "none_observed"
     assert payload["result"]["measurement_scope"]["full_model_correctness_claimed"] is False
+    assert payload["result"]["measurement_scope"]["source_style_full_layer_formula"] is True
+    assert payload["result"]["measurement_scope"]["full_visible_output_checked"] is True
+    assert payload["result"]["measurement_scope"]["partial_visible_output_checked"] is True
     assert payload["result"]["rows"][-1]["full_visible_output"] is True
+    assert payload["result"]["rows"][-1]["full_visible_output_checked"] is True
     assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
 
 

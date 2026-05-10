@@ -1024,13 +1024,16 @@ def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
             "bootstrap_configured": _openfhe_bootstrap_config_from_args(args) is not None,
         },
         "measurement_scope": {
-            "source_style_full_layer_formula": True,
+            "source_style_full_layer_formula": result.full_layer_formula_checked,
+            "full_visible_output_checked": result.full_visible_output_checked,
+            "partial_visible_output_checked": result.partial_visible_output_checked,
             "official_mamba_parity": result.official_mamba_parity,
             "full_model_correctness_claimed": result.full_model_correctness_claimed,
             "plaintext_precomputed_stages": list(result.plaintext_precomputed_stages),
             "claim": (
-                "source-style one-layer full visible output gate; input-dependent "
-                "pre-recurrence tensors remain plaintext-precomputed"
+                "source-style one-layer visible output gate; input-dependent "
+                "pre-recurrence tensors remain plaintext-precomputed; full d_model "
+                "coverage is reported by full_visible_output_checked"
             ),
         },
         "result": result.to_json_dict(),

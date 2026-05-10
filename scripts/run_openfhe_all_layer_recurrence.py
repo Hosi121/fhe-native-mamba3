@@ -70,7 +70,7 @@ def main() -> int:
         msg = "prompt length exceeds max_seq_len"
         raise ValueError(msg)
 
-    required_layers = max(args.n_layers, max(layer_indices) + 1)
+    required_layers = _required_adapter_layers(layer_indices)
     model, _report = adapt_mamba_state_dict_to_model(
         source_state_dict,
         d_state=d_state,
@@ -545,6 +545,13 @@ def _scheduled_bootstraps_from_schedule_group(
     if isinstance(execution_schedule, dict):
         return int(execution_schedule.get("total_bootstrap_count", len(bootstrap_before_layers)))
     return int(schedule_group.get("bootstraps", len(bootstrap_before_layers)))
+
+
+def _required_adapter_layers(layer_indices: tuple[int, ...]) -> int:
+    if not layer_indices:
+        msg = "layer_indices must not be empty"
+        raise ValueError(msg)
+    return max(layer_indices) + 1
 
 
 def _parse_args() -> argparse.Namespace:

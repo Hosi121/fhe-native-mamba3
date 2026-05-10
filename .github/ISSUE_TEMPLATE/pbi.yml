@@ -1,0 +1,69 @@
+name: PBI
+description: Product backlog item with stage, dependencies, and acceptance checks.
+title: "PBI: "
+labels: ["PBI"]
+body:
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Stage
+      options:
+        - Stage 0
+        - Stage 1
+        - Stage 2
+        - Process / infrastructure
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P0
+        - P1
+        - P2
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true when this PBI is done?
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies / blockers
+      description: List upstream PBIs, hardware, checkpoints, libraries, or missing data.
+      value: "- "
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance checks
+      description: Commands, tests, artifacts, or benchmark thresholds.
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Expected artifacts
+      description: JSON, logs, docs/probes entry, or reason no artifact is expected.
+      value: "- "
+  - type: textarea
+    id: parallelization
+    attributes:
+      label: Parallelization notes
+      description: Which work can proceed independently, and which files/modules are owned?
+      value: "- "
+  - type: textarea
+    id: bottleneck
+    attributes:
+      label: Next bottleneck
+      description: What blocker do we expect to expose after this is done?
+      value: "- "
