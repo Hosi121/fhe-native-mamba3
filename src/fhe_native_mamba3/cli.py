@@ -609,7 +609,7 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.openfhe_backend import (
         required_readout_rotations,
         run_static_mimo_recurrence_with_backend,
-        scale_recurrence_state,
+        scale_recurrence_state_and_output,
     )
     from fhe_native_mamba3.weight_encoding import WeightEncodingConfig
 
@@ -695,10 +695,10 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
     else:
         msg = f"unsupported recurrence_source: {args.recurrence_source}"
         raise ValueError(msg)
-    problem = (
-        scale_recurrence_state(extracted.problem, args.state_scale)
-        if args.state_scale != 1.0
-        else extracted.problem
+    problem = scale_recurrence_state_and_output(
+        extracted.problem,
+        state_scale=args.state_scale,
+        output_scale=args.output_scale,
     )
     rotations = required_readout_rotations(
         d_state=problem.d_state,
@@ -752,6 +752,8 @@ def mamba_checkpoint_recurrence_smoke_cmd(args: argparse.Namespace) -> int:
             "recurrence_source": args.recurrence_source,
             "input_propagation": args.input_propagation,
             "state_scale": args.state_scale,
+            "output_scale": args.output_scale,
+            "c_scale_from_state": args.output_scale / args.state_scale,
         },
         "ckks": {
             "multiplicative_depth": args.multiplicative_depth,
@@ -2319,6 +2321,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         help="apply an equivalent h' = state_scale * h recurrence gauge transform",
+    )
+    mamba_smoke_parser.add_argument(
+        "--output-scale",
+        type=float,
+        default=1.0,
+        help="scale the recurrence readout as y' = output_scale * y",
     )
     mamba_smoke_parser.add_argument("--scale-bits", type=int, default=40)
     mamba_smoke_parser.add_argument("--target-max-abs", type=float, default=1.0)

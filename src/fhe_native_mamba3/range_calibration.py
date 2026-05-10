@@ -20,6 +20,7 @@ class LayerRangeScalePlan:
     activation_scale_to_target: float
     state_scale_to_target: float
     output_scale: float
+    c_scale_from_state: float
     carry_scale_from_previous: float
     max_encoded_input_abs: float
     max_encoded_delta_abs: float
@@ -139,6 +140,7 @@ def build_range_scale_plan(
             activation_scale_to_target=_scale_to_target(max_activation, activation_target),
             state_scale_to_target=_scale_to_target(max_state, state_target),
             output_scale=output_scale,
+            c_scale_from_state=output_scale / _scale_to_target(max_state, state_target),
             carry_scale_from_previous=carry_scale,
             max_encoded_input_abs=previous_output_scale * max_layer_input,
             max_encoded_delta_abs=output_scale * max_delta,

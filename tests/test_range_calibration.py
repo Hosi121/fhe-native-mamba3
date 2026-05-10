@@ -19,7 +19,9 @@ def test_build_range_scale_plan_keeps_encoded_residual_bounded() -> None:
 
     assert len(plan.layers) == 3
     assert plan.layers[0].activation_scale_to_target == 0.75
+    assert plan.layers[0].c_scale_from_state == 1.25
     assert plan.layers[1].output_scale == 32.0 / 500.0
+    assert plan.layers[1].c_scale_from_state == 0.4
     assert plan.layers[2].output_scale == plan.layers[1].output_scale
     assert plan.max_encoded_delta_abs <= 32.0
     assert plan.max_encoded_output_abs <= 32.0

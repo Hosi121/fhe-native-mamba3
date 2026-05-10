@@ -162,22 +162,47 @@ def scale_recurrence_state(
 ) -> OpenFheRecurrenceProblem:
     """Apply the equivalent state gauge transform h' = state_scale * h."""
 
+    return scale_recurrence_state_and_output(
+        problem,
+        state_scale=state_scale,
+        output_scale=1.0,
+    )
+
+
+def scale_recurrence_state_and_output(
+    problem: OpenFheRecurrenceProblem,
+    *,
+    state_scale: float,
+    output_scale: float,
+) -> OpenFheRecurrenceProblem:
+    """Apply h' = state_scale * h and y' = output_scale * y."""
+
     if state_scale <= 0:
         msg = "state_scale must be positive"
         raise ValueError(msg)
-    if state_scale == 1.0:
+    if output_scale <= 0:
+        msg = "output_scale must be positive"
+        raise ValueError(msg)
+    if state_scale == 1.0 and output_scale == 1.0:
         return problem
+    c_scale = output_scale / state_scale
     return OpenFheRecurrenceProblem(
         rank_inputs=problem.rank_inputs,
         decay=problem.decay,
         decay_by_token=problem.decay_by_token,
         decay_state_by_token=problem.decay_state_by_token,
         b=_scale_matrix(problem.b, state_scale),
-        c=_scale_matrix(problem.c, 1.0 / state_scale),
+        c=_scale_matrix(problem.c, c_scale),
         b_by_token=_scale_token_matrices(problem.b_by_token, state_scale),
-        c_by_token=_scale_token_matrices(problem.c_by_token, 1.0 / state_scale),
-        d_skip=problem.d_skip,
+        c_by_token=_scale_token_matrices(problem.c_by_token, c_scale),
+        d_skip=_scale_vector(problem.d_skip, output_scale),
     )
+
+
+def _scale_vector(values: tuple[float, ...] | None, scale: float) -> tuple[float, ...] | None:
+    if values is None:
+        return None
+    return tuple(scale * value for value in values)
 
 
 def _scale_matrix(

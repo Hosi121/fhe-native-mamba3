@@ -16,6 +16,7 @@ from fhe_native_mamba3.openfhe_backend import (
     run_openfhe_static_recurrence,
     run_static_mimo_recurrence_with_backend,
     scale_recurrence_state,
+    scale_recurrence_state_and_output,
 )
 
 
@@ -160,3 +161,41 @@ def test_state_scale_preserves_outputs_and_reduces_plain_state_range() -> None:
     assert plaintext_recurrence_trace(scaled)["state_abs_max"] == pytest.approx(
         0.125 * plaintext_recurrence_trace(problem)["state_abs_max"]
     )
+
+
+def test_state_and_output_scale_bounds_c_weights_and_scales_outputs() -> None:
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((2.0, -1.0), (1.5, 0.25)),
+        decay=(0.8, 0.7),
+        b=((3.0, -2.0), (1.0, 4.0)),
+        c=((0.5, -1.0), (2.0, 0.25)),
+        d_skip=(0.5, -0.25),
+    )
+
+    scaled = scale_recurrence_state_and_output(
+        problem,
+        state_scale=0.125,
+        output_scale=0.25,
+    )
+    original_result = run_static_mimo_recurrence_with_backend(
+        problem,
+        backend=TrackingBackend(batch_size=4),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+    )
+    scaled_result = run_static_mimo_recurrence_with_backend(
+        scaled,
+        backend=TrackingBackend(batch_size=4),
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+    )
+
+    for actual_row, expected_row in zip(
+        scaled_result.expected_outputs,
+        original_result.expected_outputs,
+        strict=True,
+    ):
+        assert actual_row == pytest.approx(tuple(0.25 * value for value in expected_row))
+    assert scaled_result.max_abs_error == 0
+    assert scaled.c[0][0] == pytest.approx(2.0 * problem.c[0][0])
+    assert scaled.d_skip == pytest.approx(tuple(0.25 * value for value in problem.d_skip))
