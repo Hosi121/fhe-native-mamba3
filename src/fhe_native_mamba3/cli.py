@@ -1269,6 +1269,12 @@ def mamba_checkpoint_source_diagnostics_cmd(args: argparse.Namespace) -> int:
                         ),
                     }
                 )
+                row["range_groups"] = _range_groups(
+                    row,
+                    target=args.range_target,
+                    warn=args.range_warn,
+                    fail=args.range_fail,
+                )
                 rows.append(row)
 
     payload = {
@@ -1330,8 +1336,30 @@ def _source_diagnostics_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "warn": 0,
                 "fail": 0,
             },
+            "group_status_counts": {
+                "activation": {
+                    "ok": 0,
+                    "target-exceeded": 0,
+                    "warn": 0,
+                    "fail": 0,
+                },
+                "recurrence": {
+                    "ok": 0,
+                    "target-exceeded": 0,
+                    "warn": 0,
+                    "fail": 0,
+                },
+                "residual": {
+                    "ok": 0,
+                    "target-exceeded": 0,
+                    "warn": 0,
+                    "fail": 0,
+                },
+            },
             "by_layer": [],
             "top_range_cases": [],
+            "top_activation_cases": [],
+            "top_recurrence_cases": [],
         }
     score_row = max(rows, key=lambda row: row["range_score"])
     return {
@@ -1346,8 +1374,11 @@ def _source_diagnostics_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "range_status": score_row["range_status"],
         },
         "status_counts": _source_diagnostics_status_counts(rows),
+        "group_status_counts": _source_diagnostics_group_status_counts(rows),
         "by_layer": _source_diagnostics_by_layer(rows),
         "top_range_cases": _source_diagnostics_top_range_cases(rows),
+        "top_activation_cases": _source_diagnostics_top_group_cases(rows, group="activation"),
+        "top_recurrence_cases": _source_diagnostics_top_group_cases(rows, group="recurrence"),
     }
 
 
@@ -1385,9 +1416,41 @@ def _source_diagnostics_top_range_cases(
     ]
 
 
+def _source_diagnostics_top_group_cases(
+    rows: list[dict[str, Any]], *, group: str, limit: int = 5
+) -> list[dict[str, Any]]:
+    top_rows = sorted(
+        rows,
+        key=lambda row: row["range_groups"][group]["range_score"],
+        reverse=True,
+    )[:limit]
+    return [
+        {
+            "layer_index": row["layer_index"],
+            "seq_len": row["seq_len"],
+            **row["range_groups"][group],
+        }
+        for row in top_rows
+    ]
+
+
 def _source_diagnostics_status_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     statuses = ("ok", "target-exceeded", "warn", "fail")
     return {status: sum(1 for row in rows if row["range_status"] == status) for status in statuses}
+
+
+def _source_diagnostics_group_status_counts(
+    rows: list[dict[str, Any]],
+) -> dict[str, dict[str, int]]:
+    statuses = ("ok", "target-exceeded", "warn", "fail")
+    groups = ("activation", "recurrence", "residual")
+    return {
+        group: {
+            status: sum(1 for row in rows if row["range_groups"][group]["range_status"] == status)
+            for status in statuses
+        }
+        for group in groups
+    }
 
 
 def _range_status(score: float, *, target: float, warn: float, fail: float) -> str:
@@ -1398,6 +1461,53 @@ def _range_status(score: float, *, target: float, warn: float, fail: float) -> s
     if score > target:
         return "target-exceeded"
     return "ok"
+
+
+def _range_groups(
+    row: dict[str, Any], *, target: float, warn: float, fail: float
+) -> dict[str, dict[str, Any]]:
+    groups = {
+        "activation": ("rms_norm_output", "causal_conv_pre_silu", "gate_pre_silu"),
+        "recurrence": (
+            "causal_conv_post_silu",
+            "dynamic_b_terms",
+            "dynamic_c_terms",
+            "recurrence_rank_output",
+            "rank_output_pre_gate",
+            "rank_output_post_gate",
+            "final_block_delta",
+        ),
+        "residual": ("layer_input", "final_block_output"),
+    }
+    return {
+        group: _range_group(row, stage_names, target=target, warn=warn, fail=fail)
+        for group, stage_names in groups.items()
+    }
+
+
+def _range_group(
+    row: dict[str, Any],
+    stage_names: tuple[str, ...],
+    *,
+    target: float,
+    warn: float,
+    fail: float,
+) -> dict[str, Any]:
+    candidates = [
+        (stage, row["ranges"][stage]["abs_max"]) for stage in stage_names if stage in row["ranges"]
+    ]
+    if not candidates:
+        return {
+            "range_score": 0.0,
+            "range_score_stage": None,
+            "range_status": "ok",
+        }
+    stage, score = max(candidates, key=lambda item: item[1])
+    return {
+        "range_score": score,
+        "range_score_stage": stage,
+        "range_status": _range_status(score, target=target, warn=warn, fail=fail),
+    }
 
 
 def profile_cmd(args: argparse.Namespace) -> int:
