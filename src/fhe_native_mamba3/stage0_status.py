@@ -12,6 +12,7 @@ def build_stage0_status_report(
     stack_latency_estimate: dict[str, Any] | None = None,
     checkpoint_bootstrap_smoke: dict[str, Any] | None = None,
     segment_samples: dict[str, Any] | None = None,
+    all_layer_recurrence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a compact Stage 0 progress report from existing measurements."""
 
@@ -20,6 +21,7 @@ def build_stage0_status_report(
         "stack_latency_estimate": _stack_latency_summary(stack_latency_estimate),
         "checkpoint_bootstrap_smoke": _checkpoint_smoke_summary(checkpoint_bootstrap_smoke),
         "segment_samples": _segment_sample_summary(segment_samples),
+        "all_layer_recurrence": _all_layer_recurrence_summary(all_layer_recurrence),
     }
     completed_items = _completed_items(measurements)
     remaining_items = [
@@ -110,6 +112,23 @@ def _segment_sample_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _all_layer_recurrence_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {"available": False}
+    summary = payload.get("summary", {})
+    return {
+        "available": True,
+        "layer_count": summary.get("layer_count"),
+        "success_count": summary.get("success_count"),
+        "failure_count": summary.get("failure_count"),
+        "arithmetic_sec_per_token": summary.get("arithmetic_sec_per_token"),
+        "scheduled_bootstraps": summary.get("scheduled_bootstraps"),
+        "bootstrap_sec_per_token": summary.get("bootstrap_sec_per_token"),
+        "estimated_scheduled_sec_per_token": summary.get("estimated_scheduled_sec_per_token"),
+        "max_abs_error": summary.get("max_abs_error"),
+    }
+
+
 def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
     items = [
         "import real Mamba checkpoint into recurrence smoke path",
@@ -123,6 +142,11 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         items.append("insert and execute an actual bootstrap in real-checkpoint recurrence")
     if measurements["segment_samples"].get("bootstrap_enabled_sample_count"):
         items.append("sample representative recurrence segment with bootstrap enabled")
+    all_layer = measurements["all_layer_recurrence"]
+    if all_layer.get("layer_count") and all_layer.get("success_count") == all_layer.get(
+        "layer_count"
+    ):
+        items.append("measure OpenFHE recurrence arithmetic for every selected layer")
     return items
 
 

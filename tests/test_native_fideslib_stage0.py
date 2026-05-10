@@ -11,6 +11,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     checkpoint_openfhe_slurm = ROOT / "slurm" / "mamba_checkpoint_openfhe_smoke.sbatch"
     bootstrap_openfhe_slurm = ROOT / "slurm" / "openfhe_bootstrap_latency.sbatch"
     segment_openfhe_slurm = ROOT / "slurm" / "openfhe_segment_samples.sbatch"
+    all_layer_openfhe_slurm = ROOT / "slurm" / "openfhe_all_layer_recurrence.sbatch"
 
     assert source.exists()
     assert cmake.exists()
@@ -19,6 +20,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert checkpoint_openfhe_slurm.exists()
     assert bootstrap_openfhe_slurm.exists()
     assert segment_openfhe_slurm.exists()
+    assert all_layer_openfhe_slurm.exists()
 
     source_text = source.read_text()
     assert "fideslib-static-mimo-recurrence" in source_text
@@ -63,3 +65,8 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "run_openfhe_segment_samples.py" in segment_openfhe_text
     assert "BOOTSTRAP_AFTER_TOKENS" in segment_openfhe_text
     assert "MULTIPLICATIVE_DEPTH_OVERRIDE" in segment_openfhe_text
+
+    all_layer_openfhe_text = all_layer_openfhe_slurm.read_text()
+    assert "run_openfhe_all_layer_recurrence.py" in all_layer_openfhe_text
+    assert "--all-layers" in all_layer_openfhe_text
+    assert "BOOTSTRAP_SEC" in all_layer_openfhe_text

@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.61`. Future changes should bump
+The project is currently at SemVer `0.2.62`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -254,6 +254,13 @@ Run it on a SLURM node when bootstrap is enabled:
 ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,RUN_NAME=openfhe-bootstrap-segment-samples,OFFSET=10,BOOTSTRAP_AFTER_TOKENS=1 slurm/openfhe_segment_samples.sbatch'
 ```
 
+Measure OpenFHE recurrence arithmetic across all 24 selected layers and add
+the measured bootstrap latency through the current scheduler:
+
+```bash
+ssh high 'cd ~/cipher/fhe-native-mamba3 && sbatch --export=ALL,RUN_NAME=openfhe-all-layer-recurrence-v062,N_LAYERS=24,MULTIPLICATIVE_DEPTH_OVERRIDE=9,RING_DIM=65536,BOOTSTRAP_SEC=14.540211920975707 slurm/openfhe_all_layer_recurrence.sbatch'
+```
+
 Build a compact Stage 0 status report from the latest measured artifacts:
 
 ```bash
@@ -261,6 +268,8 @@ scripts/build_stage0_status_report.py \
   --bootstrap-latency-json runs/openfhe-bootstrap-latency-v059-b32768-cf20.json \
   --stack-latency-json runs/openfhe-stack-latency-estimate-v059-bootstrap-measured-b32768.json \
   --checkpoint-bootstrap-smoke-json runs/mamba-130m-layer20-openfhe-bootstrap-smoke-v060.json \
+  --segment-samples-json runs/openfhe-bootstrap-segment-samples-v061-sbatch.json \
+  --all-layer-recurrence-json runs/openfhe-all-layer-recurrence-v062.json \
   --output-json runs/stage0-status-report.json
 ```
 
