@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ def main() -> int:
     import torch
 
     from fhe_native_mamba3 import __version__
-    from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
+    from fhe_native_mamba3.backends.openfhe import OpenFheBootstrapConfig, OpenFheCkksBackend
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.cli import _parse_int_list, _recurrence_problem_stats
     from fhe_native_mamba3.mamba_checkpoint import (
@@ -95,6 +96,20 @@ def main() -> int:
         if schedule_group
         else ()
     )
+
+    actual_bootstrap_probe = None
+    if args.execute_scheduled_bootstraps:
+        actual_bootstrap_probe = _run_scheduled_bootstraps(
+            state_slots=d_state * mimo_rank,
+            scheduled_bootstraps=scheduled_bootstraps,
+            args=args,
+            bootstrap_config=OpenFheBootstrapConfig(
+                level_budget=args.bootstrap_level_budget,
+                dim1=args.bootstrap_dim1,
+                slots=args.bootstrap_slots or None,
+                correction_factor=args.bootstrap_correction_factor,
+            ),
+        )
 
     output_path = Path(args.output_json)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -239,6 +254,7 @@ def main() -> int:
                     mimo_rank=mimo_rank,
                     scheduled_bootstraps=scheduled_bootstraps,
                     bootstrap_before_layers=bootstrap_before_layers,
+                    actual_bootstrap_probe=actual_bootstrap_probe,
                     rows=rows,
                 )
                 output_path.write_text(
@@ -259,6 +275,7 @@ def main() -> int:
                 mimo_rank=mimo_rank,
                 scheduled_bootstraps=scheduled_bootstraps,
                 bootstrap_before_layers=bootstrap_before_layers,
+                actual_bootstrap_probe=actual_bootstrap_probe,
                 rows=rows,
             )
             output_path.write_text(
@@ -278,6 +295,7 @@ def main() -> int:
         mimo_rank=mimo_rank,
         scheduled_bootstraps=scheduled_bootstraps,
         bootstrap_before_layers=bootstrap_before_layers,
+        actual_bootstrap_probe=actual_bootstrap_probe,
         rows=rows,
     )
     output_path.write_text(
@@ -301,11 +319,22 @@ def _payload(
     mimo_rank: int,
     scheduled_bootstraps: int,
     bootstrap_before_layers: tuple[int, ...],
+    actual_bootstrap_probe: dict[str, Any] | None,
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     successful_rows = [row for row in rows if row.get("status") == "ok"]
     arithmetic_sec_per_token = sum(float(row["latency_sec_per_token"]) for row in successful_rows)
-    bootstrap_sec_per_token = scheduled_bootstraps * args.bootstrap_sec
+    estimated_bootstrap_sec_per_token = scheduled_bootstraps * args.bootstrap_sec
+    actual_bootstrap_sec_per_token = (
+        actual_bootstrap_probe.get("latency_sec_per_token")
+        if actual_bootstrap_probe and actual_bootstrap_probe.get("available")
+        else None
+    )
+    actual_scheduled_sec_per_token = (
+        arithmetic_sec_per_token + float(actual_bootstrap_sec_per_token)
+        if actual_bootstrap_sec_per_token is not None
+        else None
+    )
     return {
         "version": version,
         "stage": "openfhe-all-layer-recurrence",
@@ -326,6 +355,7 @@ def _payload(
             "bootstrap_sec": args.bootstrap_sec,
             "scaling_mod_size": args.scaling_mod_size,
             "ring_dim": args.ring_dim,
+            "execute_scheduled_bootstraps": args.execute_scheduled_bootstraps,
         },
         "summary": {
             "layer_count": len(rows),
@@ -333,8 +363,21 @@ def _payload(
             "failure_count": len(rows) - len(successful_rows),
             "arithmetic_sec_per_token": arithmetic_sec_per_token,
             "scheduled_bootstraps": scheduled_bootstraps,
-            "bootstrap_sec_per_token": bootstrap_sec_per_token,
-            "estimated_scheduled_sec_per_token": arithmetic_sec_per_token + bootstrap_sec_per_token,
+            "bootstrap_sec_per_token": estimated_bootstrap_sec_per_token,
+            "estimated_scheduled_sec_per_token": arithmetic_sec_per_token
+            + estimated_bootstrap_sec_per_token,
+            "actual_scheduled_bootstraps": (
+                actual_bootstrap_probe.get("bootstrap_count")
+                if actual_bootstrap_probe and actual_bootstrap_probe.get("available")
+                else 0
+            ),
+            "actual_bootstrap_sec_per_token": actual_bootstrap_sec_per_token,
+            "actual_scheduled_sec_per_token": actual_scheduled_sec_per_token,
+            "actual_bootstrap_max_abs_error": (
+                actual_bootstrap_probe.get("max_abs_error")
+                if actual_bootstrap_probe and actual_bootstrap_probe.get("available")
+                else None
+            ),
             "max_layer_latency_sec_per_token": max(
                 (float(row["latency_sec_per_token"]) for row in successful_rows),
                 default=0.0,
@@ -345,7 +388,76 @@ def _payload(
             ),
             "bootstrap_before_layers": list(bootstrap_before_layers),
         },
+        "actual_scheduled_bootstrap_probe": actual_bootstrap_probe,
         "rows": rows,
+    }
+
+
+def _run_scheduled_bootstraps(
+    *,
+    state_slots: int,
+    scheduled_bootstraps: int,
+    args: argparse.Namespace,
+    bootstrap_config: Any,
+) -> dict[str, Any]:
+    from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
+
+    if scheduled_bootstraps <= 0:
+        return {
+            "available": True,
+            "bootstrap_count": 0,
+            "latency_sec_per_token": 0.0,
+            "max_abs_error": 0.0,
+        }
+    backend = OpenFheCkksBackend(
+        batch_size=state_slots,
+        multiplicative_depth=args.bootstrap_multiplicative_depth,
+        scaling_mod_size=args.bootstrap_scaling_mod_size,
+        rotations=(),
+        ring_dimension=args.ring_dim or None,
+        bootstrap_config=bootstrap_config,
+    )
+    probe_values = tuple(((index % 17) - 8) * 1e-3 for index in range(state_slots))
+    ct = backend.encrypt(probe_values)
+    started = time.perf_counter()
+    for _ in range(scheduled_bootstraps):
+        ct = backend.bootstrap(ct)
+    elapsed = time.perf_counter() - started
+    backend.stats().eval_seconds += elapsed
+    sample_len = min(64, state_slots)
+    decrypted = backend.decrypt(ct, length=sample_len)
+    max_abs_error = max(
+        (
+            abs(actual - expected)
+            for actual, expected in zip(decrypted, probe_values[:sample_len], strict=True)
+        ),
+        default=0.0,
+    )
+    stats = backend.stats().to_json_dict()
+    return {
+        "available": True,
+        "bootstrap_count": scheduled_bootstraps,
+        "state_slots": state_slots,
+        "batch_size": backend.batch_size,
+        "ring_dimension": backend.ring_dimension,
+        "multiplicative_depth": args.bootstrap_multiplicative_depth,
+        "scaling_mod_size": args.bootstrap_scaling_mod_size,
+        "bootstrap_config": {
+            "level_budget": list(bootstrap_config.level_budget),
+            "dim1": list(bootstrap_config.dim1),
+            "slots": bootstrap_config.slots,
+            "correction_factor": bootstrap_config.correction_factor,
+        },
+        "setup_seconds": stats["setup_seconds"],
+        "latency_sec_per_token": elapsed,
+        "latency_sec_per_bootstrap": elapsed / scheduled_bootstraps,
+        "max_abs_error": max_abs_error,
+        "operation_counts": {
+            "bootstraps": stats["bootstrap_count"],
+            "encrypt": stats["encrypt_count"],
+            "decrypt": stats["decrypt_count"],
+            "encode": stats["encode_count"],
+        },
     }
 
 
@@ -401,7 +513,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--scaling-mod-size", type=int, default=50)
     parser.add_argument("--ring-dim", type=int, default=0)
     parser.add_argument("--bootstrap-sec", type=float, default=0.0)
+    parser.add_argument("--execute-scheduled-bootstraps", action="store_true")
+    parser.add_argument("--bootstrap-multiplicative-depth", type=int, default=28)
+    parser.add_argument("--bootstrap-scaling-mod-size", type=int, default=40)
+    parser.add_argument("--bootstrap-level-budget", type=_parse_pair, default=(5, 4))
+    parser.add_argument("--bootstrap-dim1", type=_parse_pair, default=(0, 0))
+    parser.add_argument("--bootstrap-slots", type=int, default=0)
+    parser.add_argument("--bootstrap-correction-factor", type=int, default=20)
     return parser.parse_args()
+
+
+def _parse_pair(value: str) -> tuple[int, int]:
+    parts = value.split(",")
+    if len(parts) != 2:
+        msg = f"expected two comma-separated integers, got {value!r}"
+        raise argparse.ArgumentTypeError(msg)
+    try:
+        return (int(parts[0]), int(parts[1]))
+    except ValueError as exc:
+        msg = f"expected two comma-separated integers, got {value!r}"
+        raise argparse.ArgumentTypeError(msg) from exc
 
 
 if __name__ == "__main__":

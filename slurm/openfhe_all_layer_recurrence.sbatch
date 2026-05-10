@@ -27,6 +27,13 @@ SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-50}"
 MULTIPLICATIVE_DEPTH_OVERRIDE="${MULTIPLICATIVE_DEPTH_OVERRIDE:-9}"
 RING_DIM="${RING_DIM:-65536}"
 BOOTSTRAP_SEC="${BOOTSTRAP_SEC:-14.540211920975707}"
+EXECUTE_SCHEDULED_BOOTSTRAP="${EXECUTE_SCHEDULED_BOOTSTRAP:-0}"
+BOOTSTRAP_MULTIPLICATIVE_DEPTH="${BOOTSTRAP_MULTIPLICATIVE_DEPTH:-28}"
+BOOTSTRAP_SCALING_MOD_SIZE="${BOOTSTRAP_SCALING_MOD_SIZE:-40}"
+BOOTSTRAP_LEVEL_BUDGET="${BOOTSTRAP_LEVEL_BUDGET:-5,4}"
+BOOTSTRAP_DIM1="${BOOTSTRAP_DIM1:-0,0}"
+BOOTSTRAP_SLOTS="${BOOTSTRAP_SLOTS:-}"
+BOOTSTRAP_CORRECTION_FACTOR="${BOOTSTRAP_CORRECTION_FACTOR:-20}"
 INSTALL_OPENFHE="${INSTALL_OPENFHE:-0}"
 
 mkdir -p runs slurm
@@ -81,6 +88,18 @@ scale_plan_args=()
 if [[ -f "${SCALE_PLAN_JSON}" ]]; then
   scale_plan_args=(--scale-plan-json "${SCALE_PLAN_JSON}")
 fi
+scheduled_bootstrap_args=()
+if [[ "${EXECUTE_SCHEDULED_BOOTSTRAP}" == "1" ]]; then
+  scheduled_bootstrap_args+=(--execute-scheduled-bootstraps)
+  scheduled_bootstrap_args+=(--bootstrap-multiplicative-depth "${BOOTSTRAP_MULTIPLICATIVE_DEPTH}")
+  scheduled_bootstrap_args+=(--bootstrap-scaling-mod-size "${BOOTSTRAP_SCALING_MOD_SIZE}")
+  scheduled_bootstrap_args+=(--bootstrap-level-budget "${BOOTSTRAP_LEVEL_BUDGET}")
+  scheduled_bootstrap_args+=(--bootstrap-dim1 "${BOOTSTRAP_DIM1}")
+  scheduled_bootstrap_args+=(--bootstrap-correction-factor "${BOOTSTRAP_CORRECTION_FACTOR}")
+  if [[ -n "${BOOTSTRAP_SLOTS}" ]]; then
+    scheduled_bootstrap_args+=(--bootstrap-slots "${BOOTSTRAP_SLOTS}")
+  fi
+fi
 
 "${PYTHON}" scripts/run_openfhe_all_layer_recurrence.py "${CHECKPOINT}" \
   --output-json "${OUTPUT_JSON}" \
@@ -93,7 +112,8 @@ fi
   --multiplicative-depth-override "${MULTIPLICATIVE_DEPTH_OVERRIDE}" \
   --scaling-mod-size "${SCALING_MOD_SIZE}" \
   --ring-dim "${RING_DIM}" \
-  --bootstrap-sec "${BOOTSTRAP_SEC}"
+  --bootstrap-sec "${BOOTSTRAP_SEC}" \
+  "${scheduled_bootstrap_args[@]}"
 
 section "Summary"
 "${PYTHON}" - "${OUTPUT_JSON}" <<'PY'

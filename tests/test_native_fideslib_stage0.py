@@ -70,3 +70,5 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "run_openfhe_all_layer_recurrence.py" in all_layer_openfhe_text
     assert "--all-layers" in all_layer_openfhe_text
     assert "BOOTSTRAP_SEC" in all_layer_openfhe_text
+    assert "EXECUTE_SCHEDULED_BOOTSTRAP" in all_layer_openfhe_text
+    assert "BOOTSTRAP_MULTIPLICATIVE_DEPTH" in all_layer_openfhe_text
