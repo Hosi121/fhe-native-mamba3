@@ -28,6 +28,7 @@ PreRecurrenceStage = Literal[
     "state_rank_decay",
     "gate_post_silu",
 ]
+RmsNormMode = Literal["plaintext-exact", "poly-invsqrt"]
 
 PRE_RECURRENCE_STAGES: tuple[PreRecurrenceStage, ...] = (
     "rms_norm_output",
@@ -58,6 +59,9 @@ class CheckpointPreRecurrenceStageGate:
     approximation: str
     polynomial_degree: int | None
     polynomial_range: float | None
+    rms_norm_mode: str | None
+    inv_sqrt_degree: int | None
+    inv_sqrt_range: tuple[float, float] | None
     max_abs_error: float
     atol: float
     passed: bool
@@ -86,6 +90,9 @@ def run_checkpoint_pre_recurrence_stage_gate(
     norm_eps: float = 1e-5,
     polynomial_degree: int = 7,
     polynomial_range: float = 6.0,
+    rms_norm_mode: RmsNormMode = "plaintext-exact",
+    inv_sqrt_degree: int = 5,
+    inv_sqrt_range: tuple[float, float] = (0.01, 4.0),
     atol: float = 1e-6,
 ) -> CheckpointPreRecurrenceStageGate:
     """Run one source-style pre-recurrence stage with encrypted stage arithmetic."""
@@ -104,6 +111,15 @@ def run_checkpoint_pre_recurrence_stage_gate(
         raise ValueError(msg)
     if polynomial_range <= 0:
         msg = "polynomial_range must be positive"
+        raise ValueError(msg)
+    if rms_norm_mode not in {"plaintext-exact", "poly-invsqrt"}:
+        msg = f"unsupported rms_norm_mode: {rms_norm_mode}"
+        raise ValueError(msg)
+    if inv_sqrt_degree <= 0:
+        msg = "inv_sqrt_degree must be positive"
+        raise ValueError(msg)
+    if inv_sqrt_range[0] <= 0 or inv_sqrt_range[1] <= inv_sqrt_range[0]:
+        msg = "inv_sqrt_range must be a positive increasing pair"
         raise ValueError(msg)
     if atol < 0:
         msg = "atol must be non-negative"
@@ -134,15 +150,30 @@ def run_checkpoint_pre_recurrence_stage_gate(
         raise ValueError(msg)
 
     if stage == "rms_norm_output":
-        output_cts = tuple(
-            resolved_backend.encrypt(row) for row in _token_rows(stages.rms_norm_output[0])
-        )
+        if rms_norm_mode == "poly-invsqrt":
+            output_cts = _rms_norm_sequence_ciphertexts(
+                _token_rows(layer_input[0]),
+                weight=tensors.norm_weight,
+                eps=norm_eps,
+                backend=resolved_backend,
+                degree=inv_sqrt_degree,
+                approximation_range=inv_sqrt_range,
+            )
+            operation_class = "ct-ct encrypted RMSNorm polynomial approximation"
+            approximation = "chebyshev-power-invsqrt"
+            degree = inv_sqrt_degree
+            poly_range = None
+            depth = inv_sqrt_degree + 2
+        else:
+            output_cts = tuple(
+                resolved_backend.encrypt(row) for row in _token_rows(stages.rms_norm_output[0])
+            )
+            operation_class = "plaintext exact stage output"
+            approximation = "exact-plaintext"
+            degree = None
+            poly_range = None
+            depth = 0
         expected = stages.rms_norm_output[0]
-        operation_class = "plaintext exact stage output"
-        approximation = "exact-plaintext"
-        degree = None
-        poly_range = None
-        depth = 0
     elif stage == "projected_rank_input":
         output_cts = _linear_sequence_ciphertexts(
             _token_rows(stages.rms_norm_output[0]),
@@ -275,6 +306,9 @@ def run_checkpoint_pre_recurrence_stage_gate(
         approximation=approximation,
         polynomial_degree=degree,
         polynomial_range=poly_range,
+        rms_norm_mode=rms_norm_mode if stage == "rms_norm_output" else None,
+        inv_sqrt_degree=inv_sqrt_degree if stage == "rms_norm_output" else None,
+        inv_sqrt_range=inv_sqrt_range if stage == "rms_norm_output" else None,
         max_abs_error=max_abs_error,
         atol=atol,
         passed=max_abs_error <= atol,
@@ -338,6 +372,78 @@ def _linear_ciphertext(
     return output_ct
 
 
+def _rms_norm_sequence_ciphertexts(
+    input_rows: tuple[tuple[float, ...], ...],
+    *,
+    weight: Tensor,
+    eps: float,
+    backend: FHEBackend,
+    degree: int,
+    approximation_range: tuple[float, float],
+) -> tuple[Any, ...]:
+    weights = [float(value) for value in weight.detach().cpu().float().reshape(-1)]
+    return tuple(
+        _rms_norm_ciphertext(
+            backend.encrypt(row),
+            output_dim=len(row),
+            weight=weights,
+            eps=eps,
+            backend=backend,
+            degree=degree,
+            approximation_range=approximation_range,
+        )
+        for row in input_rows
+    )
+
+
+def _rms_norm_ciphertext(
+    input_ct: Any,
+    *,
+    output_dim: int,
+    weight: list[float],
+    eps: float,
+    backend: FHEBackend,
+    degree: int,
+    approximation_range: tuple[float, float],
+) -> Any:
+    square_ct = backend.mul_ct(input_ct, input_ct)
+    mean_square_ct = backend.encrypt([eps])
+    mean_scale = 1.0 / output_dim
+    for slot in range(output_dim):
+        mask = [0.0] * backend.batch_size
+        mask[slot] = mean_scale
+        term = backend.mul_plain(square_ct, backend.encode(mask))
+        if slot:
+            term = backend.rotate(term, slot)
+        mean_square_ct = backend.add(mean_square_ct, term)
+
+    inv_sqrt_ct = _evaluate_power_polynomial_ciphertext(
+        mean_square_ct,
+        _inv_sqrt_power_coefficients(degree, approximation_range),
+        output_dim=1,
+        backend=backend,
+    )
+    scale_ct = _broadcast_slot0(inv_sqrt_ct, output_dim=output_dim, backend=backend)
+    normalized_ct = backend.mul_ct(input_ct, scale_ct)
+    return backend.mul_plain(
+        normalized_ct,
+        backend.encode(_padded(weight[:output_dim], backend.batch_size)),
+    )
+
+
+def _broadcast_slot0(
+    ciphertext: Any,
+    *,
+    output_dim: int,
+    backend: FHEBackend,
+) -> Any:
+    broadcast = backend.encrypt([0.0] * backend.batch_size)
+    for slot in range(output_dim):
+        term = ciphertext if slot == 0 else backend.rotate(ciphertext, -slot)
+        broadcast = backend.add(broadcast, term)
+    return broadcast
+
+
 def _causal_depthwise_conv_ciphertexts(
     input_rows: tuple[tuple[float, ...], ...],
     *,
@@ -396,14 +502,25 @@ def _silu_ciphertext(
     degree: int,
     approximation_range: float,
 ) -> Any:
-    coeffs = _silu_power_coefficients(degree, approximation_range)
-    result = backend.encrypt([float(coeffs[-1])] * output_dim)
-    for coefficient in reversed(coeffs[:-1]):
+    return _evaluate_power_polynomial_ciphertext(
+        input_ct,
+        _silu_power_coefficients(degree, approximation_range),
+        output_dim=output_dim,
+        backend=backend,
+    )
+
+
+def _evaluate_power_polynomial_ciphertext(
+    input_ct: Any,
+    coefficients: tuple[float, ...],
+    *,
+    output_dim: int,
+    backend: FHEBackend,
+) -> Any:
+    result = backend.encrypt([float(coefficients[-1])] * output_dim)
+    for coefficient in reversed(coefficients[:-1]):
         result = backend.mul_ct(result, input_ct)
-        result = backend.add(
-            result,
-            backend.encrypt([float(coefficient)] * output_dim),
-        )
+        result = backend.add(result, backend.encrypt([float(coefficient)] * output_dim))
     return result
 
 
@@ -417,6 +534,19 @@ def _silu_power_coefficients(degree: int, approximation_range: float) -> tuple[f
         deg=degree,
         domain=[-approximation_range, approximation_range],
     )
+    polynomial = chebyshev.convert(kind=Polynomial)
+    return tuple(float(value) for value in polynomial.coef)
+
+
+@lru_cache(maxsize=32)
+def _inv_sqrt_power_coefficients(
+    degree: int,
+    approximation_range: tuple[float, float],
+) -> tuple[float, ...]:
+    lower, upper = approximation_range
+    xs = np.linspace(lower, upper, max(2048, 128 * degree + 1))
+    ys = 1.0 / np.sqrt(xs)
+    chebyshev = Chebyshev.fit(xs, ys, deg=degree, domain=[lower, upper])
     polynomial = chebyshev.convert(kind=Polynomial)
     return tuple(float(value) for value in polynomial.coef)
 

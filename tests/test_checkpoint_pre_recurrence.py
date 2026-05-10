@@ -71,6 +71,35 @@ def test_pre_recurrence_plaintext_exact_stage_gates_are_explicit(
     assert gate.backend_stats["encrypt_count"] == gate.seq_len
 
 
+def test_pre_recurrence_rms_norm_poly_invsqrt_gate_reports_encrypted_approximation() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    gate = run_checkpoint_pre_recurrence_stage_gate(
+        state_dict,
+        layer_input,
+        stage="rms_norm_output",
+        d_state=2,
+        mimo_rank=4,
+        backend=TrackingBackend(batch_size=8),
+        rms_norm_mode="poly-invsqrt",
+        inv_sqrt_degree=19,
+        inv_sqrt_range=(0.01, 1.0),
+        atol=1e-2,
+    )
+
+    assert gate.passed is True
+    assert gate.operation_class == "ct-ct encrypted RMSNorm polynomial approximation"
+    assert gate.approximation == "chebyshev-power-invsqrt"
+    assert gate.rms_norm_mode == "poly-invsqrt"
+    assert gate.inv_sqrt_degree == 19
+    assert gate.inv_sqrt_range == (0.01, 1.0)
+    assert gate.depth_estimate == 21
+    assert gate.backend_stats["ct_ct_mul_count"] > 0
+    assert gate.backend_stats["rotation_count"] > 0
+    assert gate.max_abs_error < 1e-2
+
+
 @pytest.mark.parametrize("stage", ["dynamic_b", "dynamic_c"])
 def test_pre_recurrence_dynamic_bc_gates_match_source(stage: str) -> None:
     state_dict = _tiny_hf_mamba_state_dict()
