@@ -113,13 +113,14 @@ def test_mamba_checkpoint_bundle_adapts_huggingface_mamba_keys(tmp_path) -> None
     assert torch.equal(
         model.blocks[0].out_rank.weight, source["backbone.layers.0.mixer.out_proj.weight"]
     )
+    assert torch.equal(model.blocks[0].d_skip, source["backbone.layers.0.mixer.D"])
     assert torch.equal(
         model.blocks[0].b_static, source["backbone.layers.0.mixer.x_proj.weight"][2:5]
     )
     assert torch.equal(
         model.blocks[0].c_static, source["backbone.layers.0.mixer.x_proj.weight"][5:8]
     )
-    assert report.skipped_count == 5
+    assert report.skipped_count == 4
 
 
 def _fake_mamba_state_dict() -> dict[str, torch.Tensor]:

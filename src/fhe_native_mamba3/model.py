@@ -128,6 +128,7 @@ class FheMamba3Block(nn.Module):
         self.in_rank = nn.Linear(config.d_model, config.mimo_rank)
         self.skip = nn.Linear(config.d_model, config.d_model)
         self.out_rank = nn.Linear(config.mimo_rank, config.d_model, bias=False)
+        self.d_skip = nn.Parameter(torch.ones(config.mimo_rank))
         self.gate = PolynomialGate(config.d_model, config.gate_mode)
         self.dropout = nn.Dropout(config.dropout)
 
@@ -261,6 +262,7 @@ class FheMamba3Block(nn.Module):
                 y_rank = (c_terms[:, t] * state).sum(dim=1)
                 outputs.append(y_rank)
             y = torch.stack(outputs, dim=1)
+        y = y + rank_input * self.d_skip.to(dtype=x.dtype, device=x.device)
         update = self.out_rank(y) + self.skip(x)
         update = self.gate(residual, update)
         result = residual + self.dropout(update)

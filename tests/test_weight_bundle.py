@@ -56,6 +56,20 @@ def test_weight_bundle_manifest_can_be_loaded_without_weights(tmp_path) -> None:
     assert min(tensor.calibration.encode_scale_bits for tensor in manifest.tensors) >= 20
 
 
+def test_weight_bundle_loader_fills_legacy_missing_d_skip(tmp_path) -> None:
+    config = FheMamba3Config(vocab_size=16, d_model=8, n_layers=1, d_state=2, mimo_rank=2)
+    model = FheMamba3ForCausalLM(config)
+    manifest = save_weight_bundle(model, tmp_path)
+    weights_path = tmp_path / manifest.weights_file
+    state_dict = torch.load(weights_path, weights_only=True)
+    del state_dict["blocks.0.d_skip"]
+    torch.save(state_dict, weights_path)
+
+    restored, _ = load_weight_bundle_model(tmp_path)
+
+    assert torch.equal(restored.blocks[0].d_skip, torch.ones(config.mimo_rank))
+
+
 def test_weight_bundle_from_checkpoint_round_trips(tmp_path) -> None:
     config = FheMamba3Config(vocab_size=16, d_model=8, n_layers=1, d_state=2, mimo_rank=2)
     model = FheMamba3ForCausalLM(config)

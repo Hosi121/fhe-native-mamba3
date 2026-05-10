@@ -259,6 +259,9 @@ def _recurrence_problem_summary(extracted: Any) -> dict[str, Any]:
             "rank_inputs_abs_max": _matrix_abs_max(problem.rank_inputs),
             "b_abs_max": _matrix_abs_max(problem.b),
             "c_abs_max": _matrix_abs_max(problem.c),
+            "d_skip_abs_max": max((abs(value) for value in problem.d_skip), default=0.0)
+            if problem.d_skip is not None
+            else None,
             "decay_min": min(problem.decay) if problem.decay else None,
             "decay_max": max(problem.decay) if problem.decay else None,
         },

@@ -371,6 +371,16 @@ def _adapt_layer(
         statuses.append(
             _initialized_status(f"blocks.{layer_index}.out_rank.weight", block.out_rank.weight)
         )
+    if d_key is not None:
+        _copy_exact_or_fit(
+            block.d_skip,
+            source_state_dict[d_key],
+            target=f"blocks.{layer_index}.d_skip",
+            source=d_key,
+            statuses=statuses,
+        )
+    else:
+        statuses.append(_initialized_status(f"blocks.{layer_index}.d_skip", block.d_skip))
 
     b_source, c_source = _extract_bc_sources(
         source_state_dict,
@@ -420,7 +430,6 @@ def _adapt_layer(
     for key, target_name in (
         (dt_proj_weight_key, "dt_proj.weight"),
         (dt_proj_bias_key, "dt_proj.bias"),
-        (d_key, "D"),
         (conv1d_weight_key, "conv1d.weight"),
         (conv1d_bias_key, "conv1d.bias"),
     ):

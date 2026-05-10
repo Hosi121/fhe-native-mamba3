@@ -39,6 +39,9 @@ def test_weight_bundle_recurrence_problem_uses_saved_static_weights(tmp_path) ->
     assert extracted.problem.c == tuple(
         tuple(float(value) for value in row) for row in model.blocks[0].c_static.tolist()
     )
+    assert extracted.problem.d_skip == tuple(
+        float(value) for value in model.blocks[0].d_skip.tolist()
+    )
 
     result = run_static_mimo_recurrence_with_backend(
         extracted.problem,

@@ -22,6 +22,7 @@ class OpenFheRecurrenceProblem:
     decay: tuple[float, ...]
     b: tuple[tuple[float, ...], ...]
     c: tuple[tuple[float, ...], ...]
+    d_skip: tuple[float, ...] | None = None
 
     @property
     def seq_len(self) -> int:
@@ -101,6 +102,7 @@ def plaintext_static_recurrence(
         outputs.append(
             tuple(
                 sum(problem.c[n][r] * state[n][r] for n in range(problem.d_state))
+                + ((problem.d_skip[r] * rank_input[r]) if problem.d_skip is not None else 0.0)
                 for r in range(problem.mimo_rank)
             )
         )
@@ -124,6 +126,19 @@ def _expanded_update(
     rank: int,
 ) -> list[float]:
     return [b_matrix[n][r] * rank_input[r] for r in range(rank) for n in range(d_state)]
+
+
+def _d_skip_output_vector(
+    *,
+    rank_input: tuple[float, ...],
+    d_skip: tuple[float, ...],
+    output_slots: tuple[int, ...],
+    batch_size: int,
+) -> list[float]:
+    values = [0.0] * batch_size
+    for r, slot in enumerate(output_slots):
+        values[slot] = d_skip[r] * rank_input[r]
+    return values
 
 
 def required_readout_rotations(
@@ -261,6 +276,35 @@ def _readout_rank_reduce(
     return output_ct
 
 
+def _d_skip_from_input_ciphertext(
+    *,
+    backend: FHEBackend,
+    input_ct: Any,
+    d_skip: tuple[float, ...],
+    d_state: int,
+    rank: int,
+    output_slots: tuple[int, ...],
+) -> Any:
+    if all(output_slots[r] == r * d_state for r in range(rank)):
+        mask = [0.0] * backend.batch_size
+        for r in range(rank):
+            mask[r * d_state] = d_skip[r]
+        return backend.mul_plain(input_ct, backend.encode(mask))
+
+    output_ct = backend.encrypt([0.0] * backend.batch_size)
+    for r in range(rank):
+        source = r * d_state
+        target = output_slots[r]
+        mask = [0.0] * backend.batch_size
+        mask[source] = d_skip[r]
+        term = backend.mul_plain(input_ct, backend.encode(mask))
+        shift = source - target
+        if shift:
+            term = backend.rotate(term, shift)
+        output_ct = backend.add(output_ct, term)
+    return output_ct
+
+
 def run_static_mimo_recurrence_with_backend(
     problem: OpenFheRecurrenceProblem,
     *,
@@ -280,6 +324,9 @@ def run_static_mimo_recurrence_with_backend(
     if backend.batch_size < slots:
         msg = f"backend batch_size={backend.batch_size} is smaller than required slots={slots}"
         raise ValueError(msg)
+    if problem.d_skip is not None and len(problem.d_skip) != rank:
+        msg = f"d_skip length must match mimo_rank={rank}"
+        raise ValueError(msg)
 
     started = time.perf_counter()
     state_ct = backend.encrypt([0.0] * backend.batch_size)
@@ -295,6 +342,7 @@ def run_static_mimo_recurrence_with_backend(
     )
     client_plaintext_public_weight_multiplies = 0
     for rank_input in problem.rank_inputs:
+        input_ct = None
         if input_mode == "server-bx":
             input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
             update_ct = backend.mul_plain(input_ct, b_pt)
@@ -313,6 +361,27 @@ def run_static_mimo_recurrence_with_backend(
             rank=rank,
             readout_strategy=readout_strategy,
         )
+        if problem.d_skip is not None:
+            if input_ct is None:
+                d_skip_ct = backend.encrypt(
+                    _d_skip_output_vector(
+                        rank_input=rank_input,
+                        d_skip=problem.d_skip,
+                        output_slots=output_slots,
+                        batch_size=backend.batch_size,
+                    )
+                )
+                client_plaintext_public_weight_multiplies += rank
+            else:
+                d_skip_ct = _d_skip_from_input_ciphertext(
+                    backend=backend,
+                    input_ct=input_ct,
+                    d_skip=problem.d_skip,
+                    d_state=d_state,
+                    rank=rank,
+                    output_slots=output_slots,
+                )
+            output_ct = backend.add(output_ct, d_skip_ct)
         output_values = backend.decrypt(output_ct, length=backend.batch_size)
         decrypted_outputs.append(tuple(output_values[slot] for slot in output_slots))
     eval_seconds = time.perf_counter() - started

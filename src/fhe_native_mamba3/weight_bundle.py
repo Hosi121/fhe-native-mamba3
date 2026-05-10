@@ -157,6 +157,7 @@ def load_weight_bundle_model(
     config = FheMamba3Config(**manifest.model_config)
     model = FheMamba3ForCausalLM(config)
     state_dict = _load_state_dict(Path(bundle_dir) / manifest.weights_file, map_location)
+    state_dict = _migrate_state_dict_for_model(state_dict, model)
     model.load_state_dict(state_dict)
     return model, manifest
 
@@ -177,6 +178,7 @@ def save_weight_bundle_from_checkpoint(
     if not isinstance(state_dict, dict):
         msg = "checkpoint['model'] must be a state_dict"
         raise ValueError(msg)
+    state_dict = _migrate_state_dict_for_model(state_dict, model)
     model.load_state_dict(state_dict)
     return save_weight_bundle(model, output_dir, encoding_config)
 
@@ -218,6 +220,20 @@ def _load_state_dict(path: Path, map_location: str | torch.device) -> dict[str, 
         msg = "weight bundle must contain a state_dict"
         raise ValueError(msg)
     return state_dict
+
+
+def _migrate_state_dict_for_model(
+    state_dict: dict[str, torch.Tensor],
+    model: FheMamba3ForCausalLM,
+) -> dict[str, torch.Tensor]:
+    """Fill additive-compatible parameters absent from older local bundles."""
+
+    model_state = model.state_dict()
+    migrated = dict(state_dict)
+    for name, tensor in model_state.items():
+        if name.endswith(".d_skip") and name not in migrated:
+            migrated[name] = tensor.detach().clone()
+    return migrated
 
 
 def _load_training_checkpoint(path: Path, map_location: str | torch.device) -> dict[str, Any]:

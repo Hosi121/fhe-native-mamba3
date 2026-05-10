@@ -31,6 +31,7 @@ class WeightBundleRecurrenceProblem:
                 "decay": list(self.problem.decay),
                 "b": [list(row) for row in self.problem.b],
                 "c": [list(row) for row in self.problem.c],
+                "d_skip": list(self.problem.d_skip) if self.problem.d_skip is not None else None,
             },
         }
 
@@ -79,12 +80,14 @@ def build_weight_bundle_recurrence_problem(
         decay = block._decay(dtype=rank_input.dtype, device=rank_input.device).view(-1)
         b_static = block.b_static.detach().cpu()
         c_static = block.c_static.detach().cpu()
+        d_skip = block.d_skip.detach().cpu()
 
     problem = OpenFheRecurrenceProblem(
         rank_inputs=_tensor_rows(rank_input),
         decay=_tensor_vector(decay),
         b=_tensor_rows(b_static),
         c=_tensor_rows(c_static),
+        d_skip=_tensor_vector(d_skip),
     )
     return WeightBundleRecurrenceProblem(
         bundle_dir=str(bundle_dir),
