@@ -28,7 +28,7 @@ PreRecurrenceStage = Literal[
     "state_rank_decay",
     "gate_post_silu",
 ]
-RmsNormMode = Literal["plaintext-exact", "poly-invsqrt"]
+RmsNormMode = Literal["plaintext-exact", "poly-invsqrt", "newton-invsqrt"]
 
 PRE_RECURRENCE_STAGES: tuple[PreRecurrenceStage, ...] = (
     "rms_norm_output",
@@ -62,6 +62,8 @@ class CheckpointPreRecurrenceStageGate:
     rms_norm_mode: str | None
     inv_sqrt_degree: int | None
     inv_sqrt_range: tuple[float, float] | None
+    newton_iterations: int | None
+    newton_range: tuple[float, float] | None
     max_abs_error: float
     atol: float
     passed: bool
@@ -93,6 +95,8 @@ def run_checkpoint_pre_recurrence_stage_gate(
     rms_norm_mode: RmsNormMode = "plaintext-exact",
     inv_sqrt_degree: int = 5,
     inv_sqrt_range: tuple[float, float] = (0.01, 4.0),
+    newton_iterations: int = 2,
+    newton_range: tuple[float, float] = (0.25, 0.5),
     atol: float = 1e-6,
 ) -> CheckpointPreRecurrenceStageGate:
     """Run one source-style pre-recurrence stage with encrypted stage arithmetic."""
@@ -112,7 +116,7 @@ def run_checkpoint_pre_recurrence_stage_gate(
     if polynomial_range <= 0:
         msg = "polynomial_range must be positive"
         raise ValueError(msg)
-    if rms_norm_mode not in {"plaintext-exact", "poly-invsqrt"}:
+    if rms_norm_mode not in {"plaintext-exact", "poly-invsqrt", "newton-invsqrt"}:
         msg = f"unsupported rms_norm_mode: {rms_norm_mode}"
         raise ValueError(msg)
     if inv_sqrt_degree <= 0:
@@ -120,6 +124,12 @@ def run_checkpoint_pre_recurrence_stage_gate(
         raise ValueError(msg)
     if inv_sqrt_range[0] <= 0 or inv_sqrt_range[1] <= inv_sqrt_range[0]:
         msg = "inv_sqrt_range must be a positive increasing pair"
+        raise ValueError(msg)
+    if newton_iterations <= 0:
+        msg = "newton_iterations must be positive"
+        raise ValueError(msg)
+    if newton_range[0] <= 0 or newton_range[1] <= newton_range[0]:
+        msg = "newton_range must be a positive increasing pair"
         raise ValueError(msg)
     if atol < 0:
         msg = "atol must be non-negative"
@@ -164,6 +174,20 @@ def run_checkpoint_pre_recurrence_stage_gate(
             degree = inv_sqrt_degree
             poly_range = None
             depth = inv_sqrt_degree + 2
+        elif rms_norm_mode == "newton-invsqrt":
+            output_cts = _rms_norm_newton_sequence_ciphertexts(
+                _token_rows(layer_input[0]),
+                weight=tensors.norm_weight,
+                eps=norm_eps,
+                backend=resolved_backend,
+                iterations=newton_iterations,
+                approximation_range=newton_range,
+            )
+            operation_class = "ct-ct encrypted RMSNorm Newton inverse-sqrt"
+            approximation = "newton-invsqrt"
+            degree = None
+            poly_range = None
+            depth = 2 + max(0, 3 * (newton_iterations - 1))
         else:
             output_cts = tuple(
                 resolved_backend.encrypt(row) for row in _token_rows(stages.rms_norm_output[0])
@@ -309,6 +333,8 @@ def run_checkpoint_pre_recurrence_stage_gate(
         rms_norm_mode=rms_norm_mode if stage == "rms_norm_output" else None,
         inv_sqrt_degree=inv_sqrt_degree if stage == "rms_norm_output" else None,
         inv_sqrt_range=inv_sqrt_range if stage == "rms_norm_output" else None,
+        newton_iterations=newton_iterations if stage == "rms_norm_output" else None,
+        newton_range=newton_range if stage == "rms_norm_output" else None,
         max_abs_error=max_abs_error,
         atol=atol,
         passed=max_abs_error <= atol,
@@ -396,6 +422,69 @@ def _rms_norm_sequence_ciphertexts(
     )
 
 
+def _rms_norm_newton_sequence_ciphertexts(
+    input_rows: tuple[tuple[float, ...], ...],
+    *,
+    weight: Tensor,
+    eps: float,
+    backend: FHEBackend,
+    iterations: int,
+    approximation_range: tuple[float, float],
+) -> tuple[Any, ...]:
+    weights = [float(value) for value in weight.detach().cpu().float().reshape(-1)]
+    initial = 1.0 / np.sqrt(0.5 * (approximation_range[0] + approximation_range[1]))
+    return tuple(
+        _rms_norm_newton_ciphertext(
+            backend.encrypt(row),
+            output_dim=len(row),
+            weight=weights,
+            eps=eps,
+            backend=backend,
+            initial=float(initial),
+            iterations=iterations,
+        )
+        for row in input_rows
+    )
+
+
+def _rms_norm_newton_ciphertext(
+    input_ct: Any,
+    *,
+    output_dim: int,
+    weight: list[float],
+    eps: float,
+    backend: FHEBackend,
+    initial: float,
+    iterations: int,
+) -> Any:
+    mean_square_ct = _mean_square_ciphertext(
+        input_ct,
+        output_dim=output_dim,
+        eps=eps,
+        backend=backend,
+    )
+    # First Newton step is seeded from a public constant, so it can be evaluated
+    # with plaintext multipliers. Later steps use ciphertext-ciphertext products.
+    y_ct = backend.add(
+        backend.encrypt([1.5 * initial]),
+        backend.mul_plain(mean_square_ct, backend.encode([-0.5 * initial**3])),
+    )
+    for _ in range(1, iterations):
+        y_sq_ct = backend.mul_ct(y_ct, y_ct)
+        scaled_ct = backend.mul_ct(mean_square_ct, y_sq_ct)
+        correction_ct = backend.add(
+            backend.encrypt([1.5]),
+            backend.mul_plain(scaled_ct, backend.encode([-0.5])),
+        )
+        y_ct = backend.mul_ct(y_ct, correction_ct)
+    scale_ct = _broadcast_slot0(y_ct, output_dim=output_dim, backend=backend)
+    normalized_ct = backend.mul_ct(input_ct, scale_ct)
+    return backend.mul_plain(
+        normalized_ct,
+        backend.encode(_padded(weight[:output_dim], backend.batch_size)),
+    )
+
+
 def _rms_norm_ciphertext(
     input_ct: Any,
     *,
@@ -406,17 +495,12 @@ def _rms_norm_ciphertext(
     degree: int,
     approximation_range: tuple[float, float],
 ) -> Any:
-    square_ct = backend.mul_ct(input_ct, input_ct)
-    mean_square_ct = backend.encrypt([eps])
-    mean_scale = 1.0 / output_dim
-    for slot in range(output_dim):
-        mask = [0.0] * backend.batch_size
-        mask[slot] = mean_scale
-        term = backend.mul_plain(square_ct, backend.encode(mask))
-        if slot:
-            term = backend.rotate(term, slot)
-        mean_square_ct = backend.add(mean_square_ct, term)
-
+    mean_square_ct = _mean_square_ciphertext(
+        input_ct,
+        output_dim=output_dim,
+        eps=eps,
+        backend=backend,
+    )
     inv_sqrt_ct = _evaluate_power_polynomial_ciphertext(
         mean_square_ct,
         _inv_sqrt_power_coefficients(degree, approximation_range),
@@ -429,6 +513,26 @@ def _rms_norm_ciphertext(
         normalized_ct,
         backend.encode(_padded(weight[:output_dim], backend.batch_size)),
     )
+
+
+def _mean_square_ciphertext(
+    input_ct: Any,
+    *,
+    output_dim: int,
+    eps: float,
+    backend: FHEBackend,
+) -> Any:
+    square_ct = backend.mul_ct(input_ct, input_ct)
+    mean_square_ct = backend.encrypt([eps])
+    mean_scale = 1.0 / output_dim
+    for slot in range(output_dim):
+        mask = [0.0] * backend.batch_size
+        mask[slot] = mean_scale
+        term = backend.mul_plain(square_ct, backend.encode(mask))
+        if slot:
+            term = backend.rotate(term, slot)
+        mean_square_ct = backend.add(mean_square_ct, term)
+    return mean_square_ct
 
 
 def _broadcast_slot0(
