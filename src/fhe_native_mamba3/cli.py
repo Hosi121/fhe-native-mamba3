@@ -1246,6 +1246,12 @@ def mamba_checkpoint_source_diagnostics_cmd(args: argparse.Namespace) -> int:
                     {
                         "seq_len": seq_len,
                         "token_ids": list(token_ids),
+                        "range_status": _range_status(
+                            diagnostics.range_score,
+                            target=args.range_target,
+                            warn=args.range_warn,
+                            fail=args.range_fail,
+                        ),
                     }
                 )
                 rows.append(row)
@@ -1266,6 +1272,9 @@ def mamba_checkpoint_source_diagnostics_cmd(args: argparse.Namespace) -> int:
             "seq_lens": list(seq_lens),
             "layer_indices": list(layer_indices),
             "norm_eps": args.norm_eps,
+            "range_target": args.range_target,
+            "range_warn": args.range_warn,
+            "range_fail": args.range_fail,
         },
         "summary": _source_diagnostics_summary(rows),
         "rows": rows,
@@ -1299,6 +1308,12 @@ def _source_diagnostics_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "seq_lens": [],
             "max_range_score": 0.0,
             "max_range_case": None,
+            "status_counts": {
+                "ok": 0,
+                "target-exceeded": 0,
+                "warn": 0,
+                "fail": 0,
+            },
             "by_layer": [],
             "top_range_cases": [],
         }
@@ -1312,7 +1327,9 @@ def _source_diagnostics_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "layer_index": score_row["layer_index"],
             "seq_len": score_row["seq_len"],
             "range_score_stage": score_row["range_score_stage"],
+            "range_status": score_row["range_status"],
         },
+        "status_counts": _source_diagnostics_status_counts(rows),
         "by_layer": _source_diagnostics_by_layer(rows),
         "top_range_cases": _source_diagnostics_top_range_cases(rows),
     }
@@ -1329,6 +1346,7 @@ def _source_diagnostics_by_layer(rows: list[dict[str, Any]]) -> list[dict[str, A
                 "row_count": len(layer_rows),
                 "max_range_score": score_row["range_score"],
                 "max_range_score_stage": score_row["range_score_stage"],
+                "range_status_at_max": score_row["range_status"],
                 "seq_len_at_max": score_row["seq_len"],
             }
         )
@@ -1345,9 +1363,25 @@ def _source_diagnostics_top_range_cases(
             "seq_len": row["seq_len"],
             "range_score": row["range_score"],
             "range_score_stage": row["range_score_stage"],
+            "range_status": row["range_status"],
         }
         for row in top_rows
     ]
+
+
+def _source_diagnostics_status_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    statuses = ("ok", "target-exceeded", "warn", "fail")
+    return {status: sum(1 for row in rows if row["range_status"] == status) for status in statuses}
+
+
+def _range_status(score: float, *, target: float, warn: float, fail: float) -> str:
+    if score > fail:
+        return "fail"
+    if score > warn:
+        return "warn"
+    if score > target:
+        return "target-exceeded"
+    return "ok"
 
 
 def profile_cmd(args: argparse.Namespace) -> int:
@@ -2177,6 +2211,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="diagnose every complete Mamba layer detected in the checkpoint",
     )
     mamba_diagnostics_parser.add_argument("--norm-eps", type=float, default=1e-5)
+    mamba_diagnostics_parser.add_argument(
+        "--range-target",
+        type=float,
+        default=6.0,
+        help="preferred max abs range for FHE-friendly polynomial evaluation",
+    )
+    mamba_diagnostics_parser.add_argument(
+        "--range-warn",
+        type=float,
+        default=32.0,
+        help="range score above this value is marked as warn",
+    )
+    mamba_diagnostics_parser.add_argument(
+        "--range-fail",
+        type=float,
+        default=512.0,
+        help="range score above this value is marked as fail",
+    )
     mamba_diagnostics_parser.add_argument("--max-plan-layers", type=int, default=8)
     mamba_diagnostics_parser.add_argument("--max-statuses", type=int, default=50)
     mamba_diagnostics_parser.add_argument("--output-json", default="")
