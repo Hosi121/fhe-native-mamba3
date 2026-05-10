@@ -29,7 +29,7 @@ def test_recurrence_chain_smoke_script_runs_tracking_backend() -> None:
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.84"
+    assert payload["version"] == "0.2.85"
     assert payload["stage"] == "openfhe-recurrence-ciphertext-chain-smoke"
     assert payload["no_intermediate_decrypt"] is True
     assert payload["measurement_scope"]["encrypted_chain"] is False

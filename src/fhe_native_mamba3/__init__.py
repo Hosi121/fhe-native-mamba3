@@ -1,6 +1,6 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.84"
+__version__ = "0.2.85"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
@@ -77,6 +77,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.ciphertext_handoff",
         "apply_handoff_bootstrap_schedule",
     ),
+    "apply_lora_to_linear_modules": (
+        "fhe_native_mamba3.range_finetune",
+        "apply_lora_to_linear_modules",
+    ),
     "WeightBundleRecurrenceProblem": (
         "fhe_native_mamba3.bundle_recurrence",
         "WeightBundleRecurrenceProblem",
@@ -119,6 +123,11 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.range_calibration",
         "RangeScalePlan",
     ),
+    "LoRAConfig": ("fhe_native_mamba3.range_finetune", "LoRAConfig"),
+    "LoRALinear": ("fhe_native_mamba3.range_finetune", "LoRALinear"),
+    "RangeLossConfig": ("fhe_native_mamba3.range_finetune", "RangeLossConfig"),
+    "RangeLossResult": ("fhe_native_mamba3.range_finetune", "RangeLossResult"),
+    "RangeLossTerm": ("fhe_native_mamba3.range_finetune", "RangeLossTerm"),
     "RecurrenceTraceProfile": ("fhe_native_mamba3.profiling", "RecurrenceTraceProfile"),
     "SsdPrefixScanResult": (
         "fhe_native_mamba3.ssd_prefix_scan",
@@ -313,6 +322,16 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.profiling",
         "profile_recurrence_traces",
     ),
+    "range_loss": ("fhe_native_mamba3.range_finetune", "range_loss"),
+    "fhe_aware_loss": ("fhe_native_mamba3.range_finetune", "fhe_aware_loss"),
+    "mark_only_lora_trainable": (
+        "fhe_native_mamba3.range_finetune",
+        "mark_only_lora_trainable",
+    ),
+    "lora_parameter_count": (
+        "fhe_native_mamba3.range_finetune",
+        "lora_parameter_count",
+    ),
     "profile_checkpoint_source_layers": (
         "fhe_native_mamba3.checkpoint_profile",
         "profile_checkpoint_source_layers",
@@ -434,6 +453,8 @@ __all__ = [
     "HeadPackCandidate",
     "HeadPackSweep",
     "IntegratedCostEstimate",
+    "LoRAConfig",
+    "LoRALinear",
     "MambaCheckpointAdapterReport",
     "MambaCheckpointPlan",
     "MambaLayerPlan",
@@ -450,6 +471,9 @@ __all__ = [
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
     "PackingPlan",
+    "RangeLossConfig",
+    "RangeLossResult",
+    "RangeLossTerm",
     "RecurrenceTraceProfile",
     "SrhtButterflyStage",
     "SrhtSketchMetadata",
@@ -467,6 +491,7 @@ __all__ = [
     "__version__",
     "adapt_mamba_state_dict_to_model",
     "apply_handoff_bootstrap_schedule",
+    "apply_lora_to_linear_modules",
     "apply_srht_sketch",
     "backend_capability_matrix",
     "build_bootstrap_execution_schedule",
@@ -498,12 +523,15 @@ __all__ = [
     "estimate_recurrence_depth",
     "estimate_recurrence_stack_latency",
     "evaluate_head_pack_candidate",
+    "fhe_aware_loss",
     "greedy_bootstrap_schedule",
     "inspect_checkpoint",
     "load_mapping_rules",
     "load_weight_bundle_model",
+    "lora_parameter_count",
     "make_demo_problem",
     "map_state_dict",
+    "mark_only_lora_trainable",
     "measure_openfhe_bootstrap_latency",
     "plaintext_recurrence_trace",
     "plaintext_static_recurrence",
@@ -513,6 +541,7 @@ __all__ = [
     "profile_checkpoint_source_layers",
     "profile_model_batch",
     "profile_recurrence_traces",
+    "range_loss",
     "required_full_layer_visible_rotations",
     "run_checkpoint_client_decode_smoke",
     "run_checkpoint_full_layer_ciphertext_gate",

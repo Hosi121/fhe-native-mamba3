@@ -42,7 +42,7 @@ def test_checkpoint_full_layer_sweep_script_runs_tracking_backend(tmp_path) -> N
     )
 
     payload = json.loads(completed.stdout)
-    assert payload["version"] == "0.2.84"
+    assert payload["version"] == "0.2.85"
     assert payload["stage"] == "mamba-checkpoint-full-layer-sweep"
     assert payload["backend"] == "tracking"
     assert payload["passed"] is True

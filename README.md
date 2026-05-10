@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.2.84`. Future changes should bump
+The project is currently at SemVer `0.2.85`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -409,6 +409,12 @@ python3 -m fhe_native_mamba3.cli source-diagnostics-scale-plan \
   --state-target 32 \
   --encoded-target 32 \
   --output-json runs/mamba-source-scale-plan.json
+
+The same scale-plan command also accepts compact `run_checkpoint_source_profile.py`
+artifacts. Range-aware fine-tuning can use the library helpers
+`RangeLossConfig`, `range_loss`, `fhe_aware_loss`, `LoRAConfig`, and
+`apply_lora_to_linear_modules` to add a small LoRA adapter while penalizing
+activations that exceed the FHE polynomial target.
 python3 -m fhe_native_mamba3.cli checkpoint-inspect runs/train/checkpoint.pt
 python3 -m fhe_native_mamba3.cli checkpoint-map-report \
   runs/train/checkpoint.pt \
