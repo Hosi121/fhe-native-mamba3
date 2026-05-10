@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
@@ -10,6 +11,7 @@ from fhe_native_mamba3.profiling import (
     estimate_cumulative_log_contraction,
     estimate_high_decay_burst_len,
     profile_model_batch,
+    profile_recurrence_traces,
 )
 
 
@@ -32,6 +34,115 @@ def test_decay_trace_helpers_use_worst_decay_per_position() -> None:
     )
     assert estimate_high_decay_burst_len(decay, threshold=0.95) == 3
     assert estimate_high_decay_burst_len(decay.unsqueeze(0), threshold=0.95, position_dim=1) == 3
+
+
+def test_profile_recurrence_traces_summarizes_position_buckets_and_heads() -> None:
+    a_t = torch.tensor(
+        [
+            [0.50, 0.70, 0.20],
+            [0.60, 0.96, 0.30],
+            [0.70, 0.97, 0.40],
+            [0.80, 0.98, 0.50],
+            [0.90, 0.40, 0.60],
+            [0.99, 0.30, 0.70],
+        ]
+    )
+    u_t = torch.zeros(6, 3, 2)
+    u_t[:, :, 0] = torch.tensor(
+        [
+            [1.0, 2.0, 3.0],
+            [1.5, 2.5, 3.5],
+            [2.0, 3.0, 4.0],
+            [2.5, 3.5, 4.5],
+            [3.0, 4.0, 12.0],
+            [3.5, 4.5, 5.5],
+        ]
+    )
+    u_t[:, :, 1] = u_t[:, :, 0] / 2.0
+
+    profile = profile_recurrence_traces(
+        a_t,
+        u_t,
+        position_dim=0,
+        head_dim=1,
+        position_bucket_count=3,
+        high_decay_threshold=0.95,
+        top_k_examples=2,
+    )
+    payload = profile.to_json_dict()
+
+    assert json.loads(json.dumps(payload))["seq_len"] == 6
+    assert payload["head_count"] == 3
+    assert len(payload["position_buckets"]) == 3
+    assert payload["position_buckets"][0]["start"] == 0
+    assert payload["position_buckets"][0]["end"] == 2
+    assert payload["position_buckets"][0]["token_count"] == 2
+    assert payload["position_buckets"][2]["update_abs_max"] == pytest.approx(12.0)
+
+    head_one = payload["heads"][1]
+    assert head_one["decay_abs_max"] == pytest.approx(0.98)
+    assert head_one["high_decay_burst_len"] == 3
+    assert head_one["log_contraction_total"] == pytest.approx(float(torch.log(a_t[:, 1]).sum()))
+    assert head_one["position_buckets"][1]["start"] == 2
+    assert head_one["position_buckets"][1]["end"] == 4
+    assert head_one["position_buckets"][1]["cumulative_log_contraction_start"] == pytest.approx(
+        float(torch.log(a_t[:2, 1]).sum())
+    )
+    assert head_one["position_buckets"][1]["cumulative_log_contraction_end"] == pytest.approx(
+        float(torch.log(a_t[:4, 1]).sum())
+    )
+
+    assert payload["worst_cases"]["decay_abs_max"] == {
+        "head": 0,
+        "position": 5,
+        "value": pytest.approx(0.99),
+    }
+    assert payload["worst_cases"]["update_abs_max"] == {
+        "head": 2,
+        "position": 4,
+        "value": pytest.approx(12.0),
+    }
+    assert payload["high_decay_bursts"][0]["head"] == 1
+    assert payload["high_decay_bursts"][0]["start"] == 1
+    assert payload["high_decay_bursts"][0]["end"] == 4
+    assert payload["high_decay_bursts"][0]["length"] == 3
+    assert payload["global_maxima"]["high_decay_burst_len"] == 3.0
+
+
+def test_profile_recurrence_traces_accepts_position_and_head_axes_inside_batch_shape() -> None:
+    a_t = torch.tensor(
+        [
+            [
+                [0.50, 0.40],
+                [0.96, 0.20],
+                [0.97, 0.30],
+                [0.20, 0.99],
+            ],
+            [
+                [0.25, 0.80],
+                [0.40, 0.10],
+                [0.30, 0.20],
+                [0.10, 0.70],
+            ],
+        ]
+    )
+
+    payload = profile_recurrence_traces(
+        a_t,
+        position_dim=1,
+        head_dim=2,
+        position_bucket_count=2,
+        high_decay_threshold=0.95,
+    ).to_json_dict()
+
+    assert payload["seq_len"] == 4
+    assert payload["head_count"] == 2
+    assert payload["heads"][0]["high_decay_burst_len"] == 2
+    assert payload["heads"][1]["high_decay_burst_len"] == 1
+    assert payload["position_buckets"][0]["decay_abs_max"] == pytest.approx(0.96)
+    assert payload["heads"][0]["position_buckets"][0]["decay_abs_mean"] == pytest.approx(
+        (0.50 + 0.25 + 0.96 + 0.40) / 4.0
+    )
 
 
 def test_profile_model_batch_reports_position_and_worst_case_summaries() -> None:

@@ -130,6 +130,58 @@ def run_ciphertext_handoff_chain(
     )
 
 
+def apply_handoff_bootstrap_schedule(
+    layers: tuple[CiphertextHandoffLayer, ...],
+    *,
+    bootstrap_before_layers: tuple[int, ...],
+) -> tuple[CiphertextHandoffLayer, ...]:
+    """Mark layer-boundary bootstraps from zero-based before-layer indices.
+
+    The recurrence depth planner reports bootstraps as "before layer i". The
+    handoff smoke can execute those as "after layer i" for every i > 0 because
+    there is no intermediate decrypt at the boundary. A bootstrap before the
+    first layer has no preceding ciphertext handoff boundary, so it is rejected
+    explicitly instead of being silently dropped.
+    """
+
+    if not layers:
+        msg = "layers must not be empty"
+        raise ValueError(msg)
+    bootstrap_after = _bootstrap_after_layers_from_before(
+        layer_count=len(layers),
+        bootstrap_before_layers=bootstrap_before_layers,
+    )
+    return tuple(
+        CiphertextHandoffLayer(
+            diagonals=layer.diagonals,
+            residual_scale=layer.residual_scale,
+            bootstrap_after=layer.bootstrap_after or (layer_index + 1) in bootstrap_after,
+        )
+        for layer_index, layer in enumerate(layers)
+    )
+
+
+def _bootstrap_after_layers_from_before(
+    *,
+    layer_count: int,
+    bootstrap_before_layers: tuple[int, ...],
+) -> tuple[int, ...]:
+    if layer_count <= 0:
+        msg = "layer_count must be positive"
+        raise ValueError(msg)
+
+    after_layers: set[int] = set()
+    for layer_index in bootstrap_before_layers:
+        if layer_index <= 0:
+            msg = "bootstrap_before_layers cannot include the first layer boundary"
+            raise ValueError(msg)
+        if layer_index >= layer_count:
+            msg = f"bootstrap_before_layers must be less than layer_count={layer_count}"
+            raise ValueError(msg)
+        after_layers.add(layer_index)
+    return tuple(sorted(after_layers))
+
+
 def plaintext_handoff_chain(
     *,
     input_values: tuple[float, ...],

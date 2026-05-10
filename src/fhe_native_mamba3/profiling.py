@@ -82,6 +82,162 @@ class ModelProfile:
         return payload
 
 
+@dataclass(frozen=True)
+class RecurrencePositionBucketProfile:
+    """Aggregate recurrence summary for a contiguous token-position bucket."""
+
+    start: int
+    end: int
+    token_count: int
+    decay_abs_mean: float
+    decay_abs_max: float
+    update_abs_max: float | None
+    log_contraction_sum: float
+
+
+@dataclass(frozen=True)
+class RecurrenceHeadBucketProfile:
+    """Per-head recurrence summary for a contiguous token-position bucket."""
+
+    head: int
+    start: int
+    end: int
+    token_count: int
+    decay_abs_mean: float
+    decay_abs_max: float
+    update_abs_max: float | None
+    log_contraction_sum: float
+    cumulative_log_contraction_start: float
+    cumulative_log_contraction_end: float
+
+
+@dataclass(frozen=True)
+class RecurrenceHeadProfile:
+    """Per-head contraction/range summary across the full sequence."""
+
+    head: int
+    decay_abs_min: float
+    decay_abs_mean: float
+    decay_abs_max: float
+    update_abs_max: float | None
+    log_contraction_total: float
+    high_decay_burst_len: int
+    position_buckets: tuple[RecurrenceHeadBucketProfile, ...] = ()
+
+
+@dataclass(frozen=True)
+class RecurrenceTraceProfile:
+    """Backend-neutral recurrence profile for issue reports and Stage-0 planning."""
+
+    seq_len: int
+    head_count: int
+    position_bucket_count: int
+    high_decay_threshold: float
+    position_buckets: tuple[RecurrencePositionBucketProfile, ...]
+    heads: tuple[RecurrenceHeadProfile, ...]
+    global_maxima: dict[str, float]
+    worst_cases: dict[str, dict[str, Any]]
+    high_decay_bursts: tuple[dict[str, Any], ...]
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def profile_recurrence_traces(
+    a_t: Tensor,
+    u_t: Tensor | None = None,
+    *,
+    position_dim: int = 0,
+    head_dim: int = -1,
+    position_bucket_count: int = 4,
+    high_decay_threshold: float = 0.95,
+    top_k_examples: int = 5,
+) -> RecurrenceTraceProfile:
+    """Summarize raw recurrence ``a_t``/``u_t`` traces by position bucket and head.
+
+    ``a_t`` is the contraction/decay trace. ``u_t`` is an optional update or range
+    trace. Only the position and head axes are interpreted; all other axes are
+    reduced with max/mean statistics, so callers can pass traces from plaintext,
+    symbolic, or backend instrumentation without adapting their batch/state shape.
+    """
+
+    if position_bucket_count <= 0:
+        msg = "position_bucket_count must be positive"
+        raise ValueError(msg)
+    if top_k_examples < 0:
+        msg = "top_k_examples must be non-negative"
+        raise ValueError(msg)
+    _validate_high_decay_threshold(high_decay_threshold)
+
+    decay_by_pos_head = _position_head_abs_values(
+        a_t,
+        position_dim=position_dim,
+        head_dim=head_dim,
+        name="a_t",
+    )
+    seq_len = int(decay_by_pos_head.shape[0])
+    head_count = int(decay_by_pos_head.shape[1])
+    update_by_pos_head = None
+    if u_t is not None:
+        update_by_pos_head = _position_head_abs_values(
+            u_t,
+            position_dim=position_dim,
+            head_dim=head_dim,
+            name="u_t",
+        )
+        if tuple(update_by_pos_head.shape[:2]) != (seq_len, head_count):
+            msg = "u_t must have the same position/head shape as a_t"
+            raise ValueError(msg)
+
+    decay_max = decay_by_pos_head.amax(dim=2)
+    decay_mean = decay_by_pos_head.mean(dim=2)
+    update_max = update_by_pos_head.amax(dim=2) if update_by_pos_head is not None else None
+    log_decay = torch.log(decay_max.clamp(min=1e-12, max=1.0))
+    cumulative_log_decay = torch.cumsum(log_decay, dim=0)
+    bucket_slices = _bucket_slices(seq_len=seq_len, bucket_count=position_bucket_count)
+
+    heads = tuple(
+        _profile_recurrence_head(
+            head=head,
+            decay_max=decay_max,
+            decay_mean=decay_mean,
+            update_max=update_max,
+            log_decay=log_decay,
+            cumulative_log_decay=cumulative_log_decay,
+            bucket_slices=bucket_slices,
+            high_decay_threshold=high_decay_threshold,
+        )
+        for head in range(head_count)
+    )
+    return RecurrenceTraceProfile(
+        seq_len=seq_len,
+        head_count=head_count,
+        position_bucket_count=len(bucket_slices),
+        high_decay_threshold=high_decay_threshold,
+        position_buckets=_profile_recurrence_position_buckets(
+            decay_max=decay_max,
+            decay_mean=decay_mean,
+            update_max=update_max,
+            log_decay=log_decay,
+            bucket_slices=bucket_slices,
+        ),
+        heads=heads,
+        global_maxima=_profile_recurrence_global_maxima(heads),
+        worst_cases=_profile_recurrence_worst_cases(
+            decay_max=decay_max,
+            update_max=update_max,
+            heads=heads,
+        ),
+        high_decay_bursts=_profile_high_decay_burst_examples(
+            decay_max=decay_max,
+            update_max=update_max,
+            log_decay=log_decay,
+            threshold=high_decay_threshold,
+            limit=top_k_examples,
+        ),
+    )
+
+
 def profile_model_batch(
     model: FheMamba3ForCausalLM,
     input_ids: Tensor,
@@ -233,6 +389,246 @@ def _validate_high_decay_threshold(threshold: float) -> None:
     if not 0.0 < threshold <= 1.0:
         msg = "high_decay_threshold must be in (0, 1]"
         raise ValueError(msg)
+
+
+def _position_head_abs_values(
+    values: Tensor,
+    *,
+    position_dim: int,
+    head_dim: int,
+    name: str,
+) -> Tensor:
+    if values.ndim == 0:
+        msg = f"{name} must include a position dimension"
+        raise ValueError(msg)
+    abs_values = values.detach().abs()
+    if abs_values.ndim == 1:
+        return abs_values.reshape(abs_values.shape[0], 1, 1)
+
+    ndim = abs_values.ndim
+    normalized_position_dim = position_dim % ndim
+    normalized_head_dim = head_dim % ndim
+    if normalized_head_dim == normalized_position_dim:
+        msg = f"{name} head_dim must differ from position_dim"
+        raise ValueError(msg)
+
+    moved = abs_values.movedim(normalized_position_dim, 0)
+    remaining_dims = [index for index in range(ndim) if index != normalized_position_dim]
+    head_after_position_move = remaining_dims.index(normalized_head_dim) + 1
+    moved = moved.movedim(head_after_position_move, 1)
+    return moved.reshape(moved.shape[0], moved.shape[1], -1)
+
+
+def _profile_recurrence_head(
+    *,
+    head: int,
+    decay_max: Tensor,
+    decay_mean: Tensor,
+    update_max: Tensor | None,
+    log_decay: Tensor,
+    cumulative_log_decay: Tensor,
+    bucket_slices: tuple[tuple[int, int], ...],
+    high_decay_threshold: float,
+) -> RecurrenceHeadProfile:
+    head_decay_max = decay_max[:, head]
+    head_decay_mean = decay_mean[:, head]
+    head_update_max = update_max[:, head] if update_max is not None else None
+    return RecurrenceHeadProfile(
+        head=head,
+        decay_abs_min=float(head_decay_max.min().cpu()),
+        decay_abs_mean=float(head_decay_mean.mean().cpu()),
+        decay_abs_max=float(head_decay_max.max().cpu()),
+        update_abs_max=float(head_update_max.max().cpu()) if head_update_max is not None else None,
+        log_contraction_total=float(log_decay[:, head].sum().cpu()),
+        high_decay_burst_len=_longest_bool_run(
+            (head_decay_max >= high_decay_threshold).detach().cpu().tolist()
+        ),
+        position_buckets=tuple(
+            _profile_recurrence_head_bucket(
+                head=head,
+                start=start,
+                end=end,
+                decay_max=decay_max,
+                decay_mean=decay_mean,
+                update_max=update_max,
+                log_decay=log_decay,
+                cumulative_log_decay=cumulative_log_decay,
+            )
+            for start, end in bucket_slices
+        ),
+    )
+
+
+def _profile_recurrence_head_bucket(
+    *,
+    head: int,
+    start: int,
+    end: int,
+    decay_max: Tensor,
+    decay_mean: Tensor,
+    update_max: Tensor | None,
+    log_decay: Tensor,
+    cumulative_log_decay: Tensor,
+) -> RecurrenceHeadBucketProfile:
+    update_slice = update_max[start:end, head] if update_max is not None else None
+    return RecurrenceHeadBucketProfile(
+        head=head,
+        start=start,
+        end=end,
+        token_count=end - start,
+        decay_abs_mean=float(decay_mean[start:end, head].mean().cpu()),
+        decay_abs_max=float(decay_max[start:end, head].max().cpu()),
+        update_abs_max=float(update_slice.max().cpu()) if update_slice is not None else None,
+        log_contraction_sum=float(log_decay[start:end, head].sum().cpu()),
+        cumulative_log_contraction_start=(
+            float(cumulative_log_decay[start - 1, head].cpu()) if start > 0 else 0.0
+        ),
+        cumulative_log_contraction_end=float(cumulative_log_decay[end - 1, head].cpu()),
+    )
+
+
+def _profile_recurrence_position_buckets(
+    *,
+    decay_max: Tensor,
+    decay_mean: Tensor,
+    update_max: Tensor | None,
+    log_decay: Tensor,
+    bucket_slices: tuple[tuple[int, int], ...],
+) -> tuple[RecurrencePositionBucketProfile, ...]:
+    buckets: list[RecurrencePositionBucketProfile] = []
+    for start, end in bucket_slices:
+        update_slice = update_max[start:end] if update_max is not None else None
+        buckets.append(
+            RecurrencePositionBucketProfile(
+                start=start,
+                end=end,
+                token_count=end - start,
+                decay_abs_mean=float(decay_mean[start:end].mean().cpu()),
+                decay_abs_max=float(decay_max[start:end].max().cpu()),
+                update_abs_max=(
+                    float(update_slice.max().cpu()) if update_slice is not None else None
+                ),
+                log_contraction_sum=float(log_decay[start:end].sum().cpu()),
+            )
+        )
+    return tuple(buckets)
+
+
+def _profile_recurrence_global_maxima(
+    heads: tuple[RecurrenceHeadProfile, ...],
+) -> dict[str, float]:
+    if not heads:
+        return {
+            "decay_abs_max": 0.0,
+            "update_abs_max": 0.0,
+            "high_decay_burst_len": 0.0,
+            "log_contraction_total_max": 0.0,
+        }
+    known_update_ranges = [head.update_abs_max for head in heads if head.update_abs_max is not None]
+    return {
+        "decay_abs_max": max(head.decay_abs_max for head in heads),
+        "update_abs_max": max(known_update_ranges, default=0.0),
+        "high_decay_burst_len": float(max(head.high_decay_burst_len for head in heads)),
+        "log_contraction_total_max": max(head.log_contraction_total for head in heads),
+    }
+
+
+def _profile_recurrence_worst_cases(
+    *,
+    decay_max: Tensor,
+    update_max: Tensor | None,
+    heads: tuple[RecurrenceHeadProfile, ...],
+) -> dict[str, dict[str, Any]]:
+    worst_cases: dict[str, dict[str, Any]] = {}
+    if heads:
+        burst_head = max(heads, key=lambda candidate: candidate.high_decay_burst_len)
+        contraction_head = max(heads, key=lambda candidate: candidate.log_contraction_total)
+        worst_cases["high_decay_burst_len"] = {
+            "head": burst_head.head,
+            "value": float(burst_head.high_decay_burst_len),
+        }
+        worst_cases["log_contraction_total"] = {
+            "head": contraction_head.head,
+            "value": contraction_head.log_contraction_total,
+        }
+    if decay_max.numel() > 0:
+        position, head = _flat_position_head_index(decay_max, int(decay_max.argmax().cpu()))
+        worst_cases["decay_abs_max"] = {
+            "head": head,
+            "position": position,
+            "value": float(decay_max[position, head].cpu()),
+        }
+    if update_max is not None and update_max.numel() > 0:
+        position, head = _flat_position_head_index(update_max, int(update_max.argmax().cpu()))
+        worst_cases["update_abs_max"] = {
+            "head": head,
+            "position": position,
+            "value": float(update_max[position, head].cpu()),
+        }
+    return worst_cases
+
+
+def _profile_high_decay_burst_examples(
+    *,
+    decay_max: Tensor,
+    update_max: Tensor | None,
+    log_decay: Tensor,
+    threshold: float,
+    limit: int,
+) -> tuple[dict[str, Any], ...]:
+    if limit == 0:
+        return ()
+    examples: list[dict[str, Any]] = []
+    head_count = int(decay_max.shape[1])
+    for head in range(head_count):
+        high = (decay_max[:, head] >= threshold).detach().cpu().tolist()
+        start: int | None = None
+        for position, is_high in enumerate([*high, False]):
+            if is_high and start is None:
+                start = position
+            elif not is_high and start is not None:
+                end = position
+                update_slice = update_max[start:end, head] if update_max is not None else None
+                examples.append(
+                    {
+                        "head": head,
+                        "start": start,
+                        "end": end,
+                        "length": end - start,
+                        "decay_abs_max": float(decay_max[start:end, head].max().cpu()),
+                        "update_abs_max": (
+                            float(update_slice.max().cpu()) if update_slice is not None else None
+                        ),
+                        "log_contraction_sum": float(log_decay[start:end, head].sum().cpu()),
+                    }
+                )
+                start = None
+    examples.sort(
+        key=lambda example: (
+            example["length"],
+            example["decay_abs_max"],
+            example["update_abs_max"] if example["update_abs_max"] is not None else 0.0,
+        ),
+        reverse=True,
+    )
+    return tuple(examples[:limit])
+
+
+def _longest_bool_run(values: list[bool]) -> int:
+    longest = 0
+    current = 0
+    for value in values:
+        if value:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
+
+def _flat_position_head_index(values: Tensor, flat_index: int) -> tuple[int, int]:
+    head_count = int(values.shape[1])
+    return flat_index // head_count, flat_index % head_count
 
 
 def _collect_model_block_position_details(

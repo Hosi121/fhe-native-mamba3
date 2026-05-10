@@ -1,9 +1,25 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
-__version__ = "0.2.68"
+__version__ = "0.2.69"
 
 _LAZY_IMPORTS = {
     "BootstrapSchedule": ("fhe_native_mamba3.cost", "BootstrapSchedule"),
+    "BootstrapExecutionBlockCost": (
+        "fhe_native_mamba3.bootstrap_schedule",
+        "BootstrapExecutionBlockCost",
+    ),
+    "BootstrapExecutionPolicy": (
+        "fhe_native_mamba3.bootstrap_schedule",
+        "BootstrapExecutionPolicy",
+    ),
+    "BootstrapExecutionSchedule": (
+        "fhe_native_mamba3.bootstrap_schedule",
+        "BootstrapExecutionSchedule",
+    ),
+    "BootstrapExecutionScheduleStep": (
+        "fhe_native_mamba3.bootstrap_schedule",
+        "BootstrapExecutionScheduleStep",
+    ),
     "CkksConfig": ("fhe_native_mamba3.ckks", "CkksConfig"),
     "CkksTrace": ("fhe_native_mamba3.ckks", "CkksTrace"),
     "CheckpointInspection": ("fhe_native_mamba3.checkpoint", "CheckpointInspection"),
@@ -20,6 +36,10 @@ _LAZY_IMPORTS = {
     "CiphertextHandoffResult": (
         "fhe_native_mamba3.ciphertext_handoff",
         "CiphertextHandoffResult",
+    ),
+    "apply_handoff_bootstrap_schedule": (
+        "fhe_native_mamba3.ciphertext_handoff",
+        "apply_handoff_bootstrap_schedule",
     ),
     "WeightBundleRecurrenceProblem": (
         "fhe_native_mamba3.bundle_recurrence",
@@ -59,6 +79,7 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.range_calibration",
         "RangeScalePlan",
     ),
+    "RecurrenceTraceProfile": ("fhe_native_mamba3.profiling", "RecurrenceTraceProfile"),
     "SsdPrefixScanResult": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "SsdPrefixScanResult",
@@ -111,6 +132,10 @@ _LAZY_IMPORTS = {
     "build_rotation_inventory": (
         "fhe_native_mamba3.rotation_inventory",
         "build_rotation_inventory",
+    ),
+    "build_bootstrap_execution_schedule": (
+        "fhe_native_mamba3.bootstrap_schedule",
+        "build_bootstrap_execution_schedule",
     ),
     "build_prefix_scan_metadata": (
         "fhe_native_mamba3.ssd_prefix_scan",
@@ -223,6 +248,10 @@ _LAZY_IMPORTS = {
         "prefix_decay_products",
     ),
     "profile_model_batch": ("fhe_native_mamba3.profiling", "profile_model_batch"),
+    "profile_recurrence_traces": (
+        "fhe_native_mamba3.profiling",
+        "profile_recurrence_traces",
+    ),
     "plan_mamba_checkpoint": (
         "fhe_native_mamba3.mamba_checkpoint",
         "plan_mamba_checkpoint",
@@ -278,6 +307,10 @@ _LAZY_IMPORTS = {
 __all__ = [
     "BackendCapability",
     "BackendStats",
+    "BootstrapExecutionBlockCost",
+    "BootstrapExecutionPolicy",
+    "BootstrapExecutionSchedule",
+    "BootstrapExecutionScheduleStep",
     "BootstrapSchedule",
     "CheckpointInspection",
     "CheckpointRecurrenceCorrectnessGate",
@@ -307,6 +340,7 @@ __all__ = [
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
     "PackingPlan",
+    "RecurrenceTraceProfile",
     "SsdPrefixScanResult",
     "Stage0MimoConfig",
     "Stage0SweepConfig",
@@ -320,7 +354,9 @@ __all__ = [
     "WeightEncodingConfig",
     "__version__",
     "adapt_mamba_state_dict_to_model",
+    "apply_handoff_bootstrap_schedule",
     "backend_capability_matrix",
+    "build_bootstrap_execution_schedule",
     "build_mamba_source_recurrence_problem",
     "build_prefix_scan_metadata",
     "build_recurrence_bootstrap_plan",
@@ -359,6 +395,7 @@ __all__ = [
     "plan_mamba_checkpoint",
     "prefix_decay_products",
     "profile_model_batch",
+    "profile_recurrence_traces",
     "run_checkpoint_recurrence_correctness_gate",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",

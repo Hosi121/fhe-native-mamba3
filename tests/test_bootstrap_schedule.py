@@ -9,6 +9,8 @@ from fhe_native_mamba3.bootstrap_schedule import (
     REASON_LEVEL_OK,
     REASON_LEVEL_UNDERFLOW,
     BootstrapBlockCost,
+    BootstrapExecutionPolicy,
+    build_bootstrap_execution_schedule,
     greedy_bootstrap_schedule,
 )
 
@@ -141,3 +143,115 @@ def test_greedy_bootstrap_schedule_rejects_invalid_budgets_and_points() -> None:
 
     with pytest.raises(ValueError, match="forced_bootstrap_before"):
         greedy_bootstrap_schedule([1], max_level=10, min_level=2, forced_bootstrap_before=[-1])
+
+
+def test_execution_schedule_payload_for_24_layer_smoke_runner() -> None:
+    blocks = [
+        {"layer_index": layer_index, "block_name": "recurrence", "depth_cost": 3}
+        for layer_index in range(24)
+    ]
+
+    schedule = build_bootstrap_execution_schedule(
+        blocks,
+        max_level=10,
+        min_level=1,
+    )
+
+    payload = schedule.to_payload()
+    assert payload["bootstrap_enabled"] is True
+    assert payload["block_count"] == 24
+    assert payload["layer_count"] == 24
+    assert payload["layer_indices"] == list(range(24))
+    assert payload["total_bootstrap_count"] == 7
+    assert payload["final_level"] == 1
+    assert [item["layer_index"] for item in payload["bootstrap_before"]] == [
+        3,
+        6,
+        9,
+        12,
+        15,
+        18,
+        21,
+    ]
+    assert payload["steps"][0] == {
+        "execution_index": 0,
+        "layer_index": 0,
+        "block_index": 0,
+        "block_name": "recurrence",
+        "block_id": "layer-0/block-0:recurrence",
+        "depth_cost": 3,
+        "pre_level": 10,
+        "remaining_level": 7,
+        "bootstrap_before": False,
+        "reason": REASON_LEVEL_OK,
+    }
+    assert payload["steps"][3]["bootstrap_before"] is True
+    assert payload["steps"][3]["pre_level"] == 10
+    assert payload["steps"][3]["remaining_level"] == 7
+    assert json.loads(schedule.to_json()) == payload
+
+
+def test_execution_schedule_honors_layer_block_forced_policy() -> None:
+    schedule = build_bootstrap_execution_schedule(
+        [
+            (0, "gate", 2),
+            (0, "scan", 2),
+            (1, "gate", 2),
+            (1, "scan", 2),
+        ],
+        bootstrap_policy=BootstrapExecutionPolicy(
+            max_level=10,
+            min_level=1,
+            forced_bootstrap_before=((1, "scan"),),
+        ),
+    )
+
+    assert schedule.total_bootstrap_count == 1
+    assert schedule.steps[3].bootstrap_before is True
+    assert schedule.steps[3].reason == REASON_FORCED_BOOTSTRAP
+    assert schedule.to_payload()["bootstrap_before"] == [
+        {
+            "execution_index": 3,
+            "layer_index": 1,
+            "block_index": 1,
+            "block_name": "scan",
+            "block_id": "layer-1/block-1:scan",
+        }
+    ]
+
+
+def test_execution_schedule_can_disable_bootstrap_flags() -> None:
+    schedule = build_bootstrap_execution_schedule(
+        [
+            {"layer_index": 0, "block_index": 0, "block_name": "a", "depth_cost": 4},
+            {"layer_index": 0, "block_index": 1, "block_name": "b", "depth_cost": 4},
+        ],
+        bootstrap_policy={"max_level": 6, "min_level": 1, "enabled": False},
+    )
+
+    assert schedule.total_bootstrap_count == 0
+    assert [step.bootstrap_before for step in schedule.steps] == [False, False]
+    assert [step.remaining_level for step in schedule.steps] == [2, -2]
+    assert schedule.to_payload()["policy"] == {
+        "max_level": 6,
+        "min_level": 1,
+        "enabled": False,
+        "forced_bootstrap_before": [],
+    }
+
+
+def test_execution_schedule_rejects_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="max_level is required"):
+        build_bootstrap_execution_schedule([(0, "gate", 1)])
+
+    with pytest.raises(ValueError, match="layer_index"):
+        build_bootstrap_execution_schedule([{"block_name": "gate", "depth_cost": 1}], max_level=4)
+
+    with pytest.raises(ValueError, match="does not match"):
+        build_bootstrap_execution_schedule(
+            [(0, "gate", 1)],
+            bootstrap_policy={
+                "max_level": 4,
+                "forced_bootstrap_before": [{"layer_index": 1, "block_name": "gate"}],
+            },
+        )

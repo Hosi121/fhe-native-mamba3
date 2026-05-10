@@ -18,6 +18,7 @@ def main() -> int:
     from fhe_native_mamba3.backends.tracking import TrackingBackend
     from fhe_native_mamba3.ciphertext_handoff import (
         CiphertextHandoffLayer,
+        apply_handoff_bootstrap_schedule,
         matrix_to_cyclic_diagonals,
         required_handoff_rotations,
         run_ciphertext_handoff_chain,
@@ -26,6 +27,7 @@ def main() -> int:
     args = _parse_args()
     _validate_backend_layout_args(args)
     bootstrap_after_layers = _parse_int_set(args.bootstrap_after_layers)
+    bootstrap_before_layers = _parse_zero_based_int_set(args.bootstrap_before_layers)
     layers = tuple(
         CiphertextHandoffLayer(
             diagonals=matrix_to_cyclic_diagonals(_make_matrix(args.width, layer_index)),
@@ -34,6 +36,14 @@ def main() -> int:
         )
         for layer_index in range(args.layers)
     )
+    if bootstrap_before_layers:
+        layers = apply_handoff_bootstrap_schedule(
+            layers,
+            bootstrap_before_layers=tuple(sorted(bootstrap_before_layers)),
+        )
+        bootstrap_after_layers = {
+            layer_index + 1 for layer_index, layer in enumerate(layers) if layer.bootstrap_after
+        }
     input_values = tuple(((index % 7) - 3) * args.input_scale for index in range(args.width))
     if args.backend == "tracking":
         backend = TrackingBackend(batch_size=args.batch_size or args.width)
@@ -75,6 +85,7 @@ def main() -> int:
             "multiplicative_depth": args.multiplicative_depth,
             "scaling_mod_size": args.scaling_mod_size,
             "bootstrap_after_layers": sorted(bootstrap_after_layers),
+            "bootstrap_before_layers": sorted(bootstrap_before_layers),
         },
         "result": result.to_json_dict(),
         "no_intermediate_decrypt": result.backend_stats["decrypt_count"] == 1,
@@ -126,6 +137,20 @@ def _parse_int_set(value: str) -> set[int]:
     return parsed
 
 
+def _parse_zero_based_int_set(value: str) -> set[int]:
+    if not value:
+        return set()
+    try:
+        parsed = {int(part) for part in value.split(",") if part}
+    except ValueError as exc:
+        msg = f"expected comma-separated integers, got {value!r}"
+        raise argparse.ArgumentTypeError(msg) from exc
+    if any(item < 0 for item in parsed):
+        msg = "bootstrap_before_layers uses zero-based non-negative layer indices"
+        raise argparse.ArgumentTypeError(msg)
+    return parsed
+
+
 def _parse_pair(value: str) -> tuple[int, int]:
     parts = value.split(",")
     if len(parts) != 2:
@@ -170,6 +195,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--input-scale", type=float, default=0.01)
     parser.add_argument("--residual-scale", type=float, default=0.98)
     parser.add_argument("--bootstrap-after-layers", default="")
+    parser.add_argument("--bootstrap-before-layers", default="")
     parser.add_argument("--multiplicative-depth", type=int, default=28)
     parser.add_argument("--scaling-mod-size", type=int, default=40)
     parser.add_argument("--ring-dim", type=int, default=0)

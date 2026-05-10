@@ -32,6 +32,7 @@ class BootstrapBlockCost:
 
 
 BlockInput: TypeAlias = BootstrapBlockCost | int | tuple[str, int] | Mapping[str, object]
+BootstrapPointInput: TypeAlias = int | tuple[int, int] | tuple[int, str] | Mapping[str, object]
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,227 @@ class GreedyBootstrapSchedule:
         return json.dumps(self.to_payload(), indent=indent, sort_keys=True)
 
 
+@dataclass(frozen=True)
+class BootstrapExecutionPolicy:
+    """Backend-neutral policy for execution-facing bootstrap placement."""
+
+    max_level: int
+    min_level: int = 0
+    enabled: bool = True
+    forced_bootstrap_before: tuple[BootstrapPointInput, ...] = ()
+
+    def __post_init__(self) -> None:
+        max_level, min_level = _validate_level_budget(
+            max_level=self.max_level,
+            min_level=self.min_level,
+        )
+        object.__setattr__(self, "max_level", max_level)
+        object.__setattr__(self, "min_level", min_level)
+        if not isinstance(self.enabled, bool):
+            msg = "enabled must be a boolean"
+            raise ValueError(msg)
+        object.__setattr__(self, "forced_bootstrap_before", tuple(self.forced_bootstrap_before))
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "max_level": self.max_level,
+            "min_level": self.min_level,
+            "enabled": self.enabled,
+            "forced_bootstrap_before": [
+                _bootstrap_point_to_payload(point) for point in self.forced_bootstrap_before
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class BootstrapExecutionBlockCost:
+    """Depth cost for one executable block within a model layer."""
+
+    layer_index: int
+    block_name: str
+    depth_cost: int
+    block_index: int = 0
+
+    def __post_init__(self) -> None:
+        _validate_non_negative_index(self.layer_index, field="layer_index")
+        _validate_non_negative_index(self.block_index, field="block_index")
+        _validate_block_name(self.block_name)
+        _validate_depth_cost(self.depth_cost, field="depth_cost")
+
+    @property
+    def block_id(self) -> str:
+        return f"layer-{self.layer_index}/block-{self.block_index}:{self.block_name}"
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "layer_index": self.layer_index,
+            "block_index": self.block_index,
+            "block_name": self.block_name,
+            "block_id": self.block_id,
+            "depth_cost": self.depth_cost,
+        }
+
+
+ExecutionBlockInput: TypeAlias = (
+    BootstrapExecutionBlockCost
+    | tuple[int, str, int]
+    | tuple[int, int, str, int]
+    | Mapping[str, object]
+)
+PolicyInput: TypeAlias = BootstrapExecutionPolicy | Mapping[str, object] | None
+
+
+@dataclass(frozen=True)
+class BootstrapExecutionScheduleStep:
+    """One executable block annotated with bootstrap and level state."""
+
+    execution_index: int
+    layer_index: int
+    block_index: int
+    block_name: str
+    block_id: str
+    depth_cost: int
+    pre_level: int
+    remaining_level: int
+    bootstrap_before: bool
+    reason: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "execution_index": self.execution_index,
+            "layer_index": self.layer_index,
+            "block_index": self.block_index,
+            "block_name": self.block_name,
+            "block_id": self.block_id,
+            "depth_cost": self.depth_cost,
+            "pre_level": self.pre_level,
+            "remaining_level": self.remaining_level,
+            "bootstrap_before": self.bootstrap_before,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class BootstrapExecutionSchedule:
+    """Execution-facing schedule payload for layer/block smoke runners."""
+
+    policy: BootstrapExecutionPolicy
+    blocks: tuple[BootstrapExecutionBlockCost, ...]
+    steps: tuple[BootstrapExecutionScheduleStep, ...]
+
+    @property
+    def total_bootstrap_count(self) -> int:
+        return sum(1 for step in self.steps if step.bootstrap_before)
+
+    @property
+    def final_level(self) -> int:
+        if not self.steps:
+            return self.policy.max_level
+        return self.steps[-1].remaining_level
+
+    @property
+    def bootstrap_before(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            {
+                "execution_index": step.execution_index,
+                "layer_index": step.layer_index,
+                "block_index": step.block_index,
+                "block_name": step.block_name,
+                "block_id": step.block_id,
+            }
+            for step in self.steps
+            if step.bootstrap_before
+        )
+
+    def to_payload(self) -> dict[str, object]:
+        layer_indices = sorted({block.layer_index for block in self.blocks})
+        return {
+            "max_level": self.policy.max_level,
+            "min_level": self.policy.min_level,
+            "bootstrap_enabled": self.policy.enabled,
+            "block_count": len(self.blocks),
+            "layer_count": len(layer_indices),
+            "layer_indices": layer_indices,
+            "blocks": [block.to_payload() for block in self.blocks],
+            "bootstrap_before": list(self.bootstrap_before),
+            "total_bootstrap_count": self.total_bootstrap_count,
+            "final_level": self.final_level,
+            "policy": self.policy.to_payload(),
+            "steps": [step.to_payload() for step in self.steps],
+        }
+
+    def to_json(self, *, indent: int | None = None) -> str:
+        return json.dumps(self.to_payload(), indent=indent, sort_keys=True)
+
+
+def build_bootstrap_execution_schedule(
+    blocks: Iterable[ExecutionBlockInput],
+    *,
+    max_level: int | None = None,
+    min_level: int = 0,
+    bootstrap_policy: PolicyInput = None,
+    forced_bootstrap_before: Iterable[BootstrapPointInput] | None = None,
+) -> BootstrapExecutionSchedule:
+    """Build a layer/block schedule payload for smoke-runner execution.
+
+    The helper remains backend-neutral: it only decides where a runner should
+    bootstrap and reports level accounting after each executable block.
+    """
+
+    normalized_blocks = _normalize_execution_blocks(blocks)
+    policy = _normalize_execution_policy(
+        bootstrap_policy,
+        max_level=max_level,
+        min_level=min_level,
+        forced_bootstrap_before=forced_bootstrap_before,
+    )
+    forced_points = _execution_forced_points(
+        policy.forced_bootstrap_before,
+        blocks=normalized_blocks,
+    )
+    schedule_blocks = [
+        BootstrapBlockCost(name=block.block_id, depth_cost=block.depth_cost)
+        for block in normalized_blocks
+    ]
+    if policy.enabled:
+        greedy_schedule = greedy_bootstrap_schedule(
+            schedule_blocks,
+            max_level=policy.max_level,
+            min_level=policy.min_level,
+            forced_bootstrap_before=forced_points,
+        )
+        greedy_steps = greedy_schedule.steps
+    else:
+        greedy_steps = tuple(
+            _disabled_bootstrap_step(
+                execution_index=index,
+                block=block,
+                level=policy.max_level
+                - sum(previous.depth_cost for previous in normalized_blocks[:index]),
+            )
+            for index, block in enumerate(normalized_blocks)
+        )
+
+    steps = tuple(
+        BootstrapExecutionScheduleStep(
+            execution_index=index,
+            layer_index=block.layer_index,
+            block_index=block.block_index,
+            block_name=block.block_name,
+            block_id=block.block_id,
+            depth_cost=block.depth_cost,
+            pre_level=greedy_step.pre_level,
+            remaining_level=greedy_step.post_level,
+            bootstrap_before=greedy_step.bootstrap_before,
+            reason=greedy_step.reason,
+        )
+        for index, (block, greedy_step) in enumerate(
+            zip(normalized_blocks, greedy_steps, strict=True)
+        )
+    )
+    return BootstrapExecutionSchedule(policy=policy, blocks=normalized_blocks, steps=steps)
+
+
 def greedy_bootstrap_schedule(
     blocks: Iterable[BlockInput],
     *,
@@ -163,6 +385,23 @@ def greedy_bootstrap_schedule(
     )
 
 
+def _disabled_bootstrap_step(
+    *,
+    execution_index: int,
+    block: BootstrapExecutionBlockCost,
+    level: int,
+) -> BootstrapScheduleStep:
+    return BootstrapScheduleStep(
+        block_index=execution_index,
+        block_name=block.block_id,
+        depth_cost=block.depth_cost,
+        pre_level=level,
+        post_level=level - block.depth_cost,
+        bootstrap_before=False,
+        reason=REASON_LEVEL_OK,
+    )
+
+
 def _normalize_blocks(blocks: Iterable[BlockInput]) -> tuple[BootstrapBlockCost, ...]:
     return tuple(_normalize_block(index, block) for index, block in enumerate(blocks))
 
@@ -187,6 +426,173 @@ def _normalize_block(index: int, block: BlockInput) -> BootstrapBlockCost:
         )
 
     msg = "blocks must be BootstrapBlockCost, int, (name, depth_cost), or mapping values"
+    raise ValueError(msg)
+
+
+def _normalize_execution_blocks(
+    blocks: Iterable[ExecutionBlockInput],
+) -> tuple[BootstrapExecutionBlockCost, ...]:
+    normalized: list[BootstrapExecutionBlockCost] = []
+    per_layer_counts: dict[int, int] = {}
+    for index, block in enumerate(blocks):
+        normalized_block = _normalize_execution_block(
+            index,
+            block,
+            per_layer_counts=per_layer_counts,
+        )
+        normalized.append(normalized_block)
+        per_layer_counts[normalized_block.layer_index] = (
+            max(per_layer_counts.get(normalized_block.layer_index, 0), normalized_block.block_index)
+            + 1
+        )
+    return tuple(normalized)
+
+
+def _normalize_execution_block(
+    index: int,
+    block: ExecutionBlockInput,
+    *,
+    per_layer_counts: dict[int, int],
+) -> BootstrapExecutionBlockCost:
+    if isinstance(block, BootstrapExecutionBlockCost):
+        return block
+    if isinstance(block, tuple) and len(block) == 3:
+        layer_index, block_name, depth_cost = block
+        layer = _validate_non_negative_index(layer_index, field="layer_index")
+        return BootstrapExecutionBlockCost(
+            layer_index=layer,
+            block_index=per_layer_counts.get(layer, 0),
+            block_name=_validate_block_name(block_name),
+            depth_cost=_validate_depth_cost(depth_cost, field="depth_cost"),
+        )
+    if isinstance(block, tuple) and len(block) == 4:
+        layer_index, block_index, block_name, depth_cost = block
+        return BootstrapExecutionBlockCost(
+            layer_index=_validate_non_negative_index(layer_index, field="layer_index"),
+            block_index=_validate_non_negative_index(block_index, field="block_index"),
+            block_name=_validate_block_name(block_name),
+            depth_cost=_validate_depth_cost(depth_cost, field="depth_cost"),
+        )
+    if isinstance(block, Mapping):
+        if "layer_index" not in block or "depth_cost" not in block:
+            msg = "execution block mappings must include layer_index and depth_cost"
+            raise ValueError(msg)
+        layer = _validate_non_negative_index(block["layer_index"], field="layer_index")
+        block_index = block.get("block_index")
+        if block_index is None:
+            block_index = per_layer_counts.get(layer, 0)
+        block_name = block.get("block_name", block.get("name", f"block-{index}"))
+        return BootstrapExecutionBlockCost(
+            layer_index=layer,
+            block_index=_validate_non_negative_index(block_index, field="block_index"),
+            block_name=_validate_block_name(block_name),
+            depth_cost=_validate_depth_cost(block["depth_cost"], field="depth_cost"),
+        )
+
+    msg = (
+        "execution blocks must be BootstrapExecutionBlockCost, "
+        "(layer_index, block_name, depth_cost), "
+        "(layer_index, block_index, block_name, depth_cost), or mapping values"
+    )
+    raise ValueError(msg)
+
+
+def _normalize_execution_policy(
+    bootstrap_policy: PolicyInput,
+    *,
+    max_level: int | None,
+    min_level: int,
+    forced_bootstrap_before: Iterable[BootstrapPointInput] | None,
+) -> BootstrapExecutionPolicy:
+    if isinstance(bootstrap_policy, BootstrapExecutionPolicy):
+        if max_level is not None or forced_bootstrap_before is not None:
+            msg = "pass either bootstrap_policy or max_level/forced_bootstrap_before, not both"
+            raise ValueError(msg)
+        return bootstrap_policy
+    if isinstance(bootstrap_policy, Mapping):
+        if max_level is not None or forced_bootstrap_before is not None:
+            msg = "pass either bootstrap_policy or max_level/forced_bootstrap_before, not both"
+            raise ValueError(msg)
+        if "max_level" not in bootstrap_policy:
+            msg = "bootstrap_policy mappings must include max_level"
+            raise ValueError(msg)
+        return BootstrapExecutionPolicy(
+            max_level=_validate_int(bootstrap_policy["max_level"], field="max_level"),
+            min_level=_validate_int(bootstrap_policy.get("min_level", 0), field="min_level"),
+            enabled=_validate_bool(bootstrap_policy.get("enabled", True), field="enabled"),
+            forced_bootstrap_before=tuple(bootstrap_policy.get("forced_bootstrap_before", ())),
+        )
+    if max_level is None:
+        msg = "max_level is required when bootstrap_policy is not provided"
+        raise ValueError(msg)
+    return BootstrapExecutionPolicy(
+        max_level=max_level,
+        min_level=min_level,
+        enabled=True,
+        forced_bootstrap_before=tuple(forced_bootstrap_before or ()),
+    )
+
+
+def _execution_forced_points(
+    points: Iterable[BootstrapPointInput],
+    *,
+    blocks: tuple[BootstrapExecutionBlockCost, ...],
+) -> tuple[int, ...]:
+    positions = tuple(_execution_forced_point(point, blocks=blocks) for point in points)
+    return _normalize_forced_points(positions, block_count=len(blocks))
+
+
+def _execution_forced_point(
+    point: BootstrapPointInput,
+    *,
+    blocks: tuple[BootstrapExecutionBlockCost, ...],
+) -> int:
+    if isinstance(point, int) and not isinstance(point, bool):
+        return point
+    if isinstance(point, tuple) and len(point) == 2:
+        layer_index, block_ref = point
+        return _find_execution_block(
+            layer_index=_validate_non_negative_index(layer_index, field="layer_index"),
+            block_ref=block_ref,
+            blocks=blocks,
+        )
+    if isinstance(point, Mapping):
+        if "execution_index" in point:
+            return _validate_int(point["execution_index"], field="execution_index")
+        if "layer_index" not in point:
+            msg = "forced bootstrap mappings must include execution_index or layer_index"
+            raise ValueError(msg)
+        block_ref = point.get("block_index", point.get("block_name", point.get("name", 0)))
+        return _find_execution_block(
+            layer_index=_validate_non_negative_index(point["layer_index"], field="layer_index"),
+            block_ref=block_ref,
+            blocks=blocks,
+        )
+    msg = "forced bootstrap points must be execution indices, layer/block tuples, or mappings"
+    raise ValueError(msg)
+
+
+def _find_execution_block(
+    *,
+    layer_index: int,
+    block_ref: object,
+    blocks: tuple[BootstrapExecutionBlockCost, ...],
+) -> int:
+    for index, block in enumerate(blocks):
+        if block.layer_index != layer_index:
+            continue
+        if isinstance(block_ref, int) and not isinstance(block_ref, bool):
+            if block.block_index == block_ref:
+                return index
+        elif isinstance(block_ref, str):
+            if block.block_name == block_ref:
+                return index
+        else:
+            msg = "block reference must be a block_index integer or block_name string"
+            raise ValueError(msg)
+    msg = (
+        f"forced bootstrap point does not match any block: layer={layer_index}, block={block_ref!r}"
+    )
     raise ValueError(msg)
 
 
@@ -271,13 +677,41 @@ def _validate_int(value: object, *, field: str) -> int:
     return value
 
 
+def _validate_bool(value: object, *, field: str) -> bool:
+    if not isinstance(value, bool):
+        msg = f"{field} must be a boolean"
+        raise ValueError(msg)
+    return value
+
+
+def _validate_non_negative_index(value: object, *, field: str) -> int:
+    index = _validate_int(value, field=field)
+    if index < 0:
+        msg = f"{field} must be non-negative"
+        raise ValueError(msg)
+    return index
+
+
+def _bootstrap_point_to_payload(point: BootstrapPointInput) -> object:
+    if isinstance(point, tuple):
+        return list(point)
+    if isinstance(point, Mapping):
+        return dict(point)
+    return point
+
+
 __all__ = [
     "REASON_FORCED_BOOTSTRAP",
     "REASON_FORCED_UNDERFLOW",
     "REASON_LEVEL_OK",
     "REASON_LEVEL_UNDERFLOW",
     "BootstrapBlockCost",
+    "BootstrapExecutionBlockCost",
+    "BootstrapExecutionPolicy",
+    "BootstrapExecutionSchedule",
+    "BootstrapExecutionScheduleStep",
     "BootstrapScheduleStep",
     "GreedyBootstrapSchedule",
+    "build_bootstrap_execution_schedule",
     "greedy_bootstrap_schedule",
 ]
