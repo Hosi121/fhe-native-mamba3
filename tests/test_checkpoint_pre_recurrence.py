@@ -8,6 +8,7 @@ import torch
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
     PRE_RECURRENCE_STAGES,
+    linear_bsgs_rotation_steps,
     run_checkpoint_pre_recurrence_chain_gate,
     run_checkpoint_pre_recurrence_ciphertexts_with_backend,
     run_checkpoint_pre_recurrence_stage_gate,
@@ -39,6 +40,22 @@ def test_pre_recurrence_projected_rank_input_gate_matches_source() -> None:
     assert payload["backend_stats"]["decrypt_count"] == 3
     assert payload["backend_stats"]["ct_pt_mul_count"] > 0
     json.dumps(payload)
+
+
+def test_linear_bsgs_rotation_inventory_shrinks_dense_projection_keys() -> None:
+    naive_rotation_count = len(
+        {
+            input_index - output_index
+            for output_index in range(4)
+            for input_index in range(768)
+            if input_index != output_index
+        }
+    )
+    rotations = linear_bsgs_rotation_steps(input_dim=768, output_dim=4)
+
+    assert naive_rotation_count == 770
+    assert len(rotations) < 70
+    assert all(rotation != 0 for rotation in rotations)
 
 
 @pytest.mark.parametrize(

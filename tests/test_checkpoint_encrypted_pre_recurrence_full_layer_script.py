@@ -100,7 +100,7 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_script_shrinks_plaintext
 
     payload = json.loads(completed.stdout)
     assert payload["passed"] is True
-    assert payload["ckks"]["rotation_count"] < 800
+    assert payload["ckks"]["rotation_count"] < 100
     assert payload["approximation"]["rms_norm_mode"] == "plaintext-exact"
     assert payload["approximation"]["state_decay_mode"] == "plaintext-exact"
 

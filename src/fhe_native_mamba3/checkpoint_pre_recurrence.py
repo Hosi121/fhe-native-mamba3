@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from typing import Any, Literal
@@ -942,19 +943,61 @@ def _linear_ciphertext(
     output_dim = int(weight.shape[0])
     input_dim = int(weight.shape[1])
     output_ct = backend.encrypt(_padded(bias[:output_dim], backend.batch_size))
+    baby_step = linear_bsgs_baby_step(input_dim=input_dim, output_dim=output_dim)
+    baby_cts: dict[int, Any] = {}
+    grouped_masks: dict[tuple[int, int], list[float]] = {}
     for output_index in range(output_dim):
         for input_index in range(input_dim):
             coefficient = float(weight[output_index, input_index])
             if coefficient == 0.0:
                 continue
-            mask = [0.0] * backend.batch_size
-            mask[input_index] = coefficient
-            term = backend.mul_plain(input_ct, backend.encode(mask))
-            shift = input_index - output_index
-            if shift:
-                term = backend.rotate(term, shift)
-            output_ct = backend.add(output_ct, term)
+            giant_index, baby_index = divmod(input_index - output_index, baby_step)
+            key = (giant_index, baby_index)
+            mask = grouped_masks.setdefault(key, [0.0] * backend.batch_size)
+            mask[(input_index - baby_index) % backend.batch_size] = coefficient
+
+    for giant_index, baby_index in sorted(grouped_masks):
+        if baby_index not in baby_cts:
+            baby_cts[baby_index] = (
+                input_ct if baby_index == 0 else backend.rotate(input_ct, baby_index)
+            )
+        term = backend.mul_plain(
+            baby_cts[baby_index],
+            backend.encode(grouped_masks[(giant_index, baby_index)]),
+        )
+        giant_shift = giant_index * baby_step
+        if giant_shift:
+            term = backend.rotate(term, giant_shift)
+        output_ct = backend.add(output_ct, term)
     return output_ct
+
+
+def linear_bsgs_baby_step(*, input_dim: int, output_dim: int) -> int:
+    """Baby-step width for exact dense slot-linear evaluation."""
+
+    if input_dim <= 0:
+        msg = "input_dim must be positive"
+        raise ValueError(msg)
+    if output_dim <= 0:
+        msg = "output_dim must be positive"
+        raise ValueError(msg)
+    return max(1, math.ceil(math.sqrt(input_dim + output_dim - 1)))
+
+
+def linear_bsgs_rotation_steps(*, input_dim: int, output_dim: int) -> tuple[int, ...]:
+    """Rotation-key inventory for ``_linear_ciphertext``'s BSGS schedule."""
+
+    baby_step = linear_bsgs_baby_step(input_dim=input_dim, output_dim=output_dim)
+    rotations: set[int] = set()
+    for output_index in range(output_dim):
+        for input_index in range(input_dim):
+            giant_index, baby_index = divmod(input_index - output_index, baby_step)
+            if baby_index:
+                rotations.add(baby_index)
+            giant_shift = giant_index * baby_step
+            if giant_shift:
+                rotations.add(giant_shift)
+    return tuple(sorted(rotations))
 
 
 def _rms_norm_chain_ciphertexts(

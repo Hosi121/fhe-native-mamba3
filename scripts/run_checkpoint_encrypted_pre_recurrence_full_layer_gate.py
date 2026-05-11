@@ -15,6 +15,7 @@ from fhe_native_mamba3.checkpoint_correctness import (
     required_full_layer_visible_rotations,
     run_checkpoint_encrypted_pre_recurrence_full_layer_gate,
 )
+from fhe_native_mamba3.checkpoint_pre_recurrence import linear_bsgs_rotation_steps
 from fhe_native_mamba3.cli_support import emit_json_payload, parse_int_list
 from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model
 from fhe_native_mamba3.mamba_reference import run_mamba_source_layer
@@ -261,8 +262,8 @@ def _required_rotations(
             visible_dim_limit=visible_dim_limit,
         )
     )
-    rotations.update(_linear_rotations(input_dim=d_model, output_dim=mimo_rank))
-    rotations.update(_linear_rotations(input_dim=mimo_rank, output_dim=d_state))
+    rotations.update(linear_bsgs_rotation_steps(input_dim=d_model, output_dim=mimo_rank))
+    rotations.update(linear_bsgs_rotation_steps(input_dim=mimo_rank, output_dim=d_state))
     rotations.update(_expand_rank_rotations(d_state=d_state, rank=mimo_rank))
     rotations.update(_expand_state_rotations(d_state=d_state, rank=mimo_rank))
     if rms_norm_mode != "plaintext-exact":
@@ -270,18 +271,13 @@ def _required_rotations(
         rotations.update(range(1 - d_model, 0))
     if state_decay_mode == "poly-composed":
         resolved_dt_rank = dt_rank if dt_rank is not None else mimo_rank
-        rotations.update(_linear_rotations(input_dim=mimo_rank, output_dim=resolved_dt_rank))
-        rotations.update(_linear_rotations(input_dim=resolved_dt_rank, output_dim=mimo_rank))
+        rotations.update(
+            linear_bsgs_rotation_steps(input_dim=mimo_rank, output_dim=resolved_dt_rank)
+        )
+        rotations.update(
+            linear_bsgs_rotation_steps(input_dim=resolved_dt_rank, output_dim=mimo_rank)
+        )
     return tuple(sorted(rotations))
-
-
-def _linear_rotations(*, input_dim: int, output_dim: int) -> set[int]:
-    return {
-        input_index - output_index
-        for output_index in range(output_dim)
-        for input_index in range(input_dim)
-        if input_index != output_index
-    }
 
 
 def _expand_rank_rotations(*, d_state: int, rank: int) -> set[int]:
