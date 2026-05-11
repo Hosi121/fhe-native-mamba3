@@ -9,6 +9,11 @@ from torch import Tensor
 
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.tracking import TrackingBackend
+from fhe_native_mamba3.checkpoint_pre_recurrence import (
+    RmsNormMode,
+    StateDecayMode,
+    run_checkpoint_pre_recurrence_ciphertexts_with_backend,
+)
 from fhe_native_mamba3.ciphertext_handoff import (
     CiphertextHandoffLayer,
     matrix_to_cyclic_diagonals,
@@ -27,6 +32,7 @@ from fhe_native_mamba3.openfhe_backend import (
     CiphertextLayoutContract,
     InputMode,
     LayoutBoundCiphertexts,
+    plaintext_static_recurrence,
     readout_output_slots,
     required_readout_rotations,
     run_static_mimo_recurrence_ciphertexts_with_backend,
@@ -169,6 +175,34 @@ class CheckpointFullLayerCiphertextTrace:
         }
 
 
+@dataclass(frozen=True)
+class CheckpointEncryptedPreRecurrenceRecurrenceGate:
+    """Gate for encrypted pre-recurrence outputs feeding encrypted recurrence."""
+
+    layer_index: int
+    d_state: int
+    mimo_rank: int
+    seq_len: int
+    backend: str
+    encrypted: bool
+    input_mode: str
+    readout_strategy: str
+    pre_recurrence_ciphertext: bool
+    recurrence_ciphertext: bool
+    no_intermediate_decrypt: bool
+    max_abs_error: float
+    atol: float
+    passed: bool
+    pre_recurrence_depth_estimate: int
+    backend_stats: dict[str, Any]
+    notes: tuple[str, ...]
+
+    def to_json_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["notes"] = list(self.notes)
+        return payload
+
+
 def run_checkpoint_recurrence_correctness_gate(
     state_dict: dict[str, Tensor],
     layer_input: Tensor,
@@ -297,6 +331,158 @@ def run_checkpoint_recurrence_correctness_gate(
         passed=passed,
         backend_stats=result.backend_stats,
         notes=tuple(notes),
+    )
+
+
+def run_checkpoint_encrypted_pre_recurrence_recurrence_gate(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    backend: FHEBackend | None = None,
+    readout_strategy: ReadoutStrategy = "rank-local",
+    multiplicative_depth: int = 28,
+    norm_eps: float = 1e-5,
+    polynomial_degree: int = 13,
+    polynomial_range: float = 6.0,
+    rms_norm_mode: RmsNormMode = "newton-invsqrt",
+    newton_iterations: int = 2,
+    newton_range: tuple[float, float] = (0.25, 0.5),
+    state_decay_mode: StateDecayMode = "poly-composed",
+    decay_polynomial_degree: int = 5,
+    decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
+    atol: float = 2e-2,
+) -> CheckpointEncryptedPreRecurrenceRecurrenceGate:
+    """Feed encrypted pre-recurrence stage outputs into encrypted recurrence."""
+
+    if atol < 0:
+        msg = "atol must be non-negative"
+        raise ValueError(msg)
+    problem = build_mamba_source_recurrence_problem(
+        state_dict,
+        layer_input,
+        layer_index=layer_index,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        norm_eps=norm_eps,
+    )
+    batch_size = max(problem.d_state * problem.mimo_rank, problem.mimo_rank)
+    resolved_backend = backend or TrackingBackend(batch_size=batch_size)
+    if resolved_backend.batch_size < batch_size:
+        msg = (
+            "encrypted pre-recurrence recurrence gate backend batch_size is too small; "
+            f"need at least {batch_size}, got {resolved_backend.batch_size}"
+        )
+        raise ValueError(msg)
+
+    started_decrypts = resolved_backend.stats().decrypt_count
+    pre_trace = run_checkpoint_pre_recurrence_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        layer_index=layer_index,
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        backend=resolved_backend,
+        norm_eps=norm_eps,
+        polynomial_degree=polynomial_degree,
+        polynomial_range=polynomial_range,
+        rms_norm_mode=rms_norm_mode,
+        newton_iterations=newton_iterations,
+        newton_range=newton_range,
+        state_decay_mode=state_decay_mode,
+        decay_polynomial_degree=decay_polynomial_degree,
+        decay_polynomial_range=decay_polynomial_range,
+        atol=atol,
+    )
+    rank_input_ciphertexts = _bind_expanded_rank_input_ciphertexts(
+        tuple(
+            _expand_rank_ciphertext_to_state_slots(
+                ciphertext,
+                d_state=problem.d_state,
+                rank=problem.mimo_rank,
+                backend=resolved_backend,
+            )
+            for ciphertext in pre_trace.causal_conv_post_silu_ciphertexts
+        ),
+        d_state=problem.d_state,
+        rank=problem.mimo_rank,
+        readout_strategy=readout_strategy,
+    )
+    b_ciphertexts = tuple(
+        _expand_state_vector_ciphertext_to_state_slots(
+            ciphertext,
+            d_state=problem.d_state,
+            rank=problem.mimo_rank,
+            backend=resolved_backend,
+        )
+        for ciphertext in pre_trace.dynamic_b_ciphertexts
+    )
+    c_ciphertexts = tuple(
+        _expand_state_vector_ciphertext_to_state_slots(
+            ciphertext,
+            d_state=problem.d_state,
+            rank=problem.mimo_rank,
+            backend=resolved_backend,
+        )
+        for ciphertext in pre_trace.dynamic_c_ciphertexts
+    )
+    recurrence_problem = replace(problem, d_skip=None)
+    recurrence_trace = run_static_mimo_recurrence_ciphertexts_with_backend(
+        recurrence_problem,
+        backend=resolved_backend,
+        multiplicative_depth=multiplicative_depth,
+        readout_strategy=readout_strategy,
+        input_mode="encrypted-dynamic-bc",
+        rank_input_ciphertexts=rank_input_ciphertexts,
+        b_ciphertexts=b_ciphertexts,
+        c_ciphertexts=c_ciphertexts,
+        decay_state_ciphertexts=pre_trace.state_rank_decay_ciphertexts,
+    )
+    intermediate_decrypts = resolved_backend.stats().decrypt_count - started_decrypts
+    actual_rows = tuple(
+        tuple(decrypted[slot] for slot in recurrence_trace.output_slots)
+        for decrypted in (
+            resolved_backend.decrypt(output_ct, length=resolved_backend.batch_size)
+            for output_ct in recurrence_trace.output_ciphertexts
+        )
+    )
+    expected_rows = plaintext_static_recurrence(recurrence_problem)
+    max_abs_error = max(
+        (
+            abs(actual - expected)
+            for actual_row, expected_row in zip(actual_rows, expected_rows, strict=True)
+            for actual, expected in zip(actual_row, expected_row, strict=True)
+        ),
+        default=0.0,
+    )
+    final_decrypts = resolved_backend.stats().decrypt_count - started_decrypts
+    no_intermediate_decrypt = (
+        intermediate_decrypts == 0 and final_decrypts == recurrence_problem.seq_len
+    )
+    return CheckpointEncryptedPreRecurrenceRecurrenceGate(
+        layer_index=layer_index,
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        seq_len=problem.seq_len,
+        backend=resolved_backend.stats().backend,
+        encrypted=bool(resolved_backend.stats().encrypted),
+        input_mode="encrypted-dynamic-bc",
+        readout_strategy=readout_strategy,
+        pre_recurrence_ciphertext=True,
+        recurrence_ciphertext=True,
+        no_intermediate_decrypt=no_intermediate_decrypt,
+        max_abs_error=max_abs_error,
+        atol=atol,
+        passed=max_abs_error <= atol and no_intermediate_decrypt,
+        pre_recurrence_depth_estimate=pre_trace.depth_estimate,
+        backend_stats=resolved_backend.stats().to_json_dict(),
+        notes=(
+            "encrypted pre-recurrence ciphertexts feed encrypted recurrence",
+            "gate decrypts only final recurrence readout ciphertexts",
+            "visible out-projection, residual, and final lm_head are not included",
+        ),
     )
 
 
@@ -574,6 +760,65 @@ def _visible_output_ciphertext(
             ]
         ),
     )
+
+
+def _bind_expanded_rank_input_ciphertexts(
+    ciphertexts: tuple[Any, ...],
+    *,
+    d_state: int,
+    rank: int,
+    readout_strategy: ReadoutStrategy,
+) -> LayoutBoundCiphertexts:
+    output_slots = tuple(r * d_state for r in range(rank))
+    layout_contract = CiphertextLayoutContract(
+        output_layout="expanded-rank-input",
+        d_state=d_state,
+        mimo_rank=rank,
+        readout_strategy=readout_strategy,
+        output_slots=output_slots,
+        required_rotations=(),
+    )
+    return LayoutBoundCiphertexts(ciphertexts, layout_contract=layout_contract)
+
+
+def _expand_rank_ciphertext_to_state_slots(
+    ciphertext: Any,
+    *,
+    d_state: int,
+    rank: int,
+    backend: FHEBackend,
+) -> Any:
+    output_ct = backend.encrypt([0.0] * backend.batch_size)
+    for rank_index in range(rank):
+        mask = [0.0] * backend.batch_size
+        mask[rank_index] = 1.0
+        selected = backend.mul_plain(ciphertext, backend.encode(mask))
+        for state_index in range(d_state):
+            output_slot = rank_index * d_state + state_index
+            shift = rank_index - output_slot
+            term = selected if shift == 0 else backend.rotate(selected, shift)
+            output_ct = backend.add(output_ct, term)
+    return output_ct
+
+
+def _expand_state_vector_ciphertext_to_state_slots(
+    ciphertext: Any,
+    *,
+    d_state: int,
+    rank: int,
+    backend: FHEBackend,
+) -> Any:
+    output_ct = backend.encrypt([0.0] * backend.batch_size)
+    for state_index in range(d_state):
+        mask = [0.0] * backend.batch_size
+        mask[state_index] = 1.0
+        selected = backend.mul_plain(ciphertext, backend.encode(mask))
+        for rank_index in range(rank):
+            output_slot = rank_index * d_state + state_index
+            shift = state_index - output_slot
+            term = selected if shift == 0 else backend.rotate(selected, shift)
+            output_ct = backend.add(output_ct, term)
+    return output_ct
 
 
 def _rank_slot_vector(

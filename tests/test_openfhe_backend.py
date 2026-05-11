@@ -14,6 +14,7 @@ from fhe_native_mamba3.openfhe_backend import (
     OpenFheRecurrenceProblem,
     make_demo_problem,
     plaintext_recurrence_trace,
+    plaintext_static_recurrence,
     readout_output_slots,
     required_readout_rotations,
     required_recurrence_chain_rotations,
@@ -144,6 +145,57 @@ def test_encrypted_dynamic_bc_uses_ciphertext_multiply_path() -> None:
 
     assert result.max_abs_error == 0
     assert result.backend_stats["ct_ct_mul_count"] == 2 * problem.seq_len
+
+
+def test_recurrence_trace_accepts_external_dynamic_ciphertexts() -> None:
+    problem = OpenFheRecurrenceProblem(
+        rank_inputs=((1.0, -2.0), (0.5, 0.25)),
+        decay=(0.0, 0.0),
+        b=((0.0, 0.0), (0.0, 0.0)),
+        c=((0.0, 0.0), (0.0, 0.0)),
+        decay_state_by_token=(
+            ((0.25, 0.5), (0.75, 0.9)),
+            ((0.1, 0.2), (0.3, 0.4)),
+        ),
+        b_by_token=(
+            ((1.0, 2.0), (3.0, 4.0)),
+            ((0.5, -1.0), (2.0, 0.25)),
+        ),
+        c_by_token=(
+            ((0.5, 1.5), (1.0, -0.25)),
+            ((2.0, -0.5), (0.25, 1.25)),
+        ),
+    )
+    backend = TrackingBackend(batch_size=4)
+    b_ciphertexts = tuple(
+        backend.encrypt((matrix[0][0], matrix[1][0], matrix[0][1], matrix[1][1]))
+        for matrix in problem.b_by_token or ()
+    )
+    c_ciphertexts = tuple(
+        backend.encrypt((matrix[0][0], matrix[1][0], matrix[0][1], matrix[1][1]))
+        for matrix in problem.c_by_token or ()
+    )
+    decay_ciphertexts = tuple(
+        backend.encrypt((matrix[0][0], matrix[1][0], matrix[0][1], matrix[1][1]))
+        for matrix in problem.decay_state_by_token or ()
+    )
+
+    trace = run_static_mimo_recurrence_ciphertexts_with_backend(
+        problem,
+        backend=backend,
+        multiplicative_depth=8,
+        readout_strategy="rank-local",
+        input_mode="encrypted-dynamic-bc",
+        b_ciphertexts=b_ciphertexts,
+        c_ciphertexts=c_ciphertexts,
+        decay_state_ciphertexts=decay_ciphertexts,
+    )
+    expected = plaintext_static_recurrence(problem)
+    actual = tuple(backend.decrypt(output_ct, length=4) for output_ct in trace.output_ciphertexts)
+
+    for actual_row, expected_row in zip(actual, expected, strict=True):
+        assert (actual_row[0], actual_row[2]) == pytest.approx(expected_row)
+    assert backend.stats().ct_ct_mul_count >= 3 * problem.seq_len
 
 
 def test_recurrence_runner_can_bootstrap_state_after_tokens() -> None:

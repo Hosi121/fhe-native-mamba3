@@ -376,6 +376,9 @@ def _prepare_recurrence_run_plan(
     bootstrap_every_tokens: int,
     bootstrap_after_tokens: tuple[int, ...],
     rank_input_ciphertexts: tuple[Any, ...] | None,
+    b_ciphertexts: tuple[Any, ...] | None,
+    c_ciphertexts: tuple[Any, ...] | None,
+    decay_state_ciphertexts: tuple[Any, ...] | None,
     output_layout: str,
 ) -> _RecurrenceRunPlan:
     d_state = problem.d_state
@@ -404,6 +407,19 @@ def _prepare_recurrence_run_plan(
             d_state=d_state,
             rank=rank,
         )
+    for name, ciphertexts in (
+        ("b_ciphertexts", b_ciphertexts),
+        ("c_ciphertexts", c_ciphertexts),
+        ("decay_state_ciphertexts", decay_state_ciphertexts),
+    ):
+        if ciphertexts is not None and len(ciphertexts) != problem.seq_len:
+            msg = f"{name} length must match seq_len"
+            raise ValueError(msg)
+    if (b_ciphertexts is not None or c_ciphertexts is not None) and (
+        input_mode != "encrypted-dynamic-bc"
+    ):
+        msg = "b_ciphertexts and c_ciphertexts require encrypted-dynamic-bc input mode"
+        raise ValueError(msg)
     if backend.batch_size < slots:
         msg = f"backend batch_size={backend.batch_size} is smaller than required slots={slots}"
         raise ValueError(msg)
@@ -956,6 +972,9 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
     bootstrap_every_tokens: int = 0,
     bootstrap_after_tokens: tuple[int, ...] = (),
     rank_input_ciphertexts: tuple[Any, ...] | None = None,
+    b_ciphertexts: tuple[Any, ...] | None = None,
+    c_ciphertexts: tuple[Any, ...] | None = None,
+    decay_state_ciphertexts: tuple[Any, ...] | None = None,
     output_layout: CiphertextTraceOutputLayout = "readout",
 ) -> OpenFheRecurrenceCiphertextTrace:
     """Evaluate recurrence and return ciphertext outputs without decrypting."""
@@ -967,6 +986,9 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
         bootstrap_every_tokens=bootstrap_every_tokens,
         bootstrap_after_tokens=bootstrap_after_tokens,
         rank_input_ciphertexts=rank_input_ciphertexts,
+        b_ciphertexts=b_ciphertexts,
+        c_ciphertexts=c_ciphertexts,
+        decay_state_ciphertexts=decay_state_ciphertexts,
         output_layout=output_layout,
     )
     d_state = plan.d_state
@@ -1002,7 +1024,11 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
         else:
             input_ct = backend.encrypt(_expanded_rank_input(rank_input, d_state, rank))
         if input_mode == "encrypted-dynamic-bc":
-            b_ct = backend.encrypt(_flat_state_by_rank(b_matrix, d_state, rank))
+            b_ct = (
+                b_ciphertexts[t]
+                if b_ciphertexts is not None
+                else backend.encrypt(_flat_state_by_rank(b_matrix, d_state, rank))
+            )
             update_ct = backend.mul_ct(input_ct, b_ct)
         elif input_mode == "server-bx":
             if problem.b_by_token is None:
@@ -1015,7 +1041,9 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
         else:
             update_ct = backend.encrypt(_expanded_update(rank_input, b_matrix, d_state, rank))
             client_plaintext_public_weight_multiplies += slots
-        if problem.decay_state_by_token is not None:
+        if decay_state_ciphertexts is not None:
+            decayed_state_ct = backend.mul_ct(state_ct, decay_state_ciphertexts[t])
+        elif problem.decay_state_by_token is not None:
             decay_ct = backend.encrypt(
                 _flat_state_by_rank(problem.decay_state_by_token[t], d_state, rank)
             )
@@ -1032,7 +1060,11 @@ def run_static_mimo_recurrence_ciphertexts_with_backend(
         if token_number in bootstrap_tokens:
             state_ct = backend.bootstrap(state_ct)
         if input_mode == "encrypted-dynamic-bc":
-            c_ct = backend.encrypt(_flat_state_by_rank(c_matrix, d_state, rank))
+            c_ct = (
+                c_ciphertexts[t]
+                if c_ciphertexts is not None
+                else backend.encrypt(_flat_state_by_rank(c_matrix, d_state, rank))
+            )
             contrib_ct = backend.mul_ct(state_ct, c_ct)
         elif problem.c_by_token is None:
             contrib_ct = backend.mul_plain(state_ct, c_pt)

@@ -6,6 +6,7 @@ import torch
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_correctness import (
     required_full_layer_visible_rotations,
+    run_checkpoint_encrypted_pre_recurrence_recurrence_gate,
     run_checkpoint_full_layer_ciphertext_gate,
     run_checkpoint_full_layer_ciphertexts_with_backend,
     run_checkpoint_recurrence_correctness_gate,
@@ -167,6 +168,33 @@ def test_checkpoint_full_layer_ciphertext_gate_matches_source_visible_output() -
     ]
     assert payload["backend_stats"]["decrypt_count"] == 3
     assert payload["backend_stats"]["ct_ct_mul_count"] >= 12
+
+
+def test_checkpoint_encrypted_pre_recurrence_feeds_recurrence_gate() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+    backend = TrackingBackend(batch_size=8)
+
+    gate = run_checkpoint_encrypted_pre_recurrence_recurrence_gate(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        readout_strategy="rank-local",
+        newton_range=(0.20, 0.40),
+        atol=2e-2,
+    )
+    payload = gate.to_json_dict()
+
+    assert gate.passed is True
+    assert gate.pre_recurrence_ciphertext is True
+    assert gate.recurrence_ciphertext is True
+    assert gate.no_intermediate_decrypt is True
+    assert gate.max_abs_error < 2e-2
+    assert gate.pre_recurrence_depth_estimate == 23
+    assert payload["backend_stats"]["decrypt_count"] == gate.seq_len
+    assert payload["backend_stats"]["ct_ct_mul_count"] > 0
 
 
 def test_checkpoint_full_layer_ciphertext_trace_does_not_decrypt_outputs() -> None:
