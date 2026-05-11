@@ -9,6 +9,7 @@ from fhe_native_mamba3 import __version__
 
 def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(tmp_path) -> None:
     profile_json = tmp_path / "profile.json"
+    scale_plan_json = tmp_path / "scale-plan.json"
     full_layer_json = tmp_path / "full-layer.json"
     decode_json = tmp_path / "decode.json"
     output_json = tmp_path / "status.json"
@@ -74,6 +75,26 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
         ),
         encoding="utf-8",
     )
+    scale_plan_json.write_text(
+        json.dumps(
+            {
+                "scale_plan": {
+                    "activation_target": 6.0,
+                    "state_target": 32.0,
+                    "encoded_target": 32.0,
+                    "layer_count": 1,
+                    "activation_tuning_layer_count": 1,
+                    "state_scaled_layer_count": 1,
+                    "output_scaled_layer_count": 1,
+                    "max_encoded_input_abs": 8.0,
+                    "max_encoded_delta_abs": 32.0,
+                    "max_encoded_output_abs": 32.0,
+                    "layers": [{"output_scale": 0.5, "max_activation_abs": 12.0}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     decode_json.write_text(
         json.dumps(
             {
@@ -96,6 +117,8 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
             "scripts/build_stage0_status_report.py",
             "--checkpoint-source-profile-json",
             str(profile_json),
+            "--range-scale-plan-json",
+            str(scale_plan_json),
             "--checkpoint-full-layer-gate-json",
             str(full_layer_json),
             "--client-decode-smoke-json",
@@ -112,6 +135,7 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
     assert payload["version"] == __version__
     assert payload["repo_commit"]
     assert payload["measurements"]["checkpoint_source_profile"]["range_score_layer"] == 7
+    assert payload["measurements"]["range_scale_plan"]["activation_tuning_layer_count"] == 1
     assert payload["measurements"]["checkpoint_full_layer_gate"]["rotation_count"] == 9
     assert payload["measurements"]["client_decode_smoke"]["new_token_ids"] == [42]
     assert payload["bottlenecks"][0]["name"] == "range"

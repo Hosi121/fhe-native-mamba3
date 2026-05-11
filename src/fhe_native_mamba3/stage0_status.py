@@ -12,6 +12,7 @@ def build_stage0_status_report(
     stack_latency_estimate: dict[str, Any] | None = None,
     checkpoint_bootstrap_smoke: dict[str, Any] | None = None,
     checkpoint_source_profile: dict[str, Any] | None = None,
+    range_scale_plan: dict[str, Any] | None = None,
     checkpoint_full_layer_gate: dict[str, Any] | None = None,
     client_decode_smoke: dict[str, Any] | None = None,
     segment_samples: dict[str, Any] | None = None,
@@ -25,6 +26,7 @@ def build_stage0_status_report(
         "stack_latency_estimate": _stack_latency_summary(stack_latency_estimate),
         "checkpoint_bootstrap_smoke": _checkpoint_smoke_summary(checkpoint_bootstrap_smoke),
         "checkpoint_source_profile": _checkpoint_source_profile_summary(checkpoint_source_profile),
+        "range_scale_plan": _range_scale_plan_summary(range_scale_plan),
         "checkpoint_full_layer_gate": _checkpoint_full_layer_gate_summary(
             checkpoint_full_layer_gate
         ),
@@ -178,6 +180,33 @@ def _checkpoint_source_profile_summary(payload: dict[str, Any] | None) -> dict[s
     }
 
 
+def _range_scale_plan_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {"available": False}
+    plan = payload.get("scale_plan", {})
+    layers = plan.get("layers") or []
+    min_output_scale = min((float(layer.get("output_scale", 1.0)) for layer in layers), default=1.0)
+    worst_activation = max(
+        (float(layer.get("max_activation_abs", 0.0)) for layer in layers),
+        default=0.0,
+    )
+    return {
+        "available": True,
+        "layer_count": plan.get("layer_count"),
+        "activation_target": plan.get("activation_target"),
+        "state_target": plan.get("state_target"),
+        "encoded_target": plan.get("encoded_target"),
+        "activation_tuning_layer_count": plan.get("activation_tuning_layer_count"),
+        "state_scaled_layer_count": plan.get("state_scaled_layer_count"),
+        "output_scaled_layer_count": plan.get("output_scaled_layer_count"),
+        "max_encoded_input_abs": plan.get("max_encoded_input_abs"),
+        "max_encoded_delta_abs": plan.get("max_encoded_delta_abs"),
+        "max_encoded_output_abs": plan.get("max_encoded_output_abs"),
+        "worst_activation_abs": worst_activation,
+        "min_output_scale": min_output_scale,
+    }
+
+
 def _checkpoint_full_layer_gate_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
     if not payload:
         return {"available": False}
@@ -327,6 +356,8 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         items.append("insert and execute an actual bootstrap in real-checkpoint recurrence")
     if measurements["checkpoint_source_profile"].get("available"):
         items.append("profile real checkpoint ranges, decay bursts, updates, and logit gaps")
+    if measurements["range_scale_plan"].get("available"):
+        items.append("derive source-profile range scale plan for recurrence and residual encoding")
     full_gate = measurements["checkpoint_full_layer_gate"]
     if (
         full_gate.get("passed")
@@ -370,25 +401,56 @@ def _bottleneck_assessment(measurements: dict[str, dict[str, Any]]) -> list[dict
     profile = measurements["checkpoint_source_profile"]
     if profile.get("available"):
         range_score = profile.get("range_score")
+        range_stage = profile.get("range_score_stage")
         if isinstance(range_score, int | float):
             range_target = 6.0
             if range_score > range_target:
+                residual_stage = range_stage in {"final_block_delta", "final_block_output"}
+                reason = (
+                    "source-style residual/output range exceeds the current encoded target"
+                    if residual_stage
+                    else "source-style activation range exceeds the current polynomial/FHE "
+                    "planning target"
+                )
+                next_action = (
+                    "apply the range scale plan and validate scaled recurrence/residual artifacts"
+                    if residual_stage
+                    else "run range-aware calibration or LoRA before claiming full block stability"
+                )
                 bottlenecks.append(
                     {
                         "name": "range",
                         "severity": "high" if range_score > 100.0 else "medium",
                         "value": range_score,
                         "threshold": range_target,
-                        "reason": (
-                            "source-style activation range exceeds the current polynomial/FHE "
-                            "planning target"
-                        ),
-                        "next_action": (
-                            "run range-aware calibration or LoRA before claiming "
-                            "full block stability"
-                        ),
+                        "stage": range_stage,
+                        "reason": reason,
+                        "next_action": next_action,
                     }
                 )
+    scale_plan = measurements["range_scale_plan"]
+    activation_count = scale_plan.get("activation_tuning_layer_count")
+    worst_activation = scale_plan.get("worst_activation_abs")
+    activation_target = scale_plan.get("activation_target")
+    if (
+        scale_plan.get("available")
+        and isinstance(activation_count, int)
+        and activation_count > 0
+        and isinstance(worst_activation, int | float)
+        and isinstance(activation_target, int | float)
+    ):
+        bottlenecks.append(
+            {
+                "name": "activation_tuning",
+                "severity": "high" if worst_activation > 4 * activation_target else "medium",
+                "value": worst_activation,
+                "threshold": activation_target,
+                "affected_layers": activation_count,
+                "reason": "some nonlinear inputs remain outside the polynomial target range",
+                "next_action": "run range-aware LoRA or activation calibration on affected layers",
+            }
+        )
+    if profile.get("available"):
         burst_len = profile.get("high_decay_burst_len")
         seq_len = profile.get("seq_len")
         if isinstance(burst_len, int | float) and isinstance(seq_len, int | float):

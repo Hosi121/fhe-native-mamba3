@@ -25,6 +25,7 @@ def main() -> int:
         stack_latency_estimate=_read_optional_json(args.stack_latency_json),
         checkpoint_bootstrap_smoke=_read_optional_json(args.checkpoint_bootstrap_smoke_json),
         checkpoint_source_profile=_read_optional_json(args.checkpoint_source_profile_json),
+        range_scale_plan=_read_optional_json(args.range_scale_plan_json),
         checkpoint_full_layer_gate=_read_optional_json(args.checkpoint_full_layer_gate_json),
         client_decode_smoke=_read_optional_json(args.client_decode_smoke_json),
         segment_samples=_read_optional_json(args.segment_samples_json),
@@ -53,6 +54,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--stack-latency-json", default="")
     parser.add_argument("--checkpoint-bootstrap-smoke-json", default="")
     parser.add_argument("--checkpoint-source-profile-json", default="")
+    parser.add_argument("--range-scale-plan-json", default="")
     parser.add_argument("--checkpoint-full-layer-gate-json", default="")
     parser.add_argument("--client-decode-smoke-json", default="")
     parser.add_argument("--segment-samples-json", default="")
