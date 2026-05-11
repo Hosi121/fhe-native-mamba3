@@ -121,6 +121,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.ssd_prefix_scan",
         "BackendPrefixScanResult",
     ),
+    "BackendSegmentedPrefixScanResult": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "BackendSegmentedPrefixScanResult",
+    ),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
     "CiphertextHandoffLayer": (
         "fhe_native_mamba3.ciphertext_handoff",
@@ -293,6 +297,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.ssd_prefix_scan",
         "backend_hillis_steele_prefix_products",
     ),
+    "backend_segmented_hillis_steele_prefix_products": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "backend_segmented_hillis_steele_prefix_products",
+    ),
     "causal_decay_weights": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "causal_decay_weights",
@@ -398,6 +406,10 @@ _LAZY_IMPORTS = {
     "packed_prefix_scan_rotation_steps": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "packed_prefix_scan_rotation_steps",
+    ),
+    "packed_prefix_scan_carry_rotation_steps": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "packed_prefix_scan_carry_rotation_steps",
     ),
     "plaintext_static_recurrence": (
         "fhe_native_mamba3.openfhe_backend",
@@ -564,6 +576,7 @@ __all__ = [
     "ArtifactValidationResult",
     "BackendCapability",
     "BackendPrefixScanResult",
+    "BackendSegmentedPrefixScanResult",
     "BackendStats",
     "BootstrapExecutionBlockCost",
     "BootstrapExecutionPolicy",
@@ -648,6 +661,7 @@ __all__ = [
     "apply_srht_sketch",
     "backend_capability_matrix",
     "backend_hillis_steele_prefix_products",
+    "backend_segmented_hillis_steele_prefix_products",
     "build_bootstrap_execution_schedule",
     "build_mamba_source_recurrence_problem",
     "build_mamba_source_visible_handoff_tensors",
@@ -692,6 +706,7 @@ __all__ = [
     "map_state_dict",
     "mark_only_lora_trainable",
     "measure_openfhe_bootstrap_latency",
+    "packed_prefix_scan_carry_rotation_steps",
     "packed_prefix_scan_rotation_steps",
     "plaintext_recurrence_trace",
     "plaintext_static_recurrence",

@@ -32,13 +32,15 @@ def test_stage1_plan_combines_scan_packing_and_rotation_inventory() -> None:
     assert payload["stage"] == "stage1-plan"
     assert payload["measurement_scope"]["benchmark"] is False
     assert payload["window"] == 64
-    assert recommended["pack_size"] == 8
+    assert recommended["pack_size"] == 4
     assert recommended["recommendation_rank"] == 1
     assert recommended["scan_depth"] == 6
-    assert recommended["estimated_bootstrap_amortization"] == pytest.approx(8.0)
-    assert recommended["packed_scan_lanes"] == 512
-    assert recommended["tokens_per_scan_ciphertext"] == 64
-    assert recommended["requires_cross_ciphertext_carry"] is False
+    assert recommended["estimated_bootstrap_amortization"] == pytest.approx(4.0)
+    assert recommended["packed_scan_lanes"] == 256
+    assert recommended["tokens_per_scan_ciphertext"] == 128
+    assert recommended["cross_ciphertext_carry_depth"] == 1
+    assert recommended["estimated_total_scan_depth"] == 7
+    assert recommended["requires_cross_ciphertext_carry"] is True
     assert any(candidate["requires_cross_ciphertext_carry"] for candidate in candidates)
     assert any(candidate["grouping_strategy"] == "range-sorted" for candidate in candidates)
     assert all(candidate["rotation_key_count"] > 0 for candidate in candidates)

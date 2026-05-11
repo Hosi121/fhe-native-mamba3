@@ -11,7 +11,10 @@ from fhe_native_mamba3.layout import (
     readout_output_slots,
     required_readout_rotations,
 )
-from fhe_native_mamba3.ssd_prefix_scan import packed_prefix_scan_rotation_steps
+from fhe_native_mamba3.ssd_prefix_scan import (
+    packed_prefix_scan_carry_rotation_steps,
+    packed_prefix_scan_rotation_steps,
+)
 
 
 @dataclass(frozen=True)
@@ -192,10 +195,17 @@ def _scan_rotations(
     steps = {
         step
         for pack_size in head_pack_sizes
-        for step in packed_prefix_scan_rotation_steps(
-            seq_len=scan_len,
-            lanes=d_state * pack_size,
-            slot_count=slot_count,
+        for step in (
+            packed_prefix_scan_rotation_steps(
+                seq_len=scan_len,
+                lanes=d_state * pack_size,
+                slot_count=slot_count,
+            )
+            + packed_prefix_scan_carry_rotation_steps(
+                seq_len=scan_len,
+                lanes=d_state * pack_size,
+                slot_count=_resolve_slot_count(slot_count),
+            )
         )
     }
     return tuple(sorted(steps))
@@ -259,6 +269,13 @@ def _head_pack_estimate(
                 slot_count=slot_count,
             )
         )
+        steps.update(
+            packed_prefix_scan_carry_rotation_steps(
+                seq_len=scan_len,
+                lanes=d_state * pack_size,
+                slot_count=_resolve_slot_count(slot_count),
+            )
+        )
     else:
         steps = set(_powers_of_two_below(scan_len))
     steps.update(
@@ -286,3 +303,7 @@ def _head_pack_estimate(
         unique_key_count=len(unique_steps),
         estimated_key_memory_gib=len(unique_steps) * key_size_mb / 1024.0,
     )
+
+
+def _resolve_slot_count(slot_count: int | None) -> int:
+    return slot_count if slot_count is not None else 2**63 - 1

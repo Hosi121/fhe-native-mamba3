@@ -59,7 +59,10 @@ class Stage1CandidatePlan:
     tokens_per_scan_ciphertext: int
     scan_ciphertext_count: int
     packed_scan_depth: int
+    cross_ciphertext_carry_depth: int
+    estimated_total_scan_depth: int
     packed_scan_rotation_count: int
+    packed_scan_carry_rotation_count: int
     requires_cross_ciphertext_carry: bool
     max_group_range_span: float | None
     known_range_group_count: int
@@ -344,7 +347,7 @@ def _candidate_sort_key(candidate: Stage1CandidatePlan) -> tuple[Any, ...]:
     )
     return (
         feasible is False,
-        candidate.requires_cross_ciphertext_carry,
+        candidate.estimated_total_scan_depth,
         -candidate.estimated_bootstrap_amortization,
         range_span,
         candidate.rotation_key_count,
@@ -387,7 +390,10 @@ def _build_candidate_plan(
         tokens_per_scan_ciphertext=packed_scan.tokens_per_ciphertext,
         scan_ciphertext_count=packed_scan.ciphertext_count,
         packed_scan_depth=packed_scan.scan_depth,
+        cross_ciphertext_carry_depth=packed_scan.cross_ciphertext_carry_depth,
+        estimated_total_scan_depth=packed_scan.estimated_total_scan_depth,
         packed_scan_rotation_count=len(packed_scan.rotations),
+        packed_scan_carry_rotation_count=len(packed_scan.carry_rotations),
         requires_cross_ciphertext_carry=packed_scan.requires_cross_ciphertext_carry,
         max_group_range_span=_max_group_range_span(candidate.groups),
         known_range_group_count=sum(

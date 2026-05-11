@@ -69,8 +69,9 @@ def test_rotation_inventory_can_use_packed_time_major_scan_rotations() -> None:
     )
 
     groups = {group.name: group for group in inventory.groups}
-    assert groups["scan"].steps == (4, 8)
+    assert groups["scan"].steps == (-8, -4, 4, 8, 12)
     estimates = {estimate.pack_size: estimate for estimate in inventory.head_pack_estimates}
+    assert -4 in estimates[2].unique_steps
     assert 4 in estimates[2].unique_steps
     assert 8 in estimates[4].unique_steps
 

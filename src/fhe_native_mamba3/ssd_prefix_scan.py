@@ -9,6 +9,7 @@ reuse the same schedule accounting without changing the reference math.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from itertools import pairwise
 from math import ceil
 from typing import Any, Literal, Protocol
 
@@ -57,7 +58,10 @@ class PackedPrefixScanPlan:
     ciphertext_count: int
     in_ciphertext_window: int
     scan_depth: int
+    cross_ciphertext_carry_depth: int
+    estimated_total_scan_depth: int
     rotations: tuple[int, ...]
+    carry_rotations: tuple[int, ...]
     requires_cross_ciphertext_carry: bool
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -82,6 +86,14 @@ class BackendPrefixScanResult:
     """Result of a backend-evaluated packed prefix product scan."""
 
     ciphertext: Any
+    plan: PackedPrefixScanPlan
+
+
+@dataclass(frozen=True)
+class BackendSegmentedPrefixScanResult:
+    """Result of backend-evaluated prefix products across ciphertext chunks."""
+
+    ciphertexts: tuple[Any, ...]
     plan: PackedPrefixScanPlan
 
 
@@ -213,6 +225,14 @@ def build_packed_prefix_scan_plan(
         lanes=lanes,
         window=in_ciphertext_window,
     )
+    requires_cross_ciphertext_carry = ciphertext_count > 1 and effective_window > 1
+    carry_depth = ciphertext_count - 1 if requires_cross_ciphertext_carry else 0
+    carry_rotations = packed_prefix_scan_carry_rotation_steps(
+        seq_len=seq_len,
+        lanes=lanes,
+        slot_count=slot_count,
+        window=effective_window,
+    )
     return PackedPrefixScanPlan(
         seq_len=seq_len,
         window=effective_window,
@@ -222,10 +242,11 @@ def build_packed_prefix_scan_plan(
         ciphertext_count=ciphertext_count,
         in_ciphertext_window=in_ciphertext_window,
         scan_depth=len(rotations),
+        cross_ciphertext_carry_depth=carry_depth,
+        estimated_total_scan_depth=len(rotations) + carry_depth,
         rotations=rotations,
-        requires_cross_ciphertext_carry=(
-            ciphertext_count > 1 and effective_window > tokens_per_ciphertext
-        ),
+        carry_rotations=carry_rotations,
+        requires_cross_ciphertext_carry=requires_cross_ciphertext_carry,
     )
 
 
@@ -257,6 +278,45 @@ def packed_prefix_scan_rotation_steps(
         rotations.append(stride * lanes)
         stride *= 2
     return tuple(rotations)
+
+
+def packed_prefix_scan_carry_rotation_steps(
+    *,
+    seq_len: int,
+    lanes: int,
+    slot_count: int,
+    window: int | None = None,
+) -> tuple[int, ...]:
+    """Return slot rotations needed for segmented prefix-scan carry propagation."""
+
+    effective_window = _effective_window(seq_len=seq_len, window=window)
+    if lanes <= 0:
+        msg = "lanes must be positive"
+        raise ValueError(msg)
+    if slot_count <= 0:
+        msg = "slot_count must be positive"
+        raise ValueError(msg)
+    if lanes > slot_count:
+        msg = f"lanes={lanes} cannot fit in slot_count={slot_count}"
+        raise ValueError(msg)
+    tokens_per_ciphertext = slot_count // lanes
+    ciphertext_count = ceil(seq_len / tokens_per_ciphertext)
+    if ciphertext_count <= 1 or effective_window <= 1:
+        return ()
+
+    chunk_lengths = tuple(
+        min(tokens_per_ciphertext, seq_len - start)
+        for start in range(0, seq_len, tokens_per_ciphertext)
+    )
+    rotations: set[int] = set()
+    for previous_len, current_len in pairwise(chunk_lengths):
+        if previous_len > 1:
+            rotations.add((previous_len - 1) * lanes)
+        filled = 1
+        while filled < current_len:
+            rotations.add(-filled * lanes)
+            filled = min(current_len, filled * 2)
+    return tuple(sorted(rotations))
 
 
 def backend_hillis_steele_prefix_products(
@@ -304,6 +364,68 @@ def backend_hillis_steele_prefix_products(
         current = backend.mul_ct(current, factor)
 
     return BackendPrefixScanResult(ciphertext=current, plan=plan)
+
+
+def backend_segmented_hillis_steele_prefix_products(
+    decay_ciphertexts: tuple[Any, ...],
+    *,
+    seq_len: int,
+    lanes: int,
+    backend: FHEBackend,
+) -> BackendSegmentedPrefixScanResult:
+    """Evaluate inclusive prefix products over one or more packed ciphertexts.
+
+    Each ciphertext uses the same token-major layout as
+    :func:`backend_hillis_steele_prefix_products`. Chunks are scanned locally,
+    then the final prefix value from each chunk is carried into the next chunk
+    without decrypting.
+    """
+
+    plan = build_packed_prefix_scan_plan(
+        seq_len=seq_len,
+        lanes=lanes,
+        slot_count=backend.batch_size,
+    )
+    if len(decay_ciphertexts) != plan.ciphertext_count:
+        msg = (
+            f"expected {plan.ciphertext_count} ciphertext chunks for seq_len={seq_len}, "
+            f"lanes={lanes}, batch_size={backend.batch_size}; got {len(decay_ciphertexts)}"
+        )
+        raise ValueError(msg)
+
+    scanned_chunks: list[Any] = []
+    carry_ct: Any | None = None
+    remaining = seq_len
+    for chunk_ct in decay_ciphertexts:
+        chunk_seq_len = min(plan.tokens_per_ciphertext, remaining)
+        local = backend_hillis_steele_prefix_products(
+            chunk_ct,
+            seq_len=chunk_seq_len,
+            lanes=lanes,
+            backend=backend,
+        ).ciphertext
+        if carry_ct is not None:
+            carry_broadcast = _broadcast_first_lanes_to_tokens(
+                carry_ct,
+                token_count=chunk_seq_len,
+                lanes=lanes,
+                backend=backend,
+            )
+            local = backend.mul_ct(local, carry_broadcast)
+        scanned_chunks.append(local)
+        remaining -= chunk_seq_len
+        if remaining:
+            carry_ct = _extract_last_token_lanes(
+                local,
+                token_count=chunk_seq_len,
+                lanes=lanes,
+                backend=backend,
+            )
+
+    return BackendSegmentedPrefixScanResult(
+        ciphertexts=tuple(scanned_chunks),
+        plan=plan,
+    )
 
 
 def prefix_decay_products(
@@ -598,6 +720,79 @@ def _packed_scan_active_mask(
     return tuple(active)
 
 
+def _packed_token_range_mask(
+    *,
+    lanes: int,
+    start_token: int,
+    end_token: int,
+    batch_size: int,
+) -> tuple[float, ...]:
+    if lanes <= 0:
+        msg = "lanes must be positive"
+        raise ValueError(msg)
+    if not 0 <= start_token <= end_token:
+        msg = "expected 0 <= start_token <= end_token"
+        raise ValueError(msg)
+    if end_token * lanes > batch_size:
+        msg = "token range exceeds batch_size"
+        raise ValueError(msg)
+    mask = [0.0] * batch_size
+    for token_index in range(start_token, end_token):
+        start = token_index * lanes
+        mask[start : start + lanes] = [1.0] * lanes
+    return tuple(mask)
+
+
+def _extract_last_token_lanes(
+    ciphertext: Any,
+    *,
+    token_count: int,
+    lanes: int,
+    backend: FHEBackend,
+) -> Any:
+    if token_count <= 0:
+        msg = "token_count must be positive"
+        raise ValueError(msg)
+    offset = (token_count - 1) * lanes
+    rotated = backend.rotate(ciphertext, offset) if offset else ciphertext
+    first_lanes_mask = _packed_token_range_mask(
+        lanes=lanes,
+        start_token=0,
+        end_token=1,
+        batch_size=backend.batch_size,
+    )
+    return backend.mul_plain(rotated, backend.encode(first_lanes_mask))
+
+
+def _broadcast_first_lanes_to_tokens(
+    ciphertext: Any,
+    *,
+    token_count: int,
+    lanes: int,
+    backend: FHEBackend,
+) -> Any:
+    if token_count <= 0:
+        msg = "token_count must be positive"
+        raise ValueError(msg)
+    broadcast = ciphertext
+    filled = 1
+    while filled < token_count:
+        next_filled = min(token_count, filled * 2)
+        rotated = backend.rotate(broadcast, -filled * lanes)
+        mask = _packed_token_range_mask(
+            lanes=lanes,
+            start_token=filled,
+            end_token=next_filled,
+            batch_size=backend.batch_size,
+        )
+        broadcast = backend.add(
+            broadcast,
+            backend.mul_plain(rotated, backend.encode(mask)),
+        )
+        filled = next_filled
+    return broadcast
+
+
 def _scalar_causal_weights(decay_sequence: Tensor, *, window: int) -> Tensor:
     seq_len, rank = decay_sequence.shape
     weights = decay_sequence.new_zeros((seq_len, seq_len, rank))
@@ -628,6 +823,7 @@ def _state_rank_causal_weights(decay_sequence: Tensor, *, window: int) -> Tensor
 
 __all__ = [
     "BackendPrefixScanResult",
+    "BackendSegmentedPrefixScanResult",
     "DecayMode",
     "PackedPrefixScanPlan",
     "PlaintextPrefixScanKernel",
@@ -638,9 +834,11 @@ __all__ = [
     "ScanPhase",
     "SsdPrefixScanResult",
     "backend_hillis_steele_prefix_products",
+    "backend_segmented_hillis_steele_prefix_products",
     "build_packed_prefix_scan_plan",
     "build_prefix_scan_metadata",
     "causal_decay_weights",
+    "packed_prefix_scan_carry_rotation_steps",
     "packed_prefix_scan_rotation_steps",
     "prefix_decay_products",
     "ssd_prefix_scan",

@@ -79,7 +79,7 @@ def test_build_stage1_plan_script_accepts_source_profile(tmp_path) -> None:
     assert payload["d_state"] == 2
     assert payload["d_model"] == 8
     assert payload["window"] == 8
-    assert payload["recommended_candidate"]["pack_size"] == 8
+    assert payload["recommended_candidate"]["pack_size"] == 4
     assert payload["profile_hints"]["known_head_range_count"] == 2
     assert persisted["recommended_candidate"] == payload["recommended_candidate"]
 
@@ -117,6 +117,7 @@ def test_build_stage1_plan_script_accepts_explicit_shape_without_profile(tmp_pat
 
     assert payload["version"] == __version__
     assert payload["profile_hints"] is None
-    assert payload["recommended_candidate"]["pack_size"] == 8
-    assert payload["recommended_candidate"]["requires_cross_ciphertext_carry"] is False
+    assert payload["recommended_candidate"]["pack_size"] == 4
+    assert payload["recommended_candidate"]["requires_cross_ciphertext_carry"] is True
+    assert payload["recommended_candidate"]["estimated_total_scan_depth"] == 7
     assert any(candidate["requires_cross_ciphertext_carry"] for candidate in payload["candidates"])

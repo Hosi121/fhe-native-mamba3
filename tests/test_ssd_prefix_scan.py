@@ -8,6 +8,7 @@ from fhe_native_mamba3.ssd import sequential_static_scan, ssd_static_scan
 from fhe_native_mamba3.ssd_prefix_scan import (
     PlaintextPrefixScanKernel,
     backend_hillis_steele_prefix_products,
+    backend_segmented_hillis_steele_prefix_products,
     build_packed_prefix_scan_plan,
     build_prefix_scan_metadata,
     causal_decay_weights,
@@ -127,7 +128,10 @@ def test_packed_prefix_scan_plan_accounts_for_lane_stride_and_slot_capacity() ->
     assert plan.ciphertext_count == 16
     assert plan.in_ciphertext_window == 4
     assert plan.rotations == (16, 32)
+    assert plan.carry_rotations == (-32, -16, 48)
     assert plan.scan_depth == 2
+    assert plan.cross_ciphertext_carry_depth == 15
+    assert plan.estimated_total_scan_depth == 17
     assert plan.requires_cross_ciphertext_carry is True
     assert plan.to_json_dict()["lanes"] == 16
 
@@ -172,6 +176,57 @@ def test_backend_hillis_steele_prefix_products_rejects_cross_ciphertext_scan() -
     with pytest.raises(ValueError, match="fit in one ciphertext"):
         backend_hillis_steele_prefix_products(
             decay_ct,
+            seq_len=3,
+            lanes=2,
+            backend=backend,
+        )
+
+
+def test_backend_segmented_hillis_steele_prefix_products_carries_between_ciphertexts() -> None:
+    values = torch.tensor(
+        [
+            [0.50, 0.25],
+            [0.20, 0.40],
+            [0.10, 0.50],
+            [0.80, 0.20],
+            [0.30, 0.60],
+        ],
+        dtype=torch.float32,
+    )
+    backend = TrackingBackend(batch_size=4)
+    chunks = tuple(
+        backend.encrypt(_pack_token_major_chunk(values[start : start + 2], batch_size=4))
+        for start in range(0, values.shape[0], 2)
+    )
+
+    result = backend_segmented_hillis_steele_prefix_products(
+        chunks,
+        seq_len=5,
+        lanes=2,
+        backend=backend,
+    )
+    decoded = torch.cat(
+        [
+            torch.tensor(backend.decrypt(ciphertext, length=4)).view(2, 2)
+            for ciphertext in result.ciphertexts[:-1]
+        ]
+        + [torch.tensor(backend.decrypt(result.ciphertexts[-1], length=2)).view(1, 2)],
+        dim=0,
+    )
+
+    assert torch.allclose(decoded, torch.cumprod(values, dim=0))
+    assert result.plan.ciphertext_count == 3
+    assert result.plan.requires_cross_ciphertext_carry is True
+    assert backend.stats().ct_ct_mul_count > result.plan.ciphertext_count
+
+
+def test_backend_segmented_hillis_steele_prefix_products_validates_chunk_count() -> None:
+    backend = TrackingBackend(batch_size=4)
+    chunk = backend.encrypt((0.5, 0.5, 0.5, 0.5))
+
+    with pytest.raises(ValueError, match="expected 2 ciphertext chunks"):
+        backend_segmented_hillis_steele_prefix_products(
+            (chunk,),
             seq_len=3,
             lanes=2,
             backend=backend,
@@ -304,6 +359,11 @@ def test_ssd_prefix_scan_prefill_matches_truncated_state_rank_ssd_window() -> No
     )
     assert torch.allclose(result.output, ssd, atol=1e-6, rtol=1e-6)
     assert result.window == 3
+
+
+def _pack_token_major_chunk(values: torch.Tensor, *, batch_size: int) -> tuple[float, ...]:
+    flat = [float(value) for value in values.flatten()]
+    return tuple(flat + [0.0] * (batch_size - len(flat)))
 
 
 def test_plaintext_kernel_implements_protocol_shape() -> None:
