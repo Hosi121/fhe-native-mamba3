@@ -97,6 +97,33 @@ class BackendSegmentedPrefixScanResult:
     plan: PackedPrefixScanPlan
 
 
+@dataclass(frozen=True)
+class BackendAffinePrefixScanResult:
+    """Result of backend-evaluated affine recurrence scan.
+
+    ``decay_ciphertexts`` contain the inclusive products of decay terms.
+    ``state_ciphertexts`` contain the corresponding recurrence states for
+    ``h_t = a_t h_{t-1} + u_t``.
+    """
+
+    decay_ciphertexts: tuple[Any, ...]
+    state_ciphertexts: tuple[Any, ...]
+    plan: PackedPrefixScanPlan
+
+
+@dataclass(frozen=True)
+class BackendPackedMimoReadoutResult:
+    """Result of packed static MIMO readout.
+
+    Output values are stored in the first state lane for each rank:
+    ``slot = token_index * lanes + rank_index * d_state``.
+    """
+
+    ciphertexts: tuple[Any, ...]
+    output_slots: tuple[tuple[int, ...], ...]
+    rotations: tuple[int, ...]
+
+
 class PrefixScanKernel(Protocol):
     """Protocol shape for future backend-specific prefix-scan kernels."""
 
@@ -428,6 +455,251 @@ def backend_segmented_hillis_steele_prefix_products(
     )
 
 
+def backend_hillis_steele_affine_scan(
+    decay_ct: Any,
+    update_ct: Any,
+    *,
+    seq_len: int,
+    lanes: int,
+    backend: FHEBackend,
+) -> BackendAffinePrefixScanResult:
+    """Evaluate one-ciphertext affine recurrence scan.
+
+    The packed layout is token-major. Each lane is an independent recurrence
+    ``h_t = a_t h_{t-1} + u_t``. Hillis-Steele combines affine pairs
+    ``(A, H)`` with ``(A_prev, H_prev)`` as
+    ``(A * A_prev, H + A * H_prev)``.
+    """
+
+    plan = build_packed_prefix_scan_plan(
+        seq_len=seq_len,
+        lanes=lanes,
+        slot_count=backend.batch_size,
+    )
+    if plan.ciphertext_count != 1:
+        msg = "backend_hillis_steele_affine_scan requires seq_len * lanes to fit in one ciphertext"
+        raise ValueError(msg)
+
+    current_decay = decay_ct
+    current_state = update_ct
+    for rotation in plan.rotations:
+        stride = rotation // lanes
+        previous_decay = backend.rotate(current_decay, -rotation)
+        previous_state = backend.rotate(current_state, -rotation)
+        active_mask = _packed_scan_active_mask(
+            seq_len=seq_len,
+            lanes=lanes,
+            stride=stride,
+            batch_size=backend.batch_size,
+        )
+        active_pt = backend.encode(active_mask)
+        inactive_identity = tuple(1.0 - value for value in active_mask)
+        previous_decay_factor = backend.add(
+            backend.mul_plain(previous_decay, active_pt),
+            backend.encrypt(inactive_identity),
+        )
+        previous_state_active = backend.mul_plain(previous_state, active_pt)
+        current_state = backend.add(
+            current_state,
+            backend.mul_ct(current_decay, previous_state_active),
+        )
+        current_decay = backend.mul_ct(current_decay, previous_decay_factor)
+
+    return BackendAffinePrefixScanResult(
+        decay_ciphertexts=(current_decay,),
+        state_ciphertexts=(current_state,),
+        plan=plan,
+    )
+
+
+def backend_segmented_hillis_steele_affine_scan(
+    decay_ciphertexts: tuple[Any, ...],
+    update_ciphertexts: tuple[Any, ...],
+    *,
+    seq_len: int,
+    lanes: int,
+    backend: FHEBackend,
+) -> BackendAffinePrefixScanResult:
+    """Evaluate affine recurrence scan over one or more packed ciphertexts."""
+
+    plan = build_packed_prefix_scan_plan(
+        seq_len=seq_len,
+        lanes=lanes,
+        slot_count=backend.batch_size,
+    )
+    if len(decay_ciphertexts) != plan.ciphertext_count:
+        msg = (
+            f"expected {plan.ciphertext_count} decay ciphertext chunks for "
+            f"seq_len={seq_len}, lanes={lanes}, batch_size={backend.batch_size}; "
+            f"got {len(decay_ciphertexts)}"
+        )
+        raise ValueError(msg)
+    if len(update_ciphertexts) != plan.ciphertext_count:
+        msg = (
+            f"expected {plan.ciphertext_count} update ciphertext chunks for "
+            f"seq_len={seq_len}, lanes={lanes}, batch_size={backend.batch_size}; "
+            f"got {len(update_ciphertexts)}"
+        )
+        raise ValueError(msg)
+
+    scanned_decay_chunks: list[Any] = []
+    scanned_state_chunks: list[Any] = []
+    carry_decay_ct: Any | None = None
+    carry_state_ct: Any | None = None
+    remaining = seq_len
+    for decay_ct, update_ct in zip(decay_ciphertexts, update_ciphertexts, strict=True):
+        chunk_seq_len = min(plan.tokens_per_ciphertext, remaining)
+        local = backend_hillis_steele_affine_scan(
+            decay_ct,
+            update_ct,
+            seq_len=chunk_seq_len,
+            lanes=lanes,
+            backend=backend,
+        )
+        local_decay = local.decay_ciphertexts[0]
+        local_state = local.state_ciphertexts[0]
+        if carry_decay_ct is not None and carry_state_ct is not None:
+            carry_decay_broadcast = _broadcast_first_lanes_to_tokens(
+                carry_decay_ct,
+                token_count=chunk_seq_len,
+                lanes=lanes,
+                backend=backend,
+            )
+            carry_state_broadcast = _broadcast_first_lanes_to_tokens(
+                carry_state_ct,
+                token_count=chunk_seq_len,
+                lanes=lanes,
+                backend=backend,
+            )
+            local_state = backend.add(
+                local_state,
+                backend.mul_ct(local_decay, carry_state_broadcast),
+            )
+            local_decay = backend.mul_ct(local_decay, carry_decay_broadcast)
+        scanned_decay_chunks.append(local_decay)
+        scanned_state_chunks.append(local_state)
+        remaining -= chunk_seq_len
+        if remaining:
+            carry_decay_ct = _extract_last_token_lanes(
+                local_decay,
+                token_count=chunk_seq_len,
+                lanes=lanes,
+                backend=backend,
+            )
+            carry_state_ct = _extract_last_token_lanes(
+                local_state,
+                token_count=chunk_seq_len,
+                lanes=lanes,
+                backend=backend,
+            )
+
+    return BackendAffinePrefixScanResult(
+        decay_ciphertexts=tuple(scanned_decay_chunks),
+        state_ciphertexts=tuple(scanned_state_chunks),
+        plan=plan,
+    )
+
+
+def backend_packed_static_mimo_readout(
+    state_ciphertexts: tuple[Any, ...],
+    *,
+    seq_len: int,
+    d_state: int,
+    rank: int,
+    c_terms: Tensor,
+    backend: FHEBackend,
+) -> BackendPackedMimoReadoutResult:
+    """Read out packed static MIMO states without decrypting intermediate state.
+
+    State layout is token-major, then rank-major:
+    ``slot = token * (rank * d_state) + rank_index * d_state + state_index``.
+    The readout keeps one output slot per ``(token, rank)`` at
+    ``state_index == 0``.
+    """
+
+    _validate_packed_mimo_shape(d_state=d_state, rank=rank, c_terms=c_terms)
+    lanes = d_state * rank
+    plan = build_packed_prefix_scan_plan(
+        seq_len=seq_len,
+        lanes=lanes,
+        slot_count=backend.batch_size,
+    )
+    if len(state_ciphertexts) != plan.ciphertext_count:
+        msg = (
+            f"expected {plan.ciphertext_count} state ciphertext chunks for "
+            f"seq_len={seq_len}, lanes={lanes}, batch_size={backend.batch_size}; "
+            f"got {len(state_ciphertexts)}"
+        )
+        raise ValueError(msg)
+
+    c_terms = c_terms.to(dtype=torch.float64)
+    outputs: list[Any] = []
+    output_slots: list[tuple[int, ...]] = []
+    rotations: set[int] = set()
+    remaining = seq_len
+    for state_ct in state_ciphertexts:
+        token_count = min(plan.tokens_per_ciphertext, remaining)
+        c_mask = _packed_mimo_c_mask(
+            token_count=token_count,
+            d_state=d_state,
+            rank=rank,
+            c_terms=c_terms,
+            batch_size=backend.batch_size,
+        )
+        target_mask = _packed_mimo_readout_target_mask(
+            token_count=token_count,
+            d_state=d_state,
+            rank=rank,
+            batch_size=backend.batch_size,
+        )
+        weighted = backend.mul_plain(state_ct, backend.encode(c_mask))
+        output_ct = backend.mul_plain(weighted, backend.encode(target_mask))
+        for state_index in range(1, d_state):
+            rotations.add(state_index)
+            rotated = backend.rotate(weighted, state_index)
+            output_ct = backend.add(
+                output_ct,
+                backend.mul_plain(rotated, backend.encode(target_mask)),
+            )
+        outputs.append(output_ct)
+        output_slots.append(
+            packed_mimo_readout_output_slots(
+                token_count=token_count,
+                d_state=d_state,
+                rank=rank,
+            )
+        )
+        remaining -= token_count
+
+    return BackendPackedMimoReadoutResult(
+        ciphertexts=tuple(outputs),
+        output_slots=tuple(output_slots),
+        rotations=tuple(sorted(rotations)),
+    )
+
+
+def packed_mimo_readout_output_slots(
+    *,
+    token_count: int,
+    d_state: int,
+    rank: int,
+) -> tuple[int, ...]:
+    """Return output slots for packed static MIMO readout."""
+
+    if token_count <= 0:
+        msg = "token_count must be positive"
+        raise ValueError(msg)
+    if d_state <= 0 or rank <= 0:
+        msg = "d_state and rank must be positive"
+        raise ValueError(msg)
+    lanes = d_state * rank
+    return tuple(
+        token_index * lanes + rank_index * d_state
+        for token_index in range(token_count)
+        for rank_index in range(rank)
+    )
+
+
 def prefix_decay_products(
     decay: Tensor,
     *,
@@ -740,6 +1012,62 @@ def _packed_token_range_mask(
     for token_index in range(start_token, end_token):
         start = token_index * lanes
         mask[start : start + lanes] = [1.0] * lanes
+    return tuple(mask)
+
+
+def _validate_packed_mimo_shape(*, d_state: int, rank: int, c_terms: Tensor) -> None:
+    if d_state <= 0 or rank <= 0:
+        msg = "d_state and rank must be positive"
+        raise ValueError(msg)
+    if c_terms.shape != (d_state, rank):
+        msg = f"c_terms must have shape ({d_state}, {rank})"
+        raise ValueError(msg)
+
+
+def _packed_mimo_c_mask(
+    *,
+    token_count: int,
+    d_state: int,
+    rank: int,
+    c_terms: Tensor,
+    batch_size: int,
+) -> tuple[float, ...]:
+    if token_count <= 0:
+        msg = "token_count must be positive"
+        raise ValueError(msg)
+    lanes = d_state * rank
+    if token_count * lanes > batch_size:
+        msg = "packed MIMO C mask exceeds batch_size"
+        raise ValueError(msg)
+    mask = [0.0] * batch_size
+    for token_index in range(token_count):
+        token_offset = token_index * lanes
+        for rank_index in range(rank):
+            rank_offset = token_offset + rank_index * d_state
+            for state_index in range(d_state):
+                mask[rank_offset + state_index] = float(c_terms[state_index, rank_index])
+    return tuple(mask)
+
+
+def _packed_mimo_readout_target_mask(
+    *,
+    token_count: int,
+    d_state: int,
+    rank: int,
+    batch_size: int,
+) -> tuple[float, ...]:
+    if token_count <= 0:
+        msg = "token_count must be positive"
+        raise ValueError(msg)
+    lanes = d_state * rank
+    if token_count * lanes > batch_size:
+        msg = "packed MIMO target mask exceeds batch_size"
+        raise ValueError(msg)
+    mask = [0.0] * batch_size
+    for token_index in range(token_count):
+        token_offset = token_index * lanes
+        for rank_index in range(rank):
+            mask[token_offset + rank_index * d_state] = 1.0
     return tuple(mask)
 
 

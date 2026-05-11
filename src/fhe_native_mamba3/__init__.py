@@ -125,6 +125,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.ssd_prefix_scan",
         "BackendSegmentedPrefixScanResult",
     ),
+    "BackendAffinePrefixScanResult": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "BackendAffinePrefixScanResult",
+    ),
+    "BackendPackedMimoReadoutResult": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "BackendPackedMimoReadoutResult",
+    ),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
     "CiphertextHandoffLayer": (
         "fhe_native_mamba3.ciphertext_handoff",
@@ -252,6 +260,14 @@ _LAZY_IMPORTS = {
     "Stage1Dependency": ("fhe_native_mamba3.stage1_plan", "Stage1Dependency"),
     "Stage1Plan": ("fhe_native_mamba3.stage1_plan", "Stage1Plan"),
     "Stage1ProfileHints": ("fhe_native_mamba3.stage1_plan", "Stage1ProfileHints"),
+    "TinyMimoBlockProblem": (
+        "fhe_native_mamba3.stage1_tiny_mimo",
+        "TinyMimoBlockProblem",
+    ),
+    "TinyMimoBlockSmokeResult": (
+        "fhe_native_mamba3.stage1_tiny_mimo",
+        "TinyMimoBlockSmokeResult",
+    ),
     "StateDictMappingReport": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingReport"),
     "StateDictMappingRule": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingRule"),
     "StateDictMappingDraft": ("fhe_native_mamba3.state_dict_mapping", "StateDictMappingDraft"),
@@ -300,6 +316,22 @@ _LAZY_IMPORTS = {
     "backend_segmented_hillis_steele_prefix_products": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "backend_segmented_hillis_steele_prefix_products",
+    ),
+    "backend_hillis_steele_affine_scan": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "backend_hillis_steele_affine_scan",
+    ),
+    "backend_segmented_hillis_steele_affine_scan": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "backend_segmented_hillis_steele_affine_scan",
+    ),
+    "backend_packed_static_mimo_readout": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "backend_packed_static_mimo_readout",
+    ),
+    "build_tiny_mimo_block_problem": (
+        "fhe_native_mamba3.stage1_tiny_mimo",
+        "build_tiny_mimo_block_problem",
     ),
     "causal_decay_weights": (
         "fhe_native_mamba3.ssd_prefix_scan",
@@ -410,6 +442,14 @@ _LAZY_IMPORTS = {
     "packed_prefix_scan_carry_rotation_steps": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "packed_prefix_scan_carry_rotation_steps",
+    ),
+    "packed_mimo_readout_output_slots": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "packed_mimo_readout_output_slots",
+    ),
+    "payload_for_tiny_mimo_block_smoke": (
+        "fhe_native_mamba3.stage1_tiny_mimo",
+        "payload_for_tiny_mimo_block_smoke",
     ),
     "plaintext_static_recurrence": (
         "fhe_native_mamba3.openfhe_backend",
@@ -545,6 +585,10 @@ _LAZY_IMPORTS = {
     ),
     "run_stage0_mimo": ("fhe_native_mamba3.benchmarks.stage0_mimo", "run_stage0_mimo"),
     "run_stage0_sweep": ("fhe_native_mamba3.benchmarks.stage0_sweep", "run_stage0_sweep"),
+    "run_tiny_mimo_block_smoke": (
+        "fhe_native_mamba3.stage1_tiny_mimo",
+        "run_tiny_mimo_block_smoke",
+    ),
     "validate_artifact_file": (
         "fhe_native_mamba3.artifact_validation",
         "validate_artifact_file",
@@ -574,7 +618,9 @@ __all__ = [
     "PRE_RECURRENCE_STAGES",
     "ArtifactValidationIssue",
     "ArtifactValidationResult",
+    "BackendAffinePrefixScanResult",
     "BackendCapability",
+    "BackendPackedMimoReadoutResult",
     "BackendPrefixScanResult",
     "BackendSegmentedPrefixScanResult",
     "BackendStats",
@@ -649,6 +695,8 @@ __all__ = [
     "StateDictMappingDraft",
     "StateDictMappingReport",
     "StateDictMappingRule",
+    "TinyMimoBlockProblem",
+    "TinyMimoBlockSmokeResult",
     "TrackingBackend",
     "WeightBundleManifest",
     "WeightBundleRecurrenceProblem",
@@ -660,7 +708,10 @@ __all__ = [
     "apply_lora_to_linear_modules",
     "apply_srht_sketch",
     "backend_capability_matrix",
+    "backend_hillis_steele_affine_scan",
     "backend_hillis_steele_prefix_products",
+    "backend_packed_static_mimo_readout",
+    "backend_segmented_hillis_steele_affine_scan",
     "backend_segmented_hillis_steele_prefix_products",
     "build_bootstrap_execution_schedule",
     "build_mamba_source_recurrence_problem",
@@ -672,6 +723,7 @@ __all__ = [
     "build_srht_sketch_metadata",
     "build_stage0_status_report",
     "build_stage1_plan",
+    "build_tiny_mimo_block_problem",
     "build_weight_bundle_manifest",
     "build_weight_bundle_recurrence_problem",
     "calibrate_weight_tensor",
@@ -706,8 +758,10 @@ __all__ = [
     "map_state_dict",
     "mark_only_lora_trainable",
     "measure_openfhe_bootstrap_latency",
+    "packed_mimo_readout_output_slots",
     "packed_prefix_scan_carry_rotation_steps",
     "packed_prefix_scan_rotation_steps",
+    "payload_for_tiny_mimo_block_smoke",
     "plaintext_recurrence_trace",
     "plaintext_static_recurrence",
     "plan_mamba_checkpoint",
@@ -737,6 +791,7 @@ __all__ = [
     "run_stage0_sweep",
     "run_static_mimo_recurrence_ciphertext_chain_with_backend",
     "run_static_mimo_recurrence_ciphertexts_with_backend",
+    "run_tiny_mimo_block_smoke",
     "save_mamba_checkpoint_bundle",
     "save_mapping_draft",
     "save_weight_bundle",

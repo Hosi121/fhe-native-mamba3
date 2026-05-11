@@ -60,8 +60,8 @@ Current partial implementation:
 - The plan can consume a Stage 0 source-profile JSON for sparse range/decay
   grouping hints, but it does not claim encrypted speedup.
 - Packed SSD prefix-scan planning, segmented cross-ciphertext carry accounting,
-  and a JSON-emitting Stage 1 prefix-scan smoke are implemented. They do not yet
-  prove an integrated tiny encrypted MIMO/SSD block.
+  and JSON-emitting Stage 1 prefix-scan and tiny encrypted MIMO/SSD block smokes
+  are implemented. They do not yet claim real-checkpoint full-chain speedup.
 
 ## Stage 2
 

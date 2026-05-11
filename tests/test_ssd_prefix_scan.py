@@ -8,10 +8,13 @@ from fhe_native_mamba3.ssd import sequential_static_scan, ssd_static_scan
 from fhe_native_mamba3.ssd_prefix_scan import (
     PlaintextPrefixScanKernel,
     backend_hillis_steele_prefix_products,
+    backend_packed_static_mimo_readout,
+    backend_segmented_hillis_steele_affine_scan,
     backend_segmented_hillis_steele_prefix_products,
     build_packed_prefix_scan_plan,
     build_prefix_scan_metadata,
     causal_decay_weights,
+    packed_mimo_readout_output_slots,
     packed_prefix_scan_rotation_steps,
     prefix_decay_products,
     ssd_prefix_scan,
@@ -231,6 +234,127 @@ def test_backend_segmented_hillis_steele_prefix_products_validates_chunk_count()
             lanes=2,
             backend=backend,
         )
+
+
+def test_backend_segmented_affine_scan_matches_sequential_recurrence() -> None:
+    decay = torch.tensor(
+        [
+            [0.50, 0.25],
+            [0.20, 0.40],
+            [0.10, 0.50],
+            [0.80, 0.20],
+            [0.30, 0.60],
+        ],
+        dtype=torch.float64,
+    )
+    update = torch.tensor(
+        [
+            [1.0, -0.5],
+            [0.5, 0.25],
+            [-0.25, 0.75],
+            [0.1, -0.2],
+            [0.3, 0.4],
+        ],
+        dtype=torch.float64,
+    )
+    expected_rows: list[torch.Tensor] = []
+    state = torch.zeros(2, dtype=torch.float64)
+    for decay_row, update_row in zip(decay, update, strict=True):
+        state = decay_row * state + update_row
+        expected_rows.append(state.clone())
+    expected = torch.stack(expected_rows)
+
+    backend = TrackingBackend(batch_size=4)
+    decay_chunks = tuple(
+        backend.encrypt(_pack_token_major_chunk(chunk, batch_size=4))
+        for chunk in decay.split(2, dim=0)
+    )
+    update_chunks = tuple(
+        backend.encrypt(_pack_token_major_chunk(chunk, batch_size=4))
+        for chunk in update.split(2, dim=0)
+    )
+
+    result = backend_segmented_hillis_steele_affine_scan(
+        decay_chunks,
+        update_chunks,
+        seq_len=5,
+        lanes=2,
+        backend=backend,
+    )
+    decoded = torch.cat(
+        [
+            torch.tensor(backend.decrypt(ciphertext, length=4), dtype=torch.float64).view(2, 2)
+            for ciphertext in result.state_ciphertexts[:-1]
+        ]
+        + [
+            torch.tensor(
+                backend.decrypt(result.state_ciphertexts[-1], length=2),
+                dtype=torch.float64,
+            ).view(1, 2)
+        ],
+        dim=0,
+    )
+
+    assert torch.allclose(decoded, expected)
+    assert result.plan.requires_cross_ciphertext_carry is True
+    assert backend.stats().ct_ct_mul_count > result.plan.ciphertext_count
+
+
+def test_backend_packed_static_mimo_readout_sums_state_lanes_per_rank() -> None:
+    # Layout: token-major, then rank-major, then state.
+    # token 0: r0=[1,2,3], r1=[4,5,6]
+    # token 1: r0=[7,8,9], r1=[10,11,12]
+    state = torch.tensor(
+        [
+            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            [7.0, 8.0, 9.0, 10.0, 11.0, 12.0],
+        ],
+        dtype=torch.float64,
+    )
+    c_terms = torch.tensor(
+        [
+            [0.5, -0.25],
+            [1.0, 0.5],
+            [-0.5, 0.25],
+        ],
+        dtype=torch.float64,
+    )
+    backend = TrackingBackend(batch_size=16)
+    result = backend_packed_static_mimo_readout(
+        (backend.encrypt(_pack_token_major_chunk(state, batch_size=16)),),
+        seq_len=2,
+        d_state=3,
+        rank=2,
+        c_terms=c_terms,
+        backend=backend,
+    )
+    values = backend.decrypt(result.ciphertexts[0], length=16)
+    actual = torch.tensor(
+        [values[slot] for slot in result.output_slots[0]],
+        dtype=torch.float64,
+    ).view(2, 2)
+    expected = torch.tensor(
+        [
+            [
+                0.5 * 1.0 + 1.0 * 2.0 - 0.5 * 3.0,
+                -0.25 * 4.0 + 0.5 * 5.0 + 0.25 * 6.0,
+            ],
+            [
+                0.5 * 7.0 + 1.0 * 8.0 - 0.5 * 9.0,
+                -0.25 * 10.0 + 0.5 * 11.0 + 0.25 * 12.0,
+            ],
+        ],
+        dtype=torch.float64,
+    )
+
+    assert torch.allclose(actual, expected)
+    assert result.rotations == (1, 2)
+    assert packed_mimo_readout_output_slots(token_count=2, d_state=3, rank=2) == (
+        0,
+        3,
+        6,
+        9,
+    )
 
 
 def test_ssd_prefix_scan_prefill_matches_sequential_and_ssd_scalar_decay() -> None:
