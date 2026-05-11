@@ -262,6 +262,49 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_trace_accepts_input_ciph
         assert actual_row == pytest.approx(expected_row, abs=5e-2)
 
 
+def test_checkpoint_encrypted_pre_recurrence_full_layer_trace_scales_visible_output() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+    unscaled_backend = TrackingBackend(batch_size=8)
+    scaled_backend = TrackingBackend(batch_size=8)
+
+    unscaled = run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=unscaled_backend,
+        readout_strategy="rank-local",
+        newton_range=(0.20, 0.40),
+    )
+    scaled = run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=scaled_backend,
+        readout_strategy="rank-local",
+        newton_range=(0.20, 0.40),
+        visible_output_scale=0.25,
+    )
+    actual = tuple(
+        scaled_backend.decrypt(output_ct, length=scaled.checked_visible_dim)
+        for output_ct in scaled.output_ciphertexts
+    )
+
+    assert scaled.visible_output_scale == 0.25
+    assert scaled.to_json_dict()["visible_output_scale"] == 0.25
+    for scaled_row, unscaled_row in zip(
+        scaled.expected_outputs,
+        unscaled.expected_outputs,
+        strict=True,
+    ):
+        assert scaled_row == pytest.approx(tuple(0.25 * value for value in unscaled_row))
+    for actual_row, expected_row in zip(actual, scaled.expected_outputs, strict=True):
+        assert actual_row == pytest.approx(expected_row, abs=5e-2)
+    assert any("scaled" in note for note in scaled.notes)
+
+
 def test_checkpoint_encrypted_pre_recurrence_full_layer_chain_uses_ciphertext_handoff() -> None:
     state_dict = _tiny_hf_mamba_state_dict(layer_count=2)
     layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)

@@ -23,6 +23,10 @@ from fhe_native_mamba3.checkpoint_pre_recurrence import (
 from fhe_native_mamba3.cli_support import emit_json_payload, parse_int_list
 from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model
 from fhe_native_mamba3.mamba_reference import run_mamba_source_layer
+from fhe_native_mamba3.recurrence_scales import (
+    load_recurrence_scale_plan,
+    resolve_recurrence_layer_scales,
+)
 
 
 def main() -> int:
@@ -67,6 +71,12 @@ def main() -> int:
             norm_eps=args.norm_eps,
             input_propagation=args.input_propagation,
         )
+    _state_scale, visible_output_scale, scale_plan = resolve_recurrence_layer_scales(
+        args.layer_index,
+        state_scale=None,
+        output_scale=args.visible_output_scale,
+        scale_plan=load_recurrence_scale_plan(args.scale_plan_json),
+    )
 
     checked_visible_dim = (
         min(int(layer_input.shape[-1]), args.visible_dim_limit)
@@ -116,6 +126,7 @@ def main() -> int:
         decay_polynomial_range=args.decay_polynomial_range,
         atol=args.atol,
         visible_dim_limit=args.visible_dim_limit or None,
+        visible_output_scale=visible_output_scale,
     )
     stats = result.backend_stats
     payload = {
@@ -137,6 +148,8 @@ def main() -> int:
             "readout_strategy": args.readout_strategy,
             "input_propagation": args.input_propagation,
             "visible_dim_limit": args.visible_dim_limit or None,
+            "visible_output_scale": visible_output_scale,
+            "scale_plan": scale_plan,
         },
         "approximation": {
             "rms_norm_mode": args.rms_norm_mode,
@@ -400,6 +413,19 @@ def _parse_args() -> argparse.Namespace:
         default=(-0.5, 0.5),
     )
     parser.add_argument("--max-statuses", type=int, default=50)
+    parser.add_argument(
+        "--visible-output-scale",
+        type=float,
+        default=None,
+        help="multiply the final visible ciphertext and expected output by this positive scale",
+    )
+    parser.add_argument(
+        "--scale-plan-json",
+        default="",
+        help=(
+            "optional source-diagnostics scale plan; uses the layer output_scale unless overridden"
+        ),
+    )
     return parser.parse_args()
 
 

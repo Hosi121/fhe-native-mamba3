@@ -14,7 +14,24 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_script_runs_tracking(
 ) -> None:
     checkpoint_path = tmp_path / "mamba.pt"
     output_json = tmp_path / "pre-full-gate.json"
+    scale_plan_json = tmp_path / "scale-plan.json"
     torch.save({"model": _tiny_hf_mamba_state_dict()}, checkpoint_path)
+    scale_plan_json.write_text(
+        json.dumps(
+            {
+                "scale_plan": {
+                    "layers": [
+                        {
+                            "layer_index": 0,
+                            "state_scale_to_target": 0.5,
+                            "output_scale": 0.25,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     completed = subprocess.run(
         [
@@ -37,6 +54,8 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_script_runs_tracking(
             "3",
             "--atol",
             "5e-2",
+            "--scale-plan-json",
+            str(scale_plan_json),
             "--output-json",
             str(output_json),
         ],
@@ -51,6 +70,9 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_script_runs_tracking(
     assert payload["backend"] == "tracking"
     assert payload["passed"] is True
     assert payload["model"]["checked_visible_dim"] == 3
+    assert payload["model"]["visible_output_scale"] == 0.25
+    assert payload["model"]["scale_plan"]["used_output_scale"] == 0.25
+    assert payload["result"]["visible_output_scale"] == 0.25
     assert payload["measurement_scope"]["encrypted_pre_recurrence"] is True
     assert payload["measurement_scope"]["encrypted_recurrence"] is True
     assert payload["measurement_scope"]["partial_visible_output_checked"] is True

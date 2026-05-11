@@ -550,10 +550,14 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
     decay_polynomial_degree: int = 5,
     decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
     visible_dim_limit: int | None = None,
+    visible_output_scale: float = 1.0,
     input_ciphertexts: tuple[Any, ...] | None = None,
 ) -> CheckpointFullLayerCiphertextTrace:
     """Return encrypted pre-recurrence full-layer visible outputs as ciphertexts."""
 
+    if visible_output_scale <= 0:
+        msg = "visible_output_scale must be positive"
+        raise ValueError(msg)
     problem = build_mamba_source_recurrence_problem(
         state_dict,
         layer_input,
@@ -665,6 +669,7 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
             visible=visible,
             checked_visible_dim=checked_visible_dim,
             token_index=token_index,
+            visible_output_scale=visible_output_scale,
             residual_ct=None if input_ciphertexts is None else input_ciphertexts[token_index],
         )
         for token_index, (recurrence_ct, rank_input_ct, gate_ct) in enumerate(
@@ -678,7 +683,7 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
     )
     expected_rows = tuple(
         tuple(
-            float(value)
+            visible_output_scale * float(value)
             for value in visible.expected_final_output[0, token_index, :checked_visible_dim]
             .detach()
             .cpu()
@@ -716,6 +721,8 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
         notes.append("residual input is encrypted per token by this trace constructor")
     else:
         notes.append("residual input is reused from caller-provided visible input ciphertexts")
+    if visible_output_scale != 1.0:
+        notes.append("visible output ciphertext and expected output are scaled before decoding")
     return CheckpointFullLayerCiphertextTrace(
         layer_index=layer_index,
         d_model=visible.d_model,
@@ -729,7 +736,7 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
         encrypted=bool(resolved_backend.stats().encrypted),
         input_mode="encrypted-dynamic-bc",
         readout_strategy=readout_strategy,
-        visible_output_scale=1.0,
+        visible_output_scale=visible_output_scale,
         output_layout="visible-output",
         output_slots=output_slots,
         layout_contract=layout_contract,
@@ -771,6 +778,7 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_gate(
     decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
     atol: float = 5e-2,
     visible_dim_limit: int | None = None,
+    visible_output_scale: float = 1.0,
 ) -> CheckpointFullLayerCiphertextGate:
     """Check visible output with encrypted pre-recurrence and recurrence tensors."""
 
@@ -796,6 +804,7 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_gate(
         decay_polynomial_degree=decay_polynomial_degree,
         decay_polynomial_range=decay_polynomial_range,
         visible_dim_limit=visible_dim_limit,
+        visible_output_scale=visible_output_scale,
     )
     resolved_backend = trace.backend_handle
     started_decrypts = resolved_backend.stats().decrypt_count
@@ -1293,6 +1302,7 @@ def _encrypted_pre_recurrence_visible_output_ciphertext(
     visible: MambaSourceVisibleHandoffTensors,
     checked_visible_dim: int,
     token_index: int,
+    visible_output_scale: float = 1.0,
     residual_ct: Any | None = None,
 ) -> Any:
     skip_ct = _rank_ciphertext_to_output_slots(
@@ -1313,16 +1323,21 @@ def _encrypted_pre_recurrence_visible_output_ciphertext(
         backend=backend,
         rank_ct=gated_ct,
         output_slots=output_slots,
-        out_proj_weight=visible.out_proj_weight,
+        out_proj_weight=visible.out_proj_weight * visible_output_scale,
         checked_visible_dim=checked_visible_dim,
     )
     resolved_residual_ct = residual_ct
     if resolved_residual_ct is None:
         resolved_residual_ct = backend.encrypt(
             [
-                float(value)
+                visible_output_scale * float(value)
                 for value in visible.residual[0, token_index, :checked_visible_dim].detach().cpu()
             ]
+        )
+    elif visible_output_scale != 1.0:
+        resolved_residual_ct = backend.mul_plain(
+            resolved_residual_ct,
+            backend.encode([visible_output_scale] * checked_visible_dim),
         )
     return backend.add(projected_ct, resolved_residual_ct)
 
