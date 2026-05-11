@@ -55,6 +55,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_pre_recurrence",
         "CheckpointPreRecurrenceChainGate",
     ),
+    "CheckpointPreRecurrenceCiphertextTrace": (
+        "fhe_native_mamba3.checkpoint_pre_recurrence",
+        "CheckpointPreRecurrenceCiphertextTrace",
+    ),
     "PRE_RECURRENCE_STAGES": (
         "fhe_native_mamba3.checkpoint_pre_recurrence",
         "PRE_RECURRENCE_STAGES",
@@ -392,6 +396,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_pre_recurrence",
         "run_checkpoint_pre_recurrence_chain_gate",
     ),
+    "run_checkpoint_pre_recurrence_ciphertexts_with_backend": (
+        "fhe_native_mamba3.checkpoint_pre_recurrence",
+        "run_checkpoint_pre_recurrence_ciphertexts_with_backend",
+    ),
     "run_openfhe_static_recurrence": (
         "fhe_native_mamba3.openfhe_backend",
         "run_openfhe_static_recurrence",
@@ -493,6 +501,7 @@ __all__ = [
     "CheckpointFullLayerSweepResult",
     "CheckpointInspection",
     "CheckpointPreRecurrenceChainGate",
+    "CheckpointPreRecurrenceCiphertextTrace",
     "CheckpointPreRecurrenceStageGate",
     "CheckpointRecurrenceCorrectnessGate",
     "CheckpointSourceProfile",
@@ -610,6 +619,7 @@ __all__ = [
     "run_checkpoint_full_layer_ciphertext_sweep",
     "run_checkpoint_full_layer_ciphertexts_with_backend",
     "run_checkpoint_pre_recurrence_chain_gate",
+    "run_checkpoint_pre_recurrence_ciphertexts_with_backend",
     "run_checkpoint_pre_recurrence_stage_gate",
     "run_checkpoint_recurrence_correctness_gate",
     "run_checkpoint_visible_projection_sweep",

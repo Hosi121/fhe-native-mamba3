@@ -9,6 +9,7 @@ from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
     PRE_RECURRENCE_STAGES,
     run_checkpoint_pre_recurrence_chain_gate,
+    run_checkpoint_pre_recurrence_ciphertexts_with_backend,
     run_checkpoint_pre_recurrence_stage_gate,
 )
 
@@ -161,6 +162,37 @@ def test_pre_recurrence_chain_gate_keeps_stage_outputs_encrypted() -> None:
     assert gate.backend_stats["ct_ct_mul_count"] > 0
     assert gate.backend_stats["rotation_count"] > 0
     assert gate.output_ciphertext is True
+
+
+def test_pre_recurrence_ciphertext_trace_does_not_decrypt_stage_outputs() -> None:
+    class NoDecryptTrackingBackend(TrackingBackend):
+        def decrypt(self, value: object, *, length: int) -> tuple[float, ...]:
+            raise AssertionError("ciphertext trace must not decrypt")
+
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+    backend = NoDecryptTrackingBackend(batch_size=8)
+
+    trace = run_checkpoint_pre_recurrence_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        newton_range=(0.20, 0.40),
+    )
+    payload = trace.to_json_dict()
+
+    assert len(trace.causal_conv_post_silu_ciphertexts) == 3
+    assert len(trace.dynamic_b_ciphertexts) == 3
+    assert len(trace.dynamic_c_ciphertexts) == 3
+    assert len(trace.state_rank_decay_ciphertexts) == 3
+    assert len(trace.gate_post_silu_ciphertexts) == 3
+    assert trace.backend_handle is backend
+    assert backend.stats().decrypt_count == 0
+    assert payload["ciphertext_counts"]["causal_conv_post_silu"] == 3
+    assert payload["ciphertext_counts"]["state_rank_decay"] == 3
+    assert "causal_conv_post_silu_ciphertexts" not in payload
 
 
 @pytest.mark.parametrize("stage", ["dynamic_b", "dynamic_c"])

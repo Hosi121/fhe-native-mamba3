@@ -118,6 +118,76 @@ class CheckpointPreRecurrenceChainGate:
         return payload
 
 
+@dataclass(frozen=True)
+class CheckpointPreRecurrenceCiphertextTrace:
+    """Ciphertext trace for the encrypted pre-recurrence source-style path."""
+
+    layer_index: int
+    d_model: int
+    d_state: int
+    mimo_rank: int
+    seq_len: int
+    backend: str
+    encrypted: bool
+    rms_norm_mode: str
+    state_decay_mode: str
+    polynomial_degree: int
+    polynomial_range: float
+    newton_iterations: int | None
+    newton_range: tuple[float, float] | None
+    decay_polynomial_degree: int | None
+    decay_polynomial_range: tuple[float, float] | None
+    depth_estimate: int
+    rms_norm_output_ciphertexts: tuple[Any, ...]
+    projected_rank_input_ciphertexts: tuple[Any, ...]
+    causal_conv_pre_silu_ciphertexts: tuple[Any, ...]
+    causal_conv_post_silu_ciphertexts: tuple[Any, ...]
+    dynamic_b_ciphertexts: tuple[Any, ...]
+    dynamic_c_ciphertexts: tuple[Any, ...]
+    state_rank_decay_ciphertexts: tuple[Any, ...]
+    gate_post_silu_ciphertexts: tuple[Any, ...]
+    expected_stage_outputs: dict[str, tuple[tuple[float, ...], ...]]
+    backend_handle: FHEBackend
+    backend_stats: dict[str, Any]
+    notes: tuple[str, ...] = ()
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "layer_index": self.layer_index,
+            "d_model": self.d_model,
+            "d_state": self.d_state,
+            "mimo_rank": self.mimo_rank,
+            "seq_len": self.seq_len,
+            "backend": self.backend,
+            "encrypted": self.encrypted,
+            "rms_norm_mode": self.rms_norm_mode,
+            "state_decay_mode": self.state_decay_mode,
+            "polynomial_degree": self.polynomial_degree,
+            "polynomial_range": self.polynomial_range,
+            "newton_iterations": self.newton_iterations,
+            "newton_range": self.newton_range,
+            "decay_polynomial_degree": self.decay_polynomial_degree,
+            "decay_polynomial_range": self.decay_polynomial_range,
+            "depth_estimate": self.depth_estimate,
+            "ciphertext_counts": {
+                "rms_norm_output": len(self.rms_norm_output_ciphertexts),
+                "projected_rank_input": len(self.projected_rank_input_ciphertexts),
+                "causal_conv_pre_silu": len(self.causal_conv_pre_silu_ciphertexts),
+                "causal_conv_post_silu": len(self.causal_conv_post_silu_ciphertexts),
+                "dynamic_b": len(self.dynamic_b_ciphertexts),
+                "dynamic_c": len(self.dynamic_c_ciphertexts),
+                "state_rank_decay": len(self.state_rank_decay_ciphertexts),
+                "gate_post_silu": len(self.gate_post_silu_ciphertexts),
+            },
+            "expected_stage_outputs": {
+                stage: [list(row) for row in rows]
+                for stage, rows in self.expected_stage_outputs.items()
+            },
+            "backend_stats": self.backend_stats,
+            "notes": list(self.notes),
+        }
+
+
 def run_checkpoint_pre_recurrence_stage_gate(
     state_dict: dict[str, Tensor],
     layer_input: Tensor,
@@ -451,6 +521,80 @@ def run_checkpoint_pre_recurrence_chain_gate(
 ) -> CheckpointPreRecurrenceChainGate:
     """Run the source-style pre-recurrence stages as one ciphertext chain."""
 
+    trace = run_checkpoint_pre_recurrence_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        layer_index=layer_index,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        backend=backend,
+        norm_eps=norm_eps,
+        polynomial_degree=polynomial_degree,
+        polynomial_range=polynomial_range,
+        rms_norm_mode=rms_norm_mode,
+        inv_sqrt_degree=inv_sqrt_degree,
+        inv_sqrt_range=inv_sqrt_range,
+        newton_iterations=newton_iterations,
+        newton_range=newton_range,
+        state_decay_mode=state_decay_mode,
+        decay_polynomial_degree=decay_polynomial_degree,
+        decay_polynomial_range=decay_polynomial_range,
+        atol=atol,
+    )
+    errors = _pre_recurrence_stage_errors(trace)
+    return CheckpointPreRecurrenceChainGate(
+        layer_index=trace.layer_index,
+        d_model=trace.d_model,
+        d_state=trace.d_state,
+        mimo_rank=trace.mimo_rank,
+        seq_len=trace.seq_len,
+        backend=trace.backend,
+        encrypted=trace.encrypted,
+        rms_norm_mode=trace.rms_norm_mode,
+        state_decay_mode=trace.state_decay_mode,
+        polynomial_degree=trace.polynomial_degree,
+        polynomial_range=trace.polynomial_range,
+        newton_iterations=trace.newton_iterations,
+        newton_range=trace.newton_range,
+        decay_polynomial_degree=trace.decay_polynomial_degree,
+        decay_polynomial_range=trace.decay_polynomial_range,
+        stage_max_abs_errors=errors,
+        atol=atol,
+        passed=all(error <= atol for error in errors.values()),
+        depth_estimate=trace.depth_estimate,
+        output_ciphertext=True,
+        backend_stats=trace.backend_handle.stats().to_json_dict(),
+        notes=(
+            "pre-recurrence stages are chained as ciphertexts",
+            "stage outputs are decrypted only for correctness measurement",
+            "recurrence scan/readout and residual output projection are not included",
+        ),
+    )
+
+
+def run_checkpoint_pre_recurrence_ciphertexts_with_backend(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    backend: FHEBackend | None = None,
+    norm_eps: float = 1e-5,
+    polynomial_degree: int = 13,
+    polynomial_range: float = 6.0,
+    rms_norm_mode: RmsNormMode = "newton-invsqrt",
+    inv_sqrt_degree: int = 5,
+    inv_sqrt_range: tuple[float, float] = (0.01, 4.0),
+    newton_iterations: int = 2,
+    newton_range: tuple[float, float] = (0.25, 0.5),
+    state_decay_mode: StateDecayMode = "poly-composed",
+    decay_polynomial_degree: int = 5,
+    decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
+    atol: float = 1e-2,
+) -> CheckpointPreRecurrenceCiphertextTrace:
+    """Return pre-recurrence stage ciphertexts without decrypting them."""
+
     _validate_common_inputs(
         layer_input=layer_input,
         polynomial_degree=polynomial_degree,
@@ -573,47 +717,9 @@ def run_checkpoint_pre_recurrence_chain_gate(
             tensors.gate_weight.to(device=layer_input.device, dtype=layer_input.dtype),
         )
     )[0]
-    errors = {
-        "rms_norm_output": _max_abs_rows(
-            _decrypt_rows(rms_cts, length=d_model, backend=resolved_backend),
-            _token_rows(stages.rms_norm_output[0]),
-        ),
-        "projected_rank_input": _max_abs_rows(
-            _decrypt_rows(projected_cts, length=resolved_rank, backend=resolved_backend),
-            _token_rows(stages.projected_rank_input[0]),
-        ),
-        "causal_conv_pre_silu": _max_abs_rows(
-            _decrypt_rows(conv_pre_cts, length=resolved_rank, backend=resolved_backend),
-            _token_rows(stages.causal_conv_pre_silu[0]),
-        ),
-        "causal_conv_post_silu": _max_abs_rows(
-            _decrypt_rows(conv_post_cts, length=resolved_rank, backend=resolved_backend),
-            _token_rows(stages.causal_conv_post_silu[0]),
-        ),
-        "dynamic_b": _max_abs_rows(
-            _decrypt_rows(dynamic_b_cts, length=resolved_d_state, backend=resolved_backend),
-            _token_rows(stages.dynamic_b_terms[0]),
-        ),
-        "dynamic_c": _max_abs_rows(
-            _decrypt_rows(dynamic_c_cts, length=resolved_d_state, backend=resolved_backend),
-            _token_rows(stages.dynamic_c_terms[0]),
-        ),
-        "state_rank_decay": _max_abs_rows(
-            _decrypt_rows(
-                decay_cts,
-                length=resolved_d_state * resolved_rank,
-                backend=resolved_backend,
-            ),
-            _token_rows(stages.decay_by_token[0].reshape(stages.decay_by_token.shape[1], -1)),
-        ),
-        "gate_post_silu": _max_abs_rows(
-            _decrypt_rows(gate_cts, length=resolved_rank, backend=resolved_backend),
-            _token_rows(gate_expected),
-        ),
-    }
     decay_depth = decay_polynomial_degree if state_decay_mode == "poly-composed" else 0
     depth = rms_depth + polynomial_degree + decay_depth
-    return CheckpointPreRecurrenceChainGate(
+    return CheckpointPreRecurrenceCiphertextTrace(
         layer_index=layer_index,
         d_model=d_model,
         d_state=resolved_d_state,
@@ -633,18 +739,93 @@ def run_checkpoint_pre_recurrence_chain_gate(
         decay_polynomial_range=(
             decay_polynomial_range if state_decay_mode == "poly-composed" else None
         ),
-        stage_max_abs_errors=errors,
-        atol=atol,
-        passed=all(error <= atol for error in errors.values()),
         depth_estimate=depth,
-        output_ciphertext=True,
+        rms_norm_output_ciphertexts=rms_cts,
+        projected_rank_input_ciphertexts=projected_cts,
+        causal_conv_pre_silu_ciphertexts=conv_pre_cts,
+        causal_conv_post_silu_ciphertexts=conv_post_cts,
+        dynamic_b_ciphertexts=dynamic_b_cts,
+        dynamic_c_ciphertexts=dynamic_c_cts,
+        state_rank_decay_ciphertexts=decay_cts,
+        gate_post_silu_ciphertexts=gate_cts,
+        expected_stage_outputs={
+            "rms_norm_output": _token_rows(stages.rms_norm_output[0]),
+            "projected_rank_input": _token_rows(stages.projected_rank_input[0]),
+            "causal_conv_pre_silu": _token_rows(stages.causal_conv_pre_silu[0]),
+            "causal_conv_post_silu": _token_rows(stages.causal_conv_post_silu[0]),
+            "dynamic_b": _token_rows(stages.dynamic_b_terms[0]),
+            "dynamic_c": _token_rows(stages.dynamic_c_terms[0]),
+            "state_rank_decay": _token_rows(
+                stages.decay_by_token[0].reshape(stages.decay_by_token.shape[1], -1)
+            ),
+            "gate_post_silu": _token_rows(gate_expected),
+        },
+        backend_handle=resolved_backend,
         backend_stats=resolved_backend.stats().to_json_dict(),
         notes=(
             "pre-recurrence stages are chained as ciphertexts",
-            "stage outputs are decrypted only for correctness measurement",
+            "stage outputs are not decrypted by this trace constructor",
             "recurrence scan/readout and residual output projection are not included",
         ),
     )
+
+
+def _pre_recurrence_stage_errors(
+    trace: CheckpointPreRecurrenceCiphertextTrace,
+) -> dict[str, float]:
+    backend = trace.backend_handle
+    return {
+        "rms_norm_output": _max_abs_rows(
+            _decrypt_rows(trace.rms_norm_output_ciphertexts, length=trace.d_model, backend=backend),
+            trace.expected_stage_outputs["rms_norm_output"],
+        ),
+        "projected_rank_input": _max_abs_rows(
+            _decrypt_rows(
+                trace.projected_rank_input_ciphertexts,
+                length=trace.mimo_rank,
+                backend=backend,
+            ),
+            trace.expected_stage_outputs["projected_rank_input"],
+        ),
+        "causal_conv_pre_silu": _max_abs_rows(
+            _decrypt_rows(
+                trace.causal_conv_pre_silu_ciphertexts,
+                length=trace.mimo_rank,
+                backend=backend,
+            ),
+            trace.expected_stage_outputs["causal_conv_pre_silu"],
+        ),
+        "causal_conv_post_silu": _max_abs_rows(
+            _decrypt_rows(
+                trace.causal_conv_post_silu_ciphertexts,
+                length=trace.mimo_rank,
+                backend=backend,
+            ),
+            trace.expected_stage_outputs["causal_conv_post_silu"],
+        ),
+        "dynamic_b": _max_abs_rows(
+            _decrypt_rows(trace.dynamic_b_ciphertexts, length=trace.d_state, backend=backend),
+            trace.expected_stage_outputs["dynamic_b"],
+        ),
+        "dynamic_c": _max_abs_rows(
+            _decrypt_rows(trace.dynamic_c_ciphertexts, length=trace.d_state, backend=backend),
+            trace.expected_stage_outputs["dynamic_c"],
+        ),
+        "state_rank_decay": _max_abs_rows(
+            _decrypt_rows(
+                trace.state_rank_decay_ciphertexts,
+                length=trace.d_state * trace.mimo_rank,
+                backend=backend,
+            ),
+            trace.expected_stage_outputs["state_rank_decay"],
+        ),
+        "gate_post_silu": _max_abs_rows(
+            _decrypt_rows(
+                trace.gate_post_silu_ciphertexts, length=trace.mimo_rank, backend=backend
+            ),
+            trace.expected_stage_outputs["gate_post_silu"],
+        ),
+    }
 
 
 def _validate_common_inputs(
