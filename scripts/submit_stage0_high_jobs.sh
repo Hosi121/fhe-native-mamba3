@@ -23,6 +23,7 @@ SUBMIT_FULL_LAYER_SWEEP="${SUBMIT_FULL_LAYER_SWEEP:-1}"
 SUBMIT_VISIBLE_PROJECTION_SWEEP="${SUBMIT_VISIBLE_PROJECTION_SWEEP:-1}"
 SUBMIT_ALL_LAYER_RECURRENCE="${SUBMIT_ALL_LAYER_RECURRENCE:-1}"
 SUBMIT_SOURCE_PROFILE="${SUBMIT_SOURCE_PROFILE:-1}"
+SUBMIT_CLIENT_DECODE="${SUBMIT_CLIENT_DECODE:-1}"
 
 if [[ "${DRY_RUN}" != "1" ]] && ! command -v sbatch >/dev/null 2>&1; then
   echo "sbatch is not available; run this script on the high SLURM login node" >&2
@@ -137,6 +138,18 @@ if [[ "${SUBMIT_SOURCE_PROFILE}" == "1" ]]; then
       PROMPT=1,2,3,4 \
       PROFILE_ALL_LAYERS=1 \
       sbatch slurm/mamba_checkpoint_source_profile.sbatch
+fi
+
+if [[ "${SUBMIT_CLIENT_DECODE}" == "1" ]]; then
+  run_cmd "checkpoint client decode smoke" \
+    env \
+      PYTHON="${PYTHON}" \
+      CHECKPOINT="${CHECKPOINT}" \
+      RUN_NAME="${RUN_PREFIX}-client-decode-1step" \
+      PROMPT=1 \
+      STEPS=1 \
+      DECODE_ALL_LAYERS=1 \
+      sbatch slurm/mamba_checkpoint_client_decode_smoke.sbatch
 fi
 
 if [[ "${DRY_RUN}" != "1" ]]; then
