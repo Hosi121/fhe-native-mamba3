@@ -81,13 +81,15 @@ def _remaining_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
             )
     else:
         first_item = "run 24-layer encrypted recurrence with scheduled inter-layer bootstraps"
-    return [
+    items = [
         first_item,
         "measure 1024-token average latency or a documented smaller proxy if cost is too high",
         "compare encrypted recurrence outputs against plaintext baseline across all sampled layers",
         "record profiler breakdown for encode/encrypt/eval/bootstrap/decrypt",
-        "include client-side decoding smoke for an inference-shaped path",
     ]
+    if not measurements["client_decode_smoke"].get("passed"):
+        items.append("include client-side decoding smoke for an inference-shaped path")
+    return items
 
 
 def _bootstrap_latency_summary(payload: dict[str, Any] | None) -> dict[str, Any]:

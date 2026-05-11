@@ -199,6 +199,7 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
     assert any(item["name"] == "decay_burst" for item in report["bottlenecks"])
     assert any(item["name"] == "decoding" for item in report["bottlenecks"])
     assert any("true inter-layer ciphertext chain" in item for item in report["remaining_items"])
+    assert not any("client-side decoding smoke" in item for item in report["remaining_items"])
     assert any("scheduled bootstrap probe" in item for item in report["completed_items"])
     assert any("ciphertext handoff smoke" in item for item in report["completed_items"])
     assert any("full-layer ciphertext gate" in item for item in report["completed_items"])
@@ -216,6 +217,7 @@ def test_stage0_status_report_handles_missing_artifacts() -> None:
     assert report["measurements"]["ciphertext_handoff"]["available"] is False
     assert report["stage0_complete"] is False
     assert len(report["completed_items"]) == 2
+    assert any("client-side decoding smoke" in item for item in report["remaining_items"])
 
 
 def test_stage0_status_report_accepts_failed_bootstrap_artifact() -> None:
