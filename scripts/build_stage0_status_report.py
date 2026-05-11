@@ -28,6 +28,9 @@ def main() -> int:
         range_scale_plan=_read_optional_json(args.range_scale_plan_json),
         checkpoint_full_layer_gate=_read_optional_json(args.checkpoint_full_layer_gate_json),
         checkpoint_full_layer_chain=_read_optional_json(args.checkpoint_full_layer_chain_json),
+        synthetic_full_layer_chain_proxy=_read_optional_json(
+            args.synthetic_full_layer_chain_proxy_json
+        ),
         checkpoint_pre_recurrence_layer_sweep=_read_optional_json(
             args.checkpoint_pre_recurrence_layer_sweep_json
         ),
@@ -61,6 +64,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--range-scale-plan-json", default="")
     parser.add_argument("--checkpoint-full-layer-gate-json", default="")
     parser.add_argument("--checkpoint-full-layer-chain-json", default="")
+    parser.add_argument("--synthetic-full-layer-chain-proxy-json", default="")
     parser.add_argument("--checkpoint-pre-recurrence-layer-sweep-json", default="")
     parser.add_argument("--client-decode-smoke-json", default="")
     parser.add_argument("--segment-samples-json", default="")

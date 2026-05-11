@@ -12,6 +12,7 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
     scale_plan_json = tmp_path / "scale-plan.json"
     full_layer_json = tmp_path / "full-layer.json"
     full_layer_chain_json = tmp_path / "full-layer-chain.json"
+    synthetic_full_layer_chain_proxy_json = tmp_path / "synthetic-full-layer-chain-proxy.json"
     pre_sweep_json = tmp_path / "pre-sweep.json"
     decode_json = tmp_path / "decode.json"
     output_json = tmp_path / "status.json"
@@ -128,6 +129,51 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
         ),
         encoding="utf-8",
     )
+    synthetic_full_layer_chain_proxy_json.write_text(
+        json.dumps(
+            {
+                "backend": "openfhe-ckks",
+                "encrypted": True,
+                "passed": True,
+                "max_abs_error": 0.02,
+                "model": {
+                    "seq_len": 1,
+                    "n_layers": 2,
+                    "d_model": 8,
+                    "d_state": 2,
+                    "mimo_rank": 4,
+                    "weight_scale": 0.001,
+                },
+                "ckks": {
+                    "ring_dimension": 131072,
+                    "batch_size": 8,
+                    "rotation_count": 10,
+                },
+                "approximation": {
+                    "rms_norm_mode": "newton-invsqrt",
+                    "polynomial_degree": 1,
+                    "decay_polynomial_degree": 1,
+                    "layer_depth_estimates": [4, 4],
+                },
+                "measurement_scope": {
+                    "reduced_proxy": True,
+                    "real_checkpoint": False,
+                    "inter_layer_ciphertext_handoff": True,
+                    "visible_handoff_ciphertext": True,
+                    "full_model_correctness_claimed": False,
+                    "plaintext_precomputed_stages": [],
+                },
+                "result": {
+                    "layer_count": 2,
+                    "no_intermediate_decrypt": True,
+                    "final_decrypt_count": 1,
+                },
+                "operation_counts": {"ct_ct_mul": 18, "decrypt": 1},
+                "timing": {"setup_seconds": 7.16, "eval_seconds": 3.63},
+            }
+        ),
+        encoding="utf-8",
+    )
     pre_sweep_json.write_text(
         json.dumps(
             {
@@ -169,6 +215,8 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
             str(full_layer_json),
             "--checkpoint-full-layer-chain-json",
             str(full_layer_chain_json),
+            "--synthetic-full-layer-chain-proxy-json",
+            str(synthetic_full_layer_chain_proxy_json),
             "--checkpoint-pre-recurrence-layer-sweep-json",
             str(pre_sweep_json),
             "--client-decode-smoke-json",
@@ -191,6 +239,11 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
         payload["measurements"]["checkpoint_full_layer_chain"]["inter_layer_ciphertext_handoff"]
         is True
     )
+    synthetic_chain = payload["measurements"]["synthetic_full_layer_chain_proxy"]
+    assert synthetic_chain["backend"] == "openfhe-ckks"
+    assert synthetic_chain["reduced_proxy"] is True
+    assert synthetic_chain["real_checkpoint"] is False
+    assert synthetic_chain["ring_dimension"] == 131072
     assert payload["measurements"]["checkpoint_pre_recurrence_layer_sweep"]["passed_count"] == 2
     assert payload["measurements"]["client_decode_smoke"]["new_token_ids"] == [42]
     assert payload["bottlenecks"][0]["name"] == "range"

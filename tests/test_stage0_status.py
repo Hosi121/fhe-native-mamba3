@@ -158,6 +158,46 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
             "operation_counts": {"ct_ct_mul": 52, "decrypt": 1},
             "timing": {"eval_seconds": 0.001},
         },
+        synthetic_full_layer_chain_proxy={
+            "backend": "openfhe-ckks",
+            "encrypted": True,
+            "passed": True,
+            "max_abs_error": 0.0203,
+            "model": {
+                "seq_len": 1,
+                "n_layers": 2,
+                "d_model": 8,
+                "d_state": 2,
+                "mimo_rank": 4,
+                "weight_scale": 0.001,
+            },
+            "ckks": {
+                "ring_dimension": 131072,
+                "batch_size": 8,
+                "rotation_count": 10,
+            },
+            "approximation": {
+                "rms_norm_mode": "newton-invsqrt",
+                "polynomial_degree": 1,
+                "decay_polynomial_degree": 1,
+                "layer_depth_estimates": [4, 4],
+            },
+            "measurement_scope": {
+                "reduced_proxy": True,
+                "real_checkpoint": False,
+                "inter_layer_ciphertext_handoff": True,
+                "visible_handoff_ciphertext": True,
+                "full_model_correctness_claimed": False,
+                "plaintext_precomputed_stages": [],
+            },
+            "result": {
+                "layer_count": 2,
+                "no_intermediate_decrypt": True,
+                "final_decrypt_count": 1,
+            },
+            "operation_counts": {"ct_ct_mul": 18, "decrypt": 1},
+            "timing": {"setup_seconds": 7.16, "eval_seconds": 3.63},
+        },
         checkpoint_pre_recurrence_layer_sweep={
             "stage": "tracking-24-layer-encrypted-pre-full-gate-summary",
             "layer_count": 24,
@@ -257,6 +297,11 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
         report["measurements"]["checkpoint_full_layer_chain"]["inter_layer_ciphertext_handoff"]
         is True
     )
+    synthetic_chain = report["measurements"]["synthetic_full_layer_chain_proxy"]
+    assert synthetic_chain["backend"] == "openfhe-ckks"
+    assert synthetic_chain["reduced_proxy"] is True
+    assert synthetic_chain["real_checkpoint"] is False
+    assert synthetic_chain["ring_dimension"] == 131072
     pre_sweep = report["measurements"]["checkpoint_pre_recurrence_layer_sweep"]
     assert pre_sweep["passed_count"] == 24
     assert pre_sweep["max_abs_error_layer"] == 18
@@ -280,6 +325,10 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
     assert any("ciphertext handoff smoke" in item for item in report["completed_items"])
     assert any("full-layer ciphertext gate" in item for item in report["completed_items"])
     assert any("full-layer ciphertext handoff chain" in item for item in report["completed_items"])
+    assert any(
+        "OpenFHE reduced full-layer ciphertext chain proxy" in item
+        for item in report["completed_items"]
+    )
     assert any("across all swept layers" in item for item in report["completed_items"])
     assert any("client-side decode smoke" in item for item in report["completed_items"])
 

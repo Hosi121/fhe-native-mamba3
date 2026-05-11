@@ -15,6 +15,7 @@ def build_stage0_status_report(
     range_scale_plan: dict[str, Any] | None = None,
     checkpoint_full_layer_gate: dict[str, Any] | None = None,
     checkpoint_full_layer_chain: dict[str, Any] | None = None,
+    synthetic_full_layer_chain_proxy: dict[str, Any] | None = None,
     checkpoint_pre_recurrence_layer_sweep: dict[str, Any] | None = None,
     client_decode_smoke: dict[str, Any] | None = None,
     segment_samples: dict[str, Any] | None = None,
@@ -34,6 +35,9 @@ def build_stage0_status_report(
         ),
         "checkpoint_full_layer_chain": _checkpoint_full_layer_chain_summary(
             checkpoint_full_layer_chain
+        ),
+        "synthetic_full_layer_chain_proxy": _synthetic_full_layer_chain_proxy_summary(
+            synthetic_full_layer_chain_proxy
         ),
         "checkpoint_pre_recurrence_layer_sweep": (
             _checkpoint_pre_recurrence_layer_sweep_summary(checkpoint_pre_recurrence_layer_sweep)
@@ -72,6 +76,7 @@ def _remaining_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
     all_layer = measurements["all_layer_recurrence"]
     full_gate = measurements["checkpoint_full_layer_gate"]
     full_chain = measurements["checkpoint_full_layer_chain"]
+    synthetic_chain = measurements["synthetic_full_layer_chain_proxy"]
     if all_layer.get("actual_scheduled_bootstraps") and all_layer.get("bootstrap_probe_only"):
         first_item = (
             "connect scheduled bootstrap probe to measured full-layer ciphertext chain"
@@ -86,6 +91,11 @@ def _remaining_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
     elif all_layer.get("actual_scheduled_bootstraps"):
         if full_chain.get("inter_layer_ciphertext_handoff"):
             first_item = "scale measured full-layer ciphertext chain to scheduled 24-layer run"
+        elif synthetic_chain.get("inter_layer_ciphertext_handoff"):
+            first_item = (
+                "lift reduced OpenFHE full-layer chain proxy to real checkpoint layout after "
+                "packing/sketch"
+            )
         elif full_gate.get("visible_handoff_ciphertext"):
             first_item = (
                 "connect full-layer visible ciphertext trace to encrypted next-layer pre-recurrence"
@@ -97,7 +107,12 @@ def _remaining_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
                 "connect scheduled boundary bootstrap smoke to true inter-layer ciphertext handoff"
             )
     else:
-        first_item = "run 24-layer encrypted recurrence with scheduled inter-layer bootstraps"
+        first_item = (
+            "lift reduced OpenFHE full-layer chain proxy to real checkpoint layout after "
+            "packing/sketch"
+            if synthetic_chain.get("inter_layer_ciphertext_handoff")
+            else "run 24-layer encrypted recurrence with scheduled inter-layer bootstraps"
+        )
     items = [
         first_item,
         "measure 1024-token average latency or a documented smaller proxy if cost is too high",
@@ -312,6 +327,55 @@ def _checkpoint_full_layer_chain_summary(payload: dict[str, Any] | None) -> dict
     }
 
 
+def _synthetic_full_layer_chain_proxy_summary(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not payload:
+        return {"available": False}
+    result = payload.get("result", {})
+    scope = payload.get("measurement_scope", {})
+    model = payload.get("model", {})
+    ckks = payload.get("ckks", {})
+    approximation = payload.get("approximation", {})
+    operation_counts = payload.get("operation_counts", {})
+    timing = payload.get("timing", {})
+    return {
+        "available": True,
+        "backend": payload.get("backend"),
+        "encrypted": payload.get("encrypted"),
+        "passed": payload.get("passed"),
+        "max_abs_error": payload.get("max_abs_error", result.get("max_abs_error")),
+        "reduced_proxy": bool(scope.get("reduced_proxy")),
+        "real_checkpoint": bool(scope.get("real_checkpoint")),
+        "layer_count": model.get("n_layers", result.get("layer_count")),
+        "d_model": model.get("d_model", result.get("d_model")),
+        "d_state": model.get("d_state", result.get("d_state")),
+        "mimo_rank": model.get("mimo_rank", result.get("mimo_rank")),
+        "seq_len": model.get("seq_len", result.get("seq_len")),
+        "weight_scale": model.get("weight_scale"),
+        "inter_layer_ciphertext_handoff": bool(
+            scope.get("inter_layer_ciphertext_handoff")
+            or result.get("inter_layer_ciphertext_handoff")
+        ),
+        "visible_handoff_ciphertext": bool(scope.get("visible_handoff_ciphertext")),
+        "no_intermediate_decrypt": bool(result.get("no_intermediate_decrypt")),
+        "final_decrypt_count": result.get("final_decrypt_count"),
+        "full_model_correctness_claimed": bool(scope.get("full_model_correctness_claimed")),
+        "plaintext_precomputed_stages": scope.get("plaintext_precomputed_stages", []),
+        "rms_norm_mode": approximation.get("rms_norm_mode"),
+        "polynomial_degree": approximation.get("polynomial_degree"),
+        "decay_polynomial_degree": approximation.get("decay_polynomial_degree"),
+        "layer_depth_estimates": approximation.get("layer_depth_estimates", []),
+        "ring_dimension": ckks.get("ring_dimension"),
+        "batch_size": ckks.get("batch_size"),
+        "rotation_count": ckks.get("rotation_count"),
+        "ct_ct_mul_count": operation_counts.get("ct_ct_mul"),
+        "decrypt_count": operation_counts.get("decrypt"),
+        "setup_seconds": timing.get("setup_seconds"),
+        "eval_seconds": timing.get("eval_seconds"),
+    }
+
+
 def _scaled_full_gate_validated(full_gate: dict[str, Any]) -> bool:
     scale = full_gate.get("visible_output_scale", 1.0)
     return (
@@ -478,6 +542,15 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         items.append(
             "run measured full-layer ciphertext handoff chain without intermediate decrypts"
         )
+    synthetic_chain = measurements["synthetic_full_layer_chain_proxy"]
+    if (
+        synthetic_chain.get("passed")
+        and synthetic_chain.get("encrypted")
+        and synthetic_chain.get("reduced_proxy")
+        and synthetic_chain.get("inter_layer_ciphertext_handoff")
+        and synthetic_chain.get("no_intermediate_decrypt")
+    ):
+        items.append("run OpenFHE reduced full-layer ciphertext chain proxy")
     if measurements["client_decode_smoke"].get("passed"):
         items.append("run real checkpoint source-style client-side decode smoke")
     if measurements["segment_samples"].get("bootstrap_enabled_sample_count"):
