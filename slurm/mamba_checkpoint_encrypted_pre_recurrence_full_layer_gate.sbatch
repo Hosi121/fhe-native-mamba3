@@ -128,7 +128,7 @@ fi
   --newton-range "${NEWTON_RANGE}" \
   --state-decay-mode "${STATE_DECAY_MODE}" \
   --decay-polynomial-degree "${DECAY_POLYNOMIAL_DEGREE}" \
-  --decay-polynomial-range "${DECAY_POLYNOMIAL_RANGE}" \
+  --decay-polynomial-range="${DECAY_POLYNOMIAL_RANGE}" \
   --max-statuses 2 \
   "${openfhe_args[@]}" \
   --output-json "${OUTPUT_JSON}" > "${STDOUT_JSON}"

@@ -106,6 +106,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
         encrypted_pre_full_layer_gate_text
     )
     assert "RMS_NORM_MODE" in encrypted_pre_full_layer_gate_text
+    assert "--decay-polynomial-range=" in encrypted_pre_full_layer_gate_text
     assert "pre_recurrence_depth_estimate" in encrypted_pre_full_layer_gate_text
 
     full_layer_sweep_text = full_layer_sweep_slurm.read_text()
