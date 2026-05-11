@@ -3,6 +3,14 @@ description: Product backlog item with stage, dependencies, and acceptance check
 title: "PBI: "
 labels: ["PBI"]
 body:
+  - type: input
+    id: pbi_id
+    attributes:
+      label: PBI ID
+      description: Use the canonical backlog ID from docs/backlog.md, or propose the next unused ID.
+      placeholder: PBI-S1-005
+    validations:
+      required: true
   - type: dropdown
     id: stage
     attributes:
@@ -12,6 +20,17 @@ body:
         - Stage 1
         - Stage 2
         - Process / infrastructure
+    validations:
+      required: true
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      options:
+        - Open
+        - Blocked
+        - Done
+        - Obsolete
     validations:
       required: true
   - type: dropdown

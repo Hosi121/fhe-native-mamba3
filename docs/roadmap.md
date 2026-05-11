@@ -3,6 +3,9 @@
 This project follows an implementation-first roadmap. Theory is used to explain
 measured behavior after the benchmark data exists.
 
+The canonical PBI list lives in [docs/backlog.md](backlog.md). This roadmap
+keeps stage boundaries and non-goals; backlog status should be updated there.
+
 ## Main Line
 
 The main system is an FHE-native MIMO SSM. Mamba-2 is a control and weight
@@ -56,6 +59,9 @@ Current partial implementation:
   inventory, and explicit dependencies.
 - The plan can consume a Stage 0 source-profile JSON for sparse range/decay
   grouping hints, but it does not claim encrypted speedup.
+- Packed SSD prefix-scan planning, segmented cross-ciphertext carry accounting,
+  and a JSON-emitting Stage 1 prefix-scan smoke are implemented. They do not yet
+  prove an integrated tiny encrypted MIMO/SSD block.
 
 ## Stage 2
 
