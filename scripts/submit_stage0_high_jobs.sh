@@ -73,7 +73,7 @@ if [[ "${SUBMIT_ENCRYPTED_PRE_RECURRENCE_FULL_LAYER_GATE}" == "1" ]]; then
       LAYER_INDEX=0 \
       PROMPT=1 \
       VISIBLE_DIM_LIMIT=8 \
-      sbatch slurm/mamba_checkpoint_encrypted_pre_recurrence_full_layer_gate.sbatch
+      sbatch slurm/mamba_checkpoint_encrypted_pre_recurrence_full_layer_gate_tracking.sbatch
 fi
 
 if [[ "${SUBMIT_ENCRYPTED_PRE_RECURRENCE_FULL_LAYER_CHAIN}" == "1" ]]; then
@@ -86,7 +86,7 @@ if [[ "${SUBMIT_ENCRYPTED_PRE_RECURRENCE_FULL_LAYER_CHAIN}" == "1" ]]; then
       N_LAYERS=2 \
       PROMPT=1 \
       ATOL=1.2 \
-      sbatch slurm/mamba_checkpoint_encrypted_pre_recurrence_full_layer_chain.sbatch
+      sbatch slurm/mamba_checkpoint_encrypted_pre_recurrence_full_layer_chain_tracking.sbatch
 fi
 
 if [[ "${SUBMIT_RECURRENCE_CHAIN}" == "1" ]]; then

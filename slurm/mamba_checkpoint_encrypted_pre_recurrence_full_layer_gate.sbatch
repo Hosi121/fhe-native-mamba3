@@ -19,7 +19,7 @@ CHECKPOINT="${CHECKPOINT:-checkpoints/mamba-130m-hf}"
 RUN_NAME="${RUN_NAME:-mamba-pre-full-gate-${SLURM_JOB_ID:-manual}}"
 OUTPUT_JSON="${OUTPUT_JSON:-runs/${RUN_NAME}.json}"
 STDOUT_JSON="${STDOUT_JSON:-runs/${RUN_NAME}.stdout.json}"
-BACKEND="${BACKEND:-tracking}"
+BACKEND="${BACKEND:-openfhe}"
 LAYER_INDEX="${LAYER_INDEX:-0}"
 PROMPT="${PROMPT:-1}"
 MAX_SEQ_LEN="${MAX_SEQ_LEN:-8}"
@@ -33,6 +33,9 @@ MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-28}"
 SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-40}"
 RING_DIM="${RING_DIM:-}"
 MAX_ROTATION_KEYS="${MAX_ROTATION_KEYS:-2048}"
+ESTIMATED_ROTATION_KEY_MIB="${ESTIMATED_ROTATION_KEY_MIB:-512}"
+MAX_ESTIMATED_ROTATION_KEY_MEMORY_GIB="${MAX_ESTIMATED_ROTATION_KEY_MEMORY_GIB:-96}"
+ALLOW_HIGH_MEMORY_OPENFHE="${ALLOW_HIGH_MEMORY_OPENFHE:-0}"
 VISIBLE_DIM_LIMIT="${VISIBLE_DIM_LIMIT:-8}"
 VISIBLE_OUTPUT_SCALE="${VISIBLE_OUTPUT_SCALE:-}"
 SCALE_PLAN_JSON="${SCALE_PLAN_JSON:-}"
@@ -106,6 +109,13 @@ openfhe_args=()
 if [[ -n "${RING_DIM}" ]]; then
   openfhe_args+=(--ring-dim "${RING_DIM}")
 fi
+openfhe_memory_args=(
+  --estimated-rotation-key-mib "${ESTIMATED_ROTATION_KEY_MIB}"
+  --max-estimated-rotation-key-memory-gib "${MAX_ESTIMATED_ROTATION_KEY_MEMORY_GIB}"
+)
+if [[ "${ALLOW_HIGH_MEMORY_OPENFHE}" == "1" ]]; then
+  openfhe_memory_args+=(--allow-high-memory-openfhe)
+fi
 scale_args=()
 if [[ -n "${VISIBLE_OUTPUT_SCALE}" ]]; then
   scale_args+=(--visible-output-scale "${VISIBLE_OUTPUT_SCALE}")
@@ -127,6 +137,7 @@ fi
   --multiplicative-depth "${MULTIPLICATIVE_DEPTH}" \
   --scaling-mod-size "${SCALING_MOD_SIZE}" \
   --max-rotation-keys "${MAX_ROTATION_KEYS}" \
+  "${openfhe_memory_args[@]}" \
   --visible-dim-limit "${VISIBLE_DIM_LIMIT}" \
   --atol "${ATOL}" \
   --norm-eps "${NORM_EPS}" \
@@ -164,6 +175,9 @@ summary = {
         "pre_recurrence_depth_estimate"
     ],
     "rotation_count": payload["ckks"]["rotation_count"],
+    "estimated_rotation_key_memory_gib": payload["ckks"][
+        "estimated_rotation_key_memory_gib"
+    ],
     "passed": payload["passed"],
     "max_abs_error": payload["max_abs_error"],
     "operation_counts": payload["operation_counts"],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
@@ -93,6 +94,7 @@ def run_checkpoint_visible_projection_sweep(
     mimo_rank: int | None = None,
     backend_factory: ProjectionBackendFactory | None = None,
     max_rotation_keys: int | None = None,
+    max_checked_visible_dim: int | None = None,
     input_mode: InputMode = "encrypted-dynamic-bc",
     readout_strategy: ReadoutStrategy = "rank-local",
     multiplicative_depth: int = 16,
@@ -107,6 +109,9 @@ def run_checkpoint_visible_projection_sweep(
         raise ValueError(msg)
     if max_rotation_keys is not None and max_rotation_keys <= 0:
         msg = "max_rotation_keys must be positive when provided"
+        raise ValueError(msg)
+    if max_checked_visible_dim is not None and max_checked_visible_dim <= 0:
+        msg = "max_checked_visible_dim must be positive when provided"
         raise ValueError(msg)
 
     plan = plan_mamba_checkpoint(state_dict)
@@ -143,6 +148,7 @@ def run_checkpoint_visible_projection_sweep(
             mimo_rank=resolved_rank,
             backend_factory=factory,
             max_rotation_keys=max_rotation_keys,
+            max_checked_visible_dim=max_checked_visible_dim,
             input_mode=input_mode,
             readout_strategy=readout_strategy,
             multiplicative_depth=multiplicative_depth,
@@ -174,12 +180,14 @@ def _run_projection_row(
     mimo_rank: int,
     backend_factory: ProjectionBackendFactory,
     max_rotation_keys: int | None,
+    max_checked_visible_dim: int | None,
     input_mode: InputMode,
     readout_strategy: ReadoutStrategy,
     multiplicative_depth: int,
     atol: float,
     norm_eps: float,
 ) -> CheckpointVisibleProjectionSweepRow:
+    row_started = time.perf_counter()
     checked_visible_dim = _resolve_checked_visible_dim(
         d_model=d_model,
         visible_dim_limit=requested_visible_dim,
@@ -205,6 +213,23 @@ def _run_projection_row(
             reason=(
                 f"rotation_key_count={len(rotations)} exceeds max_rotation_keys={max_rotation_keys}"
             ),
+        )
+    if max_checked_visible_dim is not None and checked_visible_dim > max_checked_visible_dim:
+        return CheckpointVisibleProjectionSweepRow(
+            requested_visible_dim=requested_visible_dim,
+            checked_visible_dim=checked_visible_dim,
+            d_model=d_model,
+            full_visible_output=checked_visible_dim == d_model,
+            full_visible_output_checked=False,
+            partial_visible_output_checked=False,
+            rotation_key_count=len(rotations),
+            status="skipped",
+            passed=False,
+            reason=(
+                f"checked_visible_dim={checked_visible_dim} exceeds "
+                f"max_checked_visible_dim={max_checked_visible_dim}"
+            ),
+            timing={"row_wall_seconds": time.perf_counter() - row_started},
         )
 
     try:
@@ -235,9 +260,12 @@ def _run_projection_row(
             status="error",
             passed=False,
             reason=f"{type(exc).__name__}: {exc}",
+            timing={"row_wall_seconds": time.perf_counter() - row_started},
         )
 
     stats = gate.backend_stats
+    row_wall_seconds = time.perf_counter() - row_started
+    backend_recorded_seconds = float(stats["setup_seconds"]) + float(stats["eval_seconds"])
     return CheckpointVisibleProjectionSweepRow(
         requested_visible_dim=requested_visible_dim,
         checked_visible_dim=checked_visible_dim,
@@ -265,6 +293,9 @@ def _run_projection_row(
         timing={
             "setup_seconds": float(stats["setup_seconds"]),
             "eval_seconds": float(stats["eval_seconds"]),
+            "backend_recorded_seconds": backend_recorded_seconds,
+            "row_wall_seconds": row_wall_seconds,
+            "untracked_seconds": max(0.0, row_wall_seconds - backend_recorded_seconds),
         },
         ring_dimension=int(backend.ring_dimension),
         batch_size=int(backend.batch_size),
@@ -329,6 +360,8 @@ def _infer_bottleneck(rows: tuple[CheckpointVisibleProjectionSweepRow, ...]) -> 
         return "none_observed"
     if first.status == "skipped" and "rotation_key_count" in first.reason:
         return "rotation_key_guard"
+    if first.status == "skipped" and "checked_visible_dim" in first.reason:
+        return "visible_dim_guard"
     if first.status == "failed":
         return "accuracy"
     if "ring dimension" in first.reason.lower() or "he standards" in first.reason.lower():

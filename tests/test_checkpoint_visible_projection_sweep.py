@@ -66,6 +66,31 @@ def test_checkpoint_visible_projection_sweep_records_rotation_guard_skip() -> No
     assert "rotation_key_count" in result.rows[0].reason
 
 
+def test_checkpoint_visible_projection_sweep_records_visible_dim_guard_skip() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(16, dtype=torch.float32).view(1, 2, 8) / 20.0
+
+    result = run_checkpoint_visible_projection_sweep(
+        state_dict,
+        layer_input,
+        visible_dim_limits=(2, None),
+        d_state=2,
+        mimo_rank=4,
+        max_checked_visible_dim=4,
+    )
+
+    assert result.passed is False
+    assert result.passed_count == 1
+    assert result.skipped_count == 1
+    assert result.max_checked_visible_dim_passed == 2
+    assert result.bottleneck == "visible_dim_guard"
+    assert result.rows[1].status == "skipped"
+    assert result.rows[1].checked_visible_dim == 8
+    assert "checked_visible_dim" in result.rows[1].reason
+    assert result.rows[1].timing is not None
+    assert "row_wall_seconds" in result.rows[1].timing
+
+
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:
     return {
         "backbone.embeddings.weight": torch.arange(88, dtype=torch.float32).view(11, 8) / 100.0,

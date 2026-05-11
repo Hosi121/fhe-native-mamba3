@@ -16,8 +16,16 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     encrypted_pre_full_layer_gate_slurm = (
         ROOT / "slurm" / "mamba_checkpoint_encrypted_pre_recurrence_full_layer_gate.sbatch"
     )
+    encrypted_pre_full_layer_gate_tracking_slurm = (
+        ROOT / "slurm" / "mamba_checkpoint_encrypted_pre_recurrence_full_layer_gate_tracking.sbatch"
+    )
     encrypted_pre_full_layer_chain_slurm = (
         ROOT / "slurm" / "mamba_checkpoint_encrypted_pre_recurrence_full_layer_chain.sbatch"
+    )
+    encrypted_pre_full_layer_chain_tracking_slurm = (
+        ROOT
+        / "slurm"
+        / "mamba_checkpoint_encrypted_pre_recurrence_full_layer_chain_tracking.sbatch"
     )
     synthetic_pre_full_layer_chain_slurm = (
         ROOT / "slurm" / "synthetic_encrypted_pre_recurrence_full_layer_chain.sbatch"
@@ -42,7 +50,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert all_layer_openfhe_slurm.exists()
     assert full_layer_gate_slurm.exists()
     assert encrypted_pre_full_layer_gate_slurm.exists()
+    assert encrypted_pre_full_layer_gate_tracking_slurm.exists()
     assert encrypted_pre_full_layer_chain_slurm.exists()
+    assert encrypted_pre_full_layer_chain_tracking_slurm.exists()
     assert synthetic_pre_full_layer_chain_slurm.exists()
     assert full_layer_sweep_slurm.exists()
     assert source_profile_slurm.exists()
@@ -114,11 +124,22 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
         encrypted_pre_full_layer_gate_text
     )
     assert "#SBATCH --mem=512G" in encrypted_pre_full_layer_gate_text
+    assert 'BACKEND="${BACKEND:-openfhe}"' in encrypted_pre_full_layer_gate_text
     assert "RMS_NORM_MODE" in encrypted_pre_full_layer_gate_text
     assert "VISIBLE_OUTPUT_SCALE" in encrypted_pre_full_layer_gate_text
     assert "SCALE_PLAN_JSON" in encrypted_pre_full_layer_gate_text
     assert "--decay-polynomial-range=" in encrypted_pre_full_layer_gate_text
+    assert "MAX_ESTIMATED_ROTATION_KEY_MEMORY_GIB" in encrypted_pre_full_layer_gate_text
     assert "pre_recurrence_depth_estimate" in encrypted_pre_full_layer_gate_text
+
+    encrypted_pre_full_layer_gate_tracking_text = (
+        encrypted_pre_full_layer_gate_tracking_slurm.read_text()
+    )
+    assert "#SBATCH --mem=8G" in encrypted_pre_full_layer_gate_tracking_text
+    assert "--backend tracking" in encrypted_pre_full_layer_gate_tracking_text
+    assert "run_checkpoint_encrypted_pre_recurrence_full_layer_gate.py" in (
+        encrypted_pre_full_layer_gate_tracking_text
+    )
 
     full_layer_sweep_text = full_layer_sweep_slurm.read_text()
     assert "run_checkpoint_full_layer_sweep.py" in full_layer_sweep_text
@@ -142,6 +163,17 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     )
     assert "inter_layer_ciphertext_handoff" in encrypted_pre_full_layer_chain_text
     assert "N_LAYERS" in encrypted_pre_full_layer_chain_text
+    assert "MAX_ESTIMATED_ROTATION_KEY_MEMORY_GIB" in encrypted_pre_full_layer_chain_text
+    assert 'BACKEND="${BACKEND:-openfhe}"' in encrypted_pre_full_layer_chain_text
+
+    encrypted_pre_full_layer_chain_tracking_text = (
+        encrypted_pre_full_layer_chain_tracking_slurm.read_text()
+    )
+    assert "#SBATCH --mem=8G" in encrypted_pre_full_layer_chain_tracking_text
+    assert "--backend tracking" in encrypted_pre_full_layer_chain_tracking_text
+    assert "run_checkpoint_encrypted_pre_recurrence_full_layer_chain.py" in (
+        encrypted_pre_full_layer_chain_tracking_text
+    )
 
     synthetic_pre_full_layer_chain_text = synthetic_pre_full_layer_chain_slurm.read_text()
     assert "run_synthetic_encrypted_pre_recurrence_full_layer_chain.py" in (
@@ -155,6 +187,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "run_checkpoint_visible_projection_sweep.py" in visible_projection_sweep_text
     assert "VISIBLE_DIM_LIMITS" in visible_projection_sweep_text
     assert "MAX_ROTATION_KEYS" in visible_projection_sweep_text
+    assert "MAX_OPENFHE_CHECKED_VISIBLE_DIM" in visible_projection_sweep_text
 
     handoff_openfhe_text = handoff_openfhe_slurm.read_text()
     assert "run_ciphertext_handoff_smoke.py" in handoff_openfhe_text
@@ -171,8 +204,12 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "SUBMIT_ENCRYPTED_PRE_RECURRENCE_FULL_LAYER_GATE" in submit_jobs_text
     assert "SUBMIT_ENCRYPTED_PRE_RECURRENCE_FULL_LAYER_CHAIN" in submit_jobs_text
     assert "mamba_checkpoint_full_layer_gate.sbatch" in submit_jobs_text
-    assert "mamba_checkpoint_encrypted_pre_recurrence_full_layer_gate.sbatch" in (submit_jobs_text)
-    assert "mamba_checkpoint_encrypted_pre_recurrence_full_layer_chain.sbatch" in (submit_jobs_text)
+    assert "mamba_checkpoint_encrypted_pre_recurrence_full_layer_gate_tracking.sbatch" in (
+        submit_jobs_text
+    )
+    assert "mamba_checkpoint_encrypted_pre_recurrence_full_layer_chain_tracking.sbatch" in (
+        submit_jobs_text
+    )
     assert "openfhe_all_layer_recurrence.sbatch" in submit_jobs_text
     assert "mamba_checkpoint_source_profile.sbatch" in submit_jobs_text
     assert "mamba_checkpoint_client_decode_smoke.sbatch" in submit_jobs_text

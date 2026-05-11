@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 
 def main() -> int:
+    started = time.perf_counter()
     import torch
     from torch.nn import functional
 
@@ -56,6 +58,11 @@ def main() -> int:
     embedding = source_state_dict[plan.embedding_key].to(dtype=torch.float32)
     initial_layer_input = functional.embedding(input_ids, embedding)
     visible_dim_limits = _parse_visible_dim_limits(args.visible_dim_limits)
+    max_checked_visible_dim = _resolve_max_checked_visible_dim(
+        backend=args.backend,
+        max_openfhe_checked_visible_dim=args.max_openfhe_checked_visible_dim,
+        allow_openfhe_full_visible_row=args.allow_openfhe_full_visible_row,
+    )
 
     def backend_factory(batch_size: int, rotations: tuple[int, ...]):
         if args.backend == "tracking":
@@ -88,6 +95,7 @@ def main() -> int:
         mimo_rank=mimo_rank,
         backend_factory=backend_factory,
         max_rotation_keys=args.max_rotation_keys or None,
+        max_checked_visible_dim=max_checked_visible_dim,
         input_mode=args.input_mode,
         readout_strategy=args.readout_strategy,
         multiplicative_depth=args.multiplicative_depth,
@@ -115,10 +123,15 @@ def main() -> int:
             "scaling_mod_size": args.scaling_mod_size,
             "ring_dimension": args.ring_dim or None,
             "max_rotation_keys": args.max_rotation_keys or None,
+            "max_checked_visible_dim": max_checked_visible_dim,
+            "allow_openfhe_full_visible_row": args.allow_openfhe_full_visible_row,
             "bootstrap_configured": args.enable_bootstrap,
         },
         "mamba_checkpoint_plan": plan.to_json_dict(max_layers=args.max_plan_layers),
         "result": result.to_json_dict(),
+        "timing": {
+            "script_wall_seconds": time.perf_counter() - started,
+        },
         "passed": result.passed,
         "bottleneck": result.bottleneck,
     }
@@ -164,6 +177,20 @@ def _parse_int_list(value: str) -> list[int]:
         raise argparse.ArgumentTypeError(msg) from exc
 
 
+def _resolve_max_checked_visible_dim(
+    *,
+    backend: str,
+    max_openfhe_checked_visible_dim: int,
+    allow_openfhe_full_visible_row: bool,
+) -> int | None:
+    if backend != "openfhe" or allow_openfhe_full_visible_row:
+        return None
+    if max_openfhe_checked_visible_dim <= 0:
+        msg = "--max-openfhe-checked-visible-dim must be positive unless full rows are allowed"
+        raise ValueError(msg)
+    return max_openfhe_checked_visible_dim
+
+
 def _parse_pair(value: str) -> tuple[int, int]:
     parts = value.split(",")
     if len(parts) != 2:
@@ -203,6 +230,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--scaling-mod-size", type=int, default=40)
     parser.add_argument("--ring-dim", type=int, default=65536)
     parser.add_argument("--max-rotation-keys", type=int, default=256)
+    parser.add_argument("--max-openfhe-checked-visible-dim", type=int, default=128)
+    parser.add_argument(
+        "--allow-openfhe-full-visible-row",
+        action="store_true",
+        help="allow OpenFHE sweep rows above --max-openfhe-checked-visible-dim",
+    )
     parser.add_argument("--atol", type=float, default=1e-6)
     parser.add_argument("--norm-eps", type=float, default=1e-5)
     parser.add_argument("--max-plan-layers", type=int, default=4)

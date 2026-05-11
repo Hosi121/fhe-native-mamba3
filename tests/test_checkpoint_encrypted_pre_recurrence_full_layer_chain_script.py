@@ -56,6 +56,8 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_chain_runs_tracking(
     assert payload["model"]["n_layers"] == 2
     assert payload["model"]["d_model"] == 8
     assert payload["ckks"]["rotation_count"] > 0
+    assert payload["ckks"]["estimated_rotation_key_memory_gib"] > 0
+    assert payload["timing"]["script_wall_seconds"] >= payload["timing"]["backend_recorded_seconds"]
     assert payload["operation_counts"]["decrypt"] == result["seq_len"]
     assert result["layer_count"] == 2
     assert result["inter_layer_ciphertext_handoff"] is True

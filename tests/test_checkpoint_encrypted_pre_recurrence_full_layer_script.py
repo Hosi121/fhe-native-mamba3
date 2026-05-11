@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 from fhe_native_mamba3 import __version__
@@ -139,6 +140,8 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_script_shrinks_plaintext
     payload = json.loads(completed.stdout)
     assert payload["passed"] is True
     assert payload["ckks"]["rotation_count"] < 100
+    assert payload["ckks"]["estimated_rotation_key_memory_gib"] > 0
+    assert payload["timing"]["script_wall_seconds"] >= payload["timing"]["backend_recorded_seconds"]
     assert payload["approximation"]["rms_norm_mode"] == "plaintext-exact"
     assert payload["approximation"]["state_decay_mode"] == "plaintext-exact"
 
@@ -174,6 +177,30 @@ def test_encrypted_pre_full_layer_rotation_inventory_uses_logical_batch_size() -
 
     assert 8 not in base_rotations
     assert 8 in encrypted_rms_rotations
+
+
+def test_encrypted_pre_full_layer_openfhe_memory_guard_rejects_large_estimate() -> None:
+    module = _load_gate_script_module()
+
+    with pytest.raises(ValueError, match="estimated OpenFHE rotation-key memory"):
+        module._enforce_openfhe_rotation_memory_guard(
+            backend="openfhe",
+            rotation_count=300,
+            estimated_rotation_key_mib=512.0,
+            max_estimated_rotation_key_memory_gib=96.0,
+            allow_high_memory_openfhe=False,
+        )
+
+    assert (
+        module._enforce_openfhe_rotation_memory_guard(
+            backend="openfhe",
+            rotation_count=300,
+            estimated_rotation_key_mib=512.0,
+            max_estimated_rotation_key_memory_gib=96.0,
+            allow_high_memory_openfhe=True,
+        )
+        == 150.0
+    )
 
 
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from typing import Any
 
 import torch
@@ -31,6 +32,7 @@ from fhe_native_mamba3.recurrence_scales import (
 
 
 def main() -> int:
+    started = time.perf_counter()
     args = _parse_args()
     state_dict, resolved_key = load_checkpoint_state_dict(
         args.checkpoint,
@@ -102,6 +104,13 @@ def main() -> int:
             f"above --max-rotation-keys={args.max_rotation_keys}"
         )
         raise ValueError(msg)
+    estimated_rotation_key_memory_gib = _enforce_openfhe_rotation_memory_guard(
+        backend=args.backend,
+        rotation_count=len(rotations),
+        estimated_rotation_key_mib=args.estimated_rotation_key_mib,
+        max_estimated_rotation_key_memory_gib=args.max_estimated_rotation_key_memory_gib,
+        allow_high_memory_openfhe=args.allow_high_memory_openfhe,
+    )
     backend = _make_backend(
         args,
         batch_size=batch_size,
@@ -131,6 +140,8 @@ def main() -> int:
         visible_output_scale=visible_output_scale,
     )
     stats = result.backend_stats
+    wall_seconds = time.perf_counter() - started
+    backend_recorded_seconds = float(stats["setup_seconds"]) + float(stats["eval_seconds"])
     payload = {
         "version": __version__,
         "stage": "mamba-checkpoint-encrypted-pre-recurrence-full-layer-gate",
@@ -172,6 +183,10 @@ def main() -> int:
             "rotations": list(rotations),
             "rotation_count": len(rotations),
             "max_rotation_keys": args.max_rotation_keys,
+            "estimated_rotation_key_mib": args.estimated_rotation_key_mib,
+            "estimated_rotation_key_memory_gib": estimated_rotation_key_memory_gib,
+            "max_estimated_rotation_key_memory_gib": args.max_estimated_rotation_key_memory_gib,
+            "allow_high_memory_openfhe": args.allow_high_memory_openfhe,
         },
         "measurement_scope": {
             "encrypted_pre_recurrence": result.pre_recurrence_ciphertext,
@@ -201,6 +216,9 @@ def main() -> int:
         "timing": {
             "setup_seconds": stats["setup_seconds"],
             "eval_seconds": stats["eval_seconds"],
+            "backend_recorded_seconds": backend_recorded_seconds,
+            "script_wall_seconds": wall_seconds,
+            "untracked_seconds": max(0.0, wall_seconds - backend_recorded_seconds),
         },
         "passed": result.passed,
         "max_abs_error": result.max_abs_error,
@@ -304,6 +322,51 @@ def _required_rotations(
     return tuple(sorted(rotations))
 
 
+def _estimated_rotation_key_memory_gib(
+    *,
+    rotation_count: int,
+    estimated_rotation_key_mib: float,
+) -> float:
+    if rotation_count < 0:
+        msg = "rotation_count must be non-negative"
+        raise ValueError(msg)
+    if estimated_rotation_key_mib <= 0:
+        msg = "estimated_rotation_key_mib must be positive"
+        raise ValueError(msg)
+    return rotation_count * estimated_rotation_key_mib / 1024.0
+
+
+def _enforce_openfhe_rotation_memory_guard(
+    *,
+    backend: str,
+    rotation_count: int,
+    estimated_rotation_key_mib: float,
+    max_estimated_rotation_key_memory_gib: float,
+    allow_high_memory_openfhe: bool,
+) -> float:
+    estimated_memory_gib = _estimated_rotation_key_memory_gib(
+        rotation_count=rotation_count,
+        estimated_rotation_key_mib=estimated_rotation_key_mib,
+    )
+    if backend != "openfhe":
+        return estimated_memory_gib
+    if max_estimated_rotation_key_memory_gib <= 0:
+        msg = "max_estimated_rotation_key_memory_gib must be positive"
+        raise ValueError(msg)
+    if (
+        estimated_memory_gib > max_estimated_rotation_key_memory_gib
+        and not allow_high_memory_openfhe
+    ):
+        msg = (
+            "estimated OpenFHE rotation-key memory is "
+            f"{estimated_memory_gib:.2f} GiB for {rotation_count} rotations, above "
+            f"--max-estimated-rotation-key-memory-gib={max_estimated_rotation_key_memory_gib:.2f}; "
+            "rerun with --allow-high-memory-openfhe only on an isolated high-memory job"
+        )
+        raise ValueError(msg)
+    return estimated_memory_gib
+
+
 def _expand_rank_rotations(*, d_state: int, rank: int) -> set[int]:
     return {
         rank_index - (rank_index * d_state + state_index)
@@ -392,6 +455,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--scaling-mod-size", type=int, default=40)
     parser.add_argument("--ring-dim", type=int, default=0)
     parser.add_argument("--max-rotation-keys", type=int, default=2048)
+    parser.add_argument(
+        "--estimated-rotation-key-mib",
+        type=float,
+        default=512.0,
+        help="conservative per-rotation OpenFHE key memory estimate used for guardrails",
+    )
+    parser.add_argument(
+        "--max-estimated-rotation-key-memory-gib",
+        type=float,
+        default=96.0,
+        help=(
+            "reject OpenFHE jobs above this estimated rotation-key memory unless explicitly allowed"
+        ),
+    )
+    parser.add_argument(
+        "--allow-high-memory-openfhe",
+        action="store_true",
+        help="allow OpenFHE jobs above the estimated rotation-key memory guard",
+    )
     parser.add_argument("--visible-dim-limit", type=int, default=8)
     parser.add_argument("--atol", type=float, default=5e-2)
     parser.add_argument("--norm-eps", type=float, default=1e-5)

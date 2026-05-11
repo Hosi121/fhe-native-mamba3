@@ -44,6 +44,8 @@ def test_checkpoint_visible_projection_sweep_script_runs_tracking_backend(tmp_pa
     assert payload["stage"] == "mamba-checkpoint-visible-projection-sweep"
     assert payload["backend"] == "tracking"
     assert payload["passed"] is True
+    assert payload["config"]["max_checked_visible_dim"] is None
+    assert payload["timing"]["script_wall_seconds"] > 0
     assert payload["result"]["row_count"] == 3
     assert payload["result"]["max_checked_visible_dim_passed"] == 8
     assert payload["result"]["bottleneck"] == "none_observed"

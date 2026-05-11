@@ -33,6 +33,8 @@ MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-16}"
 SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-40}"
 RING_DIM="${RING_DIM:-65536}"
 MAX_ROTATION_KEYS="${MAX_ROTATION_KEYS:-256}"
+MAX_OPENFHE_CHECKED_VISIBLE_DIM="${MAX_OPENFHE_CHECKED_VISIBLE_DIM:-128}"
+ALLOW_OPENFHE_FULL_VISIBLE_ROW="${ALLOW_OPENFHE_FULL_VISIBLE_ROW:-0}"
 ATOL="${ATOL:-1e-5}"
 NORM_EPS="${NORM_EPS:-1e-5}"
 ENABLE_BOOTSTRAP="${ENABLE_BOOTSTRAP:-0}"
@@ -75,6 +77,13 @@ if [[ "${ENABLE_BOOTSTRAP}" == "1" ]]; then
     openfhe_args+=(--bootstrap-slots "${BOOTSTRAP_SLOTS}")
   fi
 fi
+openfhe_guard_args=()
+if [[ "${BACKEND}" == "openfhe" ]]; then
+  openfhe_guard_args+=(--max-openfhe-checked-visible-dim "${MAX_OPENFHE_CHECKED_VISIBLE_DIM}")
+  if [[ "${ALLOW_OPENFHE_FULL_VISIBLE_ROW}" == "1" ]]; then
+    openfhe_guard_args+=(--allow-openfhe-full-visible-row)
+  fi
+fi
 
 "${PYTHON}" scripts/run_checkpoint_visible_projection_sweep.py "${CHECKPOINT}" \
   --backend "${BACKEND}" \
@@ -88,6 +97,7 @@ fi
   --multiplicative-depth "${MULTIPLICATIVE_DEPTH}" \
   --scaling-mod-size "${SCALING_MOD_SIZE}" \
   --max-rotation-keys "${MAX_ROTATION_KEYS}" \
+  "${openfhe_guard_args[@]}" \
   --atol "${ATOL}" \
   --norm-eps "${NORM_EPS}" \
   --max-plan-layers 4 \

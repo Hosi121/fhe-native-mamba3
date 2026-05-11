@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -14,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from run_checkpoint_encrypted_pre_recurrence_full_layer_gate import (  # noqa: E402
+    _enforce_openfhe_rotation_memory_guard,
     _layer_input,
     _make_backend,
     _parse_float_pair,
@@ -36,6 +38,7 @@ from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model  
 
 
 def main() -> int:
+    started = time.perf_counter()
     args = _parse_args()
     state_dict, resolved_key = load_checkpoint_state_dict(
         args.checkpoint,
@@ -102,6 +105,13 @@ def main() -> int:
             f"above --max-rotation-keys={args.max_rotation_keys}"
         )
         raise ValueError(msg)
+    estimated_rotation_key_memory_gib = _enforce_openfhe_rotation_memory_guard(
+        backend=args.backend,
+        rotation_count=len(rotations),
+        estimated_rotation_key_mib=args.estimated_rotation_key_mib,
+        max_estimated_rotation_key_memory_gib=args.max_estimated_rotation_key_memory_gib,
+        allow_high_memory_openfhe=args.allow_high_memory_openfhe,
+    )
     backend = _make_backend(
         args,
         batch_size=logical_batch_size,
@@ -129,6 +139,8 @@ def main() -> int:
         atol=args.atol,
     )
     stats = result.backend_stats
+    wall_seconds = time.perf_counter() - started
+    backend_recorded_seconds = float(stats["setup_seconds"]) + float(stats["eval_seconds"])
     payload = {
         "version": __version__,
         "repo_commit": current_git_commit(ROOT),
@@ -167,6 +179,10 @@ def main() -> int:
             "rotations": list(rotations),
             "rotation_count": len(rotations),
             "max_rotation_keys": args.max_rotation_keys,
+            "estimated_rotation_key_mib": args.estimated_rotation_key_mib,
+            "estimated_rotation_key_memory_gib": estimated_rotation_key_memory_gib,
+            "max_estimated_rotation_key_memory_gib": args.max_estimated_rotation_key_memory_gib,
+            "allow_high_memory_openfhe": args.allow_high_memory_openfhe,
         },
         "measurement_scope": {
             "encrypted_pre_recurrence": True,
@@ -197,6 +213,9 @@ def main() -> int:
         "timing": {
             "setup_seconds": stats["setup_seconds"],
             "eval_seconds": stats["eval_seconds"],
+            "backend_recorded_seconds": backend_recorded_seconds,
+            "script_wall_seconds": wall_seconds,
+            "untracked_seconds": max(0.0, wall_seconds - backend_recorded_seconds),
         },
         "passed": result.passed,
         "max_abs_error": result.max_abs_error,
@@ -263,6 +282,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--scaling-mod-size", type=int, default=40)
     parser.add_argument("--ring-dim", type=int, default=0)
     parser.add_argument("--max-rotation-keys", type=int, default=2048)
+    parser.add_argument(
+        "--estimated-rotation-key-mib",
+        type=float,
+        default=512.0,
+        help="conservative per-rotation OpenFHE key memory estimate used for guardrails",
+    )
+    parser.add_argument(
+        "--max-estimated-rotation-key-memory-gib",
+        type=float,
+        default=96.0,
+        help=(
+            "reject OpenFHE jobs above this estimated rotation-key memory unless explicitly allowed"
+        ),
+    )
+    parser.add_argument(
+        "--allow-high-memory-openfhe",
+        action="store_true",
+        help="allow OpenFHE jobs above the estimated rotation-key memory guard",
+    )
     parser.add_argument("--atol", type=float, default=5e-2)
     parser.add_argument("--norm-eps", type=float, default=1e-5)
     parser.add_argument("--polynomial-degree", type=int, default=7)
