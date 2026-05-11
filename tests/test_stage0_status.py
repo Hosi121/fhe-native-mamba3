@@ -246,6 +246,72 @@ def test_stage0_status_report_handles_missing_artifacts() -> None:
     assert any("client-side decoding smoke" in item for item in report["remaining_items"])
 
 
+def test_stage0_status_report_treats_scaled_full_gate_as_range_mitigation() -> None:
+    report = build_stage0_status_report(
+        version=__version__,
+        checkpoint_source_profile={
+            "passed": True,
+            "measurement_scope": {
+                "encrypted": False,
+                "full_model_correctness_claimed": False,
+            },
+            "result": {
+                "token_ids": [1],
+                "global_maxima": {
+                    "range_score": 200.0,
+                },
+                "layers": [
+                    {
+                        "layer_index": 0,
+                        "range_score": 200.0,
+                        "range_score_stage": "final_block_output",
+                    }
+                ],
+            },
+        },
+        range_scale_plan={
+            "scale_plan": {
+                "activation_target": 6.0,
+                "activation_tuning_layer_count": 1,
+                "layers": [
+                    {
+                        "output_scale": 0.25,
+                        "max_activation_abs": 12.0,
+                    }
+                ],
+            },
+        },
+        checkpoint_full_layer_gate={
+            "backend": "openfhe-ckks",
+            "encrypted": True,
+            "passed": True,
+            "model": {
+                "d_model": 8,
+                "checked_visible_dim": 8,
+                "visible_output_scale": 0.25,
+            },
+            "measurement_scope": {
+                "source_style_full_layer_formula": True,
+                "full_visible_output_checked": True,
+                "partial_visible_output_checked": False,
+            },
+            "result": {
+                "visible_handoff_ciphertext": True,
+                "no_intermediate_decrypt": True,
+            },
+        },
+    )
+
+    assert report["measurements"]["checkpoint_full_layer_gate"]["visible_output_scale"] == 0.25
+    assert (
+        report["next_bottleneck"]
+        == "some nonlinear inputs remain outside the polynomial target range"
+    )
+    assert not any(item["name"] == "range" for item in report["bottlenecks"])
+    assert any(item["name"] == "activation_tuning" for item in report["bottlenecks"])
+    assert any("range-scaled full-layer" in item for item in report["completed_items"])
+
+
 def test_stage0_status_report_accepts_failed_bootstrap_artifact() -> None:
     report = build_stage0_status_report(
         version=__version__,

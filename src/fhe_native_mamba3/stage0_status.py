@@ -231,6 +231,11 @@ def _checkpoint_full_layer_gate_summary(payload: dict[str, Any] | None) -> dict[
         "seq_len": model.get("seq_len", result.get("seq_len")),
         "input_mode": model.get("input_mode", result.get("input_mode")),
         "readout_strategy": model.get("readout_strategy", result.get("readout_strategy")),
+        "visible_output_scale": model.get(
+            "visible_output_scale",
+            result.get("visible_output_scale", 1.0),
+        ),
+        "scale_plan": model.get("scale_plan"),
         "source_style_full_layer_formula": bool(scope.get("source_style_full_layer_formula")),
         "full_visible_output_checked": bool(scope.get("full_visible_output_checked")),
         "partial_visible_output_checked": bool(scope.get("partial_visible_output_checked")),
@@ -242,6 +247,16 @@ def _checkpoint_full_layer_gate_summary(payload: dict[str, Any] | None) -> dict[
         "rotation_count": ckks.get("rotation_count"),
         "decrypt_count": operation_counts.get("decrypt"),
     }
+
+
+def _scaled_full_gate_validated(full_gate: dict[str, Any]) -> bool:
+    scale = full_gate.get("visible_output_scale", 1.0)
+    return (
+        bool(full_gate.get("passed"))
+        and bool(full_gate.get("full_visible_output_checked"))
+        and isinstance(scale, int | float)
+        and 0.0 < float(scale) < 1.0
+    )
 
 
 def _client_decode_smoke_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -368,6 +383,8 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
             "run source-style full-layer ciphertext gate through recurrence, skip, gate, "
             "out-projection, and residual"
         )
+    if full_gate.get("passed") and _scaled_full_gate_validated(full_gate):
+        items.append("validate range-scaled full-layer visible output ciphertext")
     if measurements["client_decode_smoke"].get("passed"):
         items.append("run real checkpoint source-style client-side decode smoke")
     if measurements["segment_samples"].get("bootstrap_enabled_sample_count"):
@@ -399,6 +416,7 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
 def _bottleneck_assessment(measurements: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     bottlenecks: list[dict[str, Any]] = []
     profile = measurements["checkpoint_source_profile"]
+    full_gate = measurements["checkpoint_full_layer_gate"]
     if profile.get("available"):
         range_score = profile.get("range_score")
         range_stage = profile.get("range_score_stage")
@@ -406,28 +424,33 @@ def _bottleneck_assessment(measurements: dict[str, dict[str, Any]]) -> list[dict
             range_target = 6.0
             if range_score > range_target:
                 residual_stage = range_stage in {"final_block_delta", "final_block_output"}
-                reason = (
-                    "source-style residual/output range exceeds the current encoded target"
-                    if residual_stage
-                    else "source-style activation range exceeds the current polynomial/FHE "
-                    "planning target"
-                )
-                next_action = (
-                    "apply the range scale plan and validate scaled recurrence/residual artifacts"
-                    if residual_stage
-                    else "run range-aware calibration or LoRA before claiming full block stability"
-                )
-                bottlenecks.append(
-                    {
-                        "name": "range",
-                        "severity": "high" if range_score > 100.0 else "medium",
-                        "value": range_score,
-                        "threshold": range_target,
-                        "stage": range_stage,
-                        "reason": reason,
-                        "next_action": next_action,
-                    }
-                )
+                if not (residual_stage and _scaled_full_gate_validated(full_gate)):
+                    reason = (
+                        "source-style residual/output range exceeds the current encoded target"
+                        if residual_stage
+                        else "source-style activation range exceeds the current polynomial/FHE "
+                        "planning target"
+                    )
+                    next_action = (
+                        "apply the range scale plan and validate scaled recurrence/residual "
+                        "artifacts"
+                        if residual_stage
+                        else (
+                            "run range-aware calibration or LoRA before claiming full block "
+                            "stability"
+                        )
+                    )
+                    bottlenecks.append(
+                        {
+                            "name": "range",
+                            "severity": "high" if range_score > 100.0 else "medium",
+                            "value": range_score,
+                            "threshold": range_target,
+                            "stage": range_stage,
+                            "reason": reason,
+                            "next_action": next_action,
+                        }
+                    )
     scale_plan = measurements["range_scale_plan"]
     activation_count = scale_plan.get("activation_tuning_layer_count")
     worst_activation = scale_plan.get("worst_activation_abs")
