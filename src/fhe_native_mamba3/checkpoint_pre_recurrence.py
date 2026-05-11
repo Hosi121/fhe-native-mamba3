@@ -85,6 +85,39 @@ class CheckpointPreRecurrenceStageGate:
         return payload
 
 
+@dataclass(frozen=True)
+class CheckpointPreRecurrenceChainGate:
+    """Correctness and cost metadata for an encrypted pre-recurrence chain."""
+
+    layer_index: int
+    d_model: int
+    d_state: int
+    mimo_rank: int
+    seq_len: int
+    backend: str
+    encrypted: bool
+    rms_norm_mode: str
+    state_decay_mode: str
+    polynomial_degree: int
+    polynomial_range: float
+    newton_iterations: int | None
+    newton_range: tuple[float, float] | None
+    decay_polynomial_degree: int | None
+    decay_polynomial_range: tuple[float, float] | None
+    stage_max_abs_errors: dict[str, float]
+    atol: float
+    passed: bool
+    depth_estimate: int
+    output_ciphertext: bool
+    backend_stats: dict[str, Any]
+    notes: tuple[str, ...] = ()
+
+    def to_json_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["notes"] = list(self.notes)
+        return payload
+
+
 def run_checkpoint_pre_recurrence_stage_gate(
     state_dict: dict[str, Tensor],
     layer_input: Tensor,
@@ -395,6 +428,281 @@ def run_checkpoint_pre_recurrence_stage_gate(
     )
 
 
+def run_checkpoint_pre_recurrence_chain_gate(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    backend: FHEBackend | None = None,
+    norm_eps: float = 1e-5,
+    polynomial_degree: int = 13,
+    polynomial_range: float = 6.0,
+    rms_norm_mode: RmsNormMode = "newton-invsqrt",
+    inv_sqrt_degree: int = 5,
+    inv_sqrt_range: tuple[float, float] = (0.01, 4.0),
+    newton_iterations: int = 2,
+    newton_range: tuple[float, float] = (0.25, 0.5),
+    state_decay_mode: StateDecayMode = "poly-composed",
+    decay_polynomial_degree: int = 5,
+    decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
+    atol: float = 1e-2,
+) -> CheckpointPreRecurrenceChainGate:
+    """Run the source-style pre-recurrence stages as one ciphertext chain."""
+
+    _validate_common_inputs(
+        layer_input=layer_input,
+        polynomial_degree=polynomial_degree,
+        polynomial_range=polynomial_range,
+        rms_norm_mode=rms_norm_mode,
+        inv_sqrt_degree=inv_sqrt_degree,
+        inv_sqrt_range=inv_sqrt_range,
+        newton_iterations=newton_iterations,
+        newton_range=newton_range,
+        state_decay_mode=state_decay_mode,
+        decay_polynomial_degree=decay_polynomial_degree,
+        decay_polynomial_range=decay_polynomial_range,
+        atol=atol,
+    )
+
+    d_model = int(layer_input.shape[-1])
+    tensors = _build_layer_tensors(
+        state_dict,
+        layer_index=layer_index,
+        d_model=d_model,
+        d_state=_resolve_positive(d_state, "d_state"),
+        mimo_rank=_resolve_positive(mimo_rank, "mimo_rank"),
+        include_gate=True,
+    )
+    stages = _run_source_dynamic_formula(layer_input, tensors, norm_eps=norm_eps)
+    resolved_d_state = int(tensors.b_static.shape[0])
+    resolved_rank = int(tensors.b_static.shape[1])
+    max_output_dim = max(d_model, resolved_rank, resolved_d_state, resolved_d_state * resolved_rank)
+    resolved_backend = backend or TrackingBackend(batch_size=max_output_dim)
+    if resolved_backend.batch_size < max_output_dim:
+        msg = (
+            "pre-recurrence chain backend batch_size is too small; need at least "
+            f"{max_output_dim}, got {resolved_backend.batch_size}"
+        )
+        raise ValueError(msg)
+    if stages.decay_by_token is None:
+        msg = f"layer {layer_index} has no token-dependent state-rank decay"
+        raise ValueError(msg)
+    if tensors.gate_weight is None:
+        msg = f"layer {layer_index} is missing gate weights"
+        raise ValueError(msg)
+
+    rms_cts, rms_depth = _rms_norm_chain_ciphertexts(
+        _token_rows(layer_input[0]),
+        weight=tensors.norm_weight,
+        eps=norm_eps,
+        backend=resolved_backend,
+        mode=rms_norm_mode,
+        inv_sqrt_degree=inv_sqrt_degree,
+        inv_sqrt_range=inv_sqrt_range,
+        newton_iterations=newton_iterations,
+        newton_range=newton_range,
+    )
+    projected_cts = _linear_sequence_from_ciphertexts(
+        rms_cts,
+        tensors.in_rank_weight,
+        bias=None,
+        backend=resolved_backend,
+    )
+    conv_pre_cts = _causal_depthwise_conv_from_ciphertexts(
+        projected_cts,
+        weight=tensors.conv1d_weight,
+        bias=tensors.conv1d_bias,
+        backend=resolved_backend,
+    )
+    conv_post_cts = tuple(
+        _silu_ciphertext(
+            ct,
+            output_dim=resolved_rank,
+            backend=resolved_backend,
+            degree=polynomial_degree,
+            approximation_range=polynomial_range,
+        )
+        for ct in conv_pre_cts
+    )
+    dt_rank = _dt_rank(tensors.dt_in_weight)
+    dynamic_b_cts = _linear_sequence_from_ciphertexts(
+        conv_post_cts,
+        tensors.x_proj_weight[dt_rank : dt_rank + resolved_d_state],
+        bias=None,
+        backend=resolved_backend,
+    )
+    dynamic_c_cts = _linear_sequence_from_ciphertexts(
+        conv_post_cts,
+        tensors.x_proj_weight[dt_rank + resolved_d_state : dt_rank + 2 * resolved_d_state],
+        bias=None,
+        backend=resolved_backend,
+    )
+    decay_cts = _state_rank_decay_from_conv_post_ciphertexts(
+        conv_post_cts,
+        stages.decay_by_token[0],
+        tensors=tensors,
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        backend=resolved_backend,
+        mode=state_decay_mode,
+        degree=decay_polynomial_degree,
+        approximation_range=decay_polynomial_range,
+    )
+    gate_pre_cts = _linear_sequence_from_ciphertexts(
+        rms_cts,
+        tensors.gate_weight,
+        bias=None,
+        backend=resolved_backend,
+    )
+    gate_cts = tuple(
+        _silu_ciphertext(
+            ct,
+            output_dim=resolved_rank,
+            backend=resolved_backend,
+            degree=polynomial_degree,
+            approximation_range=polynomial_range,
+        )
+        for ct in gate_pre_cts
+    )
+
+    gate_expected = functional.silu(
+        functional.linear(
+            stages.rms_norm_output,
+            tensors.gate_weight.to(device=layer_input.device, dtype=layer_input.dtype),
+        )
+    )[0]
+    errors = {
+        "rms_norm_output": _max_abs_rows(
+            _decrypt_rows(rms_cts, length=d_model, backend=resolved_backend),
+            _token_rows(stages.rms_norm_output[0]),
+        ),
+        "projected_rank_input": _max_abs_rows(
+            _decrypt_rows(projected_cts, length=resolved_rank, backend=resolved_backend),
+            _token_rows(stages.projected_rank_input[0]),
+        ),
+        "causal_conv_pre_silu": _max_abs_rows(
+            _decrypt_rows(conv_pre_cts, length=resolved_rank, backend=resolved_backend),
+            _token_rows(stages.causal_conv_pre_silu[0]),
+        ),
+        "causal_conv_post_silu": _max_abs_rows(
+            _decrypt_rows(conv_post_cts, length=resolved_rank, backend=resolved_backend),
+            _token_rows(stages.causal_conv_post_silu[0]),
+        ),
+        "dynamic_b": _max_abs_rows(
+            _decrypt_rows(dynamic_b_cts, length=resolved_d_state, backend=resolved_backend),
+            _token_rows(stages.dynamic_b_terms[0]),
+        ),
+        "dynamic_c": _max_abs_rows(
+            _decrypt_rows(dynamic_c_cts, length=resolved_d_state, backend=resolved_backend),
+            _token_rows(stages.dynamic_c_terms[0]),
+        ),
+        "state_rank_decay": _max_abs_rows(
+            _decrypt_rows(
+                decay_cts,
+                length=resolved_d_state * resolved_rank,
+                backend=resolved_backend,
+            ),
+            _token_rows(stages.decay_by_token[0].reshape(stages.decay_by_token.shape[1], -1)),
+        ),
+        "gate_post_silu": _max_abs_rows(
+            _decrypt_rows(gate_cts, length=resolved_rank, backend=resolved_backend),
+            _token_rows(gate_expected),
+        ),
+    }
+    decay_depth = decay_polynomial_degree if state_decay_mode == "poly-composed" else 0
+    depth = rms_depth + polynomial_degree + decay_depth
+    return CheckpointPreRecurrenceChainGate(
+        layer_index=layer_index,
+        d_model=d_model,
+        d_state=resolved_d_state,
+        mimo_rank=resolved_rank,
+        seq_len=int(layer_input.shape[1]),
+        backend=resolved_backend.stats().backend,
+        encrypted=bool(resolved_backend.stats().encrypted),
+        rms_norm_mode=rms_norm_mode,
+        state_decay_mode=state_decay_mode,
+        polynomial_degree=polynomial_degree,
+        polynomial_range=polynomial_range,
+        newton_iterations=newton_iterations if rms_norm_mode == "newton-invsqrt" else None,
+        newton_range=newton_range if rms_norm_mode == "newton-invsqrt" else None,
+        decay_polynomial_degree=(
+            decay_polynomial_degree if state_decay_mode == "poly-composed" else None
+        ),
+        decay_polynomial_range=(
+            decay_polynomial_range if state_decay_mode == "poly-composed" else None
+        ),
+        stage_max_abs_errors=errors,
+        atol=atol,
+        passed=all(error <= atol for error in errors.values()),
+        depth_estimate=depth,
+        output_ciphertext=True,
+        backend_stats=resolved_backend.stats().to_json_dict(),
+        notes=(
+            "pre-recurrence stages are chained as ciphertexts",
+            "stage outputs are decrypted only for correctness measurement",
+            "recurrence scan/readout and residual output projection are not included",
+        ),
+    )
+
+
+def _validate_common_inputs(
+    *,
+    layer_input: Tensor,
+    polynomial_degree: int,
+    polynomial_range: float,
+    rms_norm_mode: RmsNormMode,
+    inv_sqrt_degree: int,
+    inv_sqrt_range: tuple[float, float],
+    newton_iterations: int,
+    newton_range: tuple[float, float],
+    state_decay_mode: StateDecayMode,
+    decay_polynomial_degree: int,
+    decay_polynomial_range: tuple[float, float],
+    atol: float,
+) -> None:
+    if layer_input.ndim != 3:
+        msg = "layer_input must have shape [batch, seq_len, d_model]"
+        raise ValueError(msg)
+    if layer_input.shape[0] != 1:
+        msg = "pre-recurrence gates currently support batch size 1"
+        raise ValueError(msg)
+    if polynomial_degree <= 0:
+        msg = "polynomial_degree must be positive"
+        raise ValueError(msg)
+    if polynomial_range <= 0:
+        msg = "polynomial_range must be positive"
+        raise ValueError(msg)
+    if rms_norm_mode not in {"plaintext-exact", "poly-invsqrt", "newton-invsqrt"}:
+        msg = f"unsupported rms_norm_mode: {rms_norm_mode}"
+        raise ValueError(msg)
+    if inv_sqrt_degree <= 0:
+        msg = "inv_sqrt_degree must be positive"
+        raise ValueError(msg)
+    if inv_sqrt_range[0] <= 0 or inv_sqrt_range[1] <= inv_sqrt_range[0]:
+        msg = "inv_sqrt_range must be a positive increasing pair"
+        raise ValueError(msg)
+    if newton_iterations <= 0:
+        msg = "newton_iterations must be positive"
+        raise ValueError(msg)
+    if newton_range[0] <= 0 or newton_range[1] <= newton_range[0]:
+        msg = "newton_range must be a positive increasing pair"
+        raise ValueError(msg)
+    if state_decay_mode not in {"plaintext-exact", "poly-composed"}:
+        msg = f"unsupported state_decay_mode: {state_decay_mode}"
+        raise ValueError(msg)
+    if decay_polynomial_degree <= 0:
+        msg = "decay_polynomial_degree must be positive"
+        raise ValueError(msg)
+    if decay_polynomial_range[1] <= decay_polynomial_range[0]:
+        msg = "decay_polynomial_range must be an increasing pair"
+        raise ValueError(msg)
+    if atol < 0:
+        msg = "atol must be non-negative"
+        raise ValueError(msg)
+
+
 def _linear_sequence_ciphertexts(
     input_rows: tuple[tuple[float, ...], ...],
     weight: Tensor,
@@ -416,6 +724,30 @@ def _linear_sequence_ciphertexts(
             backend=backend,
         )
         for row in input_rows
+    )
+
+
+def _linear_sequence_from_ciphertexts(
+    input_cts: tuple[Any, ...],
+    weight: Tensor,
+    *,
+    bias: Tensor | None,
+    backend: FHEBackend,
+) -> tuple[Any, ...]:
+    weights = weight.detach().cpu().float()
+    bias_values = (
+        [0.0] * int(weights.shape[0])
+        if bias is None
+        else [float(value) for value in bias.detach().cpu().float().reshape(-1)]
+    )
+    return tuple(
+        _linear_ciphertext(
+            input_ct,
+            weight=weights,
+            bias=bias_values,
+            backend=backend,
+        )
+        for input_ct in input_cts
     )
 
 
@@ -442,6 +774,61 @@ def _linear_ciphertext(
                 term = backend.rotate(term, shift)
             output_ct = backend.add(output_ct, term)
     return output_ct
+
+
+def _rms_norm_chain_ciphertexts(
+    input_rows: tuple[tuple[float, ...], ...],
+    *,
+    weight: Tensor,
+    eps: float,
+    backend: FHEBackend,
+    mode: RmsNormMode,
+    inv_sqrt_degree: int,
+    inv_sqrt_range: tuple[float, float],
+    newton_iterations: int,
+    newton_range: tuple[float, float],
+) -> tuple[tuple[Any, ...], int]:
+    if mode == "poly-invsqrt":
+        return (
+            _rms_norm_sequence_ciphertexts(
+                input_rows,
+                weight=weight,
+                eps=eps,
+                backend=backend,
+                degree=inv_sqrt_degree,
+                approximation_range=inv_sqrt_range,
+            ),
+            inv_sqrt_degree + 2,
+        )
+    if mode == "newton-invsqrt":
+        return (
+            _rms_norm_newton_sequence_ciphertexts(
+                input_rows,
+                weight=weight,
+                eps=eps,
+                backend=backend,
+                iterations=newton_iterations,
+                approximation_range=newton_range,
+            ),
+            2 + max(0, 3 * (newton_iterations - 1)),
+        )
+    return (_rms_norm_plaintext_exact_ciphertexts(input_rows, weight, eps=eps, backend=backend), 0)
+
+
+def _rms_norm_plaintext_exact_ciphertexts(
+    input_rows: tuple[tuple[float, ...], ...],
+    weight: Tensor,
+    *,
+    eps: float,
+    backend: FHEBackend,
+) -> tuple[Any, ...]:
+    weights = [float(value) for value in weight.detach().cpu().float().reshape(-1)]
+    rows: list[list[float]] = []
+    for row in input_rows:
+        mean_square = sum(value * value for value in row) / len(row)
+        scale = 1.0 / np.sqrt(mean_square + eps)
+        rows.append([value * scale * weights[index] for index, value in enumerate(row)])
+    return tuple(backend.encrypt(row) for row in rows)
 
 
 def _rms_norm_sequence_ciphertexts(
@@ -624,6 +1011,36 @@ def _causal_depthwise_conv_ciphertexts(
     return tuple(output)
 
 
+def _causal_depthwise_conv_from_ciphertexts(
+    input_cts: tuple[Any, ...],
+    *,
+    weight: Tensor,
+    bias: Tensor,
+    backend: FHEBackend,
+) -> tuple[Any, ...]:
+    weights = weight.detach().cpu().float()
+    bias_values = [float(value) for value in bias.detach().cpu().float().reshape(-1)]
+    output: list[Any] = []
+    kernel = int(weights.shape[-1])
+    for token_index in range(len(input_cts)):
+        output_ct = backend.encrypt(_padded(bias_values, backend.batch_size))
+        for lag in range(kernel):
+            source_index = token_index - lag
+            if source_index < 0:
+                continue
+            coeffs = [
+                float(weights[channel, kernel - 1 - lag])
+                for channel in range(int(weights.shape[0]))
+            ]
+            term = backend.mul_plain(
+                input_cts[source_index],
+                backend.encode(_padded(coeffs, backend.batch_size)),
+            )
+            output_ct = backend.add(output_ct, term)
+        output.append(output_ct)
+    return tuple(output)
+
+
 def _silu_sequence_ciphertexts(
     input_rows: tuple[tuple[float, ...], ...],
     *,
@@ -693,6 +1110,52 @@ def _state_rank_decay_sequence_ciphertexts(
             backend=backend,
         )
         for row in input_rows
+    )
+
+
+def _state_rank_decay_from_conv_post_ciphertexts(
+    conv_post_cts: tuple[Any, ...],
+    expected_decay: Tensor,
+    *,
+    tensors: Any,
+    d_state: int,
+    mimo_rank: int,
+    backend: FHEBackend,
+    mode: StateDecayMode,
+    degree: int,
+    approximation_range: tuple[float, float],
+) -> tuple[Any, ...]:
+    if mode == "plaintext-exact":
+        return tuple(backend.encrypt(row) for row in _rank_state_decay_rows(expected_decay))
+    if (
+        tensors.dt_in_weight is None
+        or tensors.dt_proj_weight is None
+        or tensors.dt_proj_bias is None
+    ):
+        msg = "layer has no dt projection for state-rank decay"
+        raise ValueError(msg)
+    coefficient_vectors = _decay_polynomial_coefficient_vectors(
+        tensors.a_log,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        degree=degree,
+        approximation_range=approximation_range,
+    )
+    bias_values = [
+        float(value) for value in tensors.dt_proj_bias.detach().cpu().float().reshape(-1)
+    ]
+    return tuple(
+        _state_rank_decay_ciphertext(
+            conv_post_ct,
+            dt_in_weight=tensors.dt_in_weight,
+            dt_proj_weight=tensors.dt_proj_weight,
+            dt_proj_bias=bias_values,
+            coefficient_vectors=coefficient_vectors,
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            backend=backend,
+        )
+        for conv_post_ct in conv_post_cts
     )
 
 
@@ -860,6 +1323,15 @@ def _rank_state_decay_rows(tensor: Tensor) -> tuple[tuple[float, ...], ...]:
         tuple(float(value) for value in token.reshape(-1))
         for token in tensor.detach().cpu().float()
     )
+
+
+def _decrypt_rows(
+    ciphertexts: tuple[Any, ...],
+    *,
+    length: int,
+    backend: FHEBackend,
+) -> tuple[tuple[float, ...], ...]:
+    return tuple(backend.decrypt(ciphertext, length=length) for ciphertext in ciphertexts)
 
 
 def _max_abs_rows(

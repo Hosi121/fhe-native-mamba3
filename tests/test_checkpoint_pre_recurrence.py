@@ -8,6 +8,7 @@ import torch
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
     PRE_RECURRENCE_STAGES,
+    run_checkpoint_pre_recurrence_chain_gate,
     run_checkpoint_pre_recurrence_stage_gate,
 )
 
@@ -127,6 +128,39 @@ def test_pre_recurrence_state_rank_decay_poly_composed_gate_reports_approximatio
     assert gate.backend_stats["ct_pt_mul_count"] > 0
     assert gate.backend_stats["ct_ct_mul_count"] > 0
     assert gate.max_abs_error < 1e-3
+
+
+def test_pre_recurrence_chain_gate_keeps_stage_outputs_encrypted() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+
+    gate = run_checkpoint_pre_recurrence_chain_gate(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=TrackingBackend(batch_size=8),
+        polynomial_degree=13,
+        polynomial_range=6.0,
+        rms_norm_mode="newton-invsqrt",
+        newton_iterations=2,
+        newton_range=(0.20, 0.40),
+        state_decay_mode="poly-composed",
+        decay_polynomial_degree=5,
+        decay_polynomial_range=(-0.5, 0.5),
+        atol=2e-2,
+    )
+
+    assert gate.passed is True
+    assert gate.rms_norm_mode == "newton-invsqrt"
+    assert gate.state_decay_mode == "poly-composed"
+    assert gate.depth_estimate == 23
+    assert set(gate.stage_max_abs_errors) == set(PRE_RECURRENCE_STAGES)
+    assert gate.stage_max_abs_errors["rms_norm_output"] < 1e-2
+    assert gate.stage_max_abs_errors["state_rank_decay"] < 2e-2
+    assert gate.backend_stats["ct_ct_mul_count"] > 0
+    assert gate.backend_stats["rotation_count"] > 0
+    assert gate.output_ciphertext is True
 
 
 @pytest.mark.parametrize("stage", ["dynamic_b", "dynamic_c"])
