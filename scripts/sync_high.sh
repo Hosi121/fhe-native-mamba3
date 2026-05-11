@@ -18,6 +18,8 @@ rsync -az --delete \
   --exclude 'checkpoints/' \
   --exclude 'runs/' \
   --exclude 'logs/' \
+  --exclude 'slurm/*.out' \
+  --exclude 'slurm/*.err' \
   ./ "${REMOTE}:${REMOTE_DIR}/"
 
 ssh "${REMOTE}" "cd ${REMOTE_DIR} && git status --short && git rev-parse --short HEAD"
