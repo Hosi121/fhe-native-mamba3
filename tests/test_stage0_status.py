@@ -131,6 +131,33 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
             "operation_counts": {"ct_ct_mul": 26, "decrypt": 3},
             "timing": {"setup_seconds": 11.7, "eval_seconds": 0.8},
         },
+        checkpoint_full_layer_chain={
+            "backend": "tracking",
+            "encrypted": False,
+            "passed": True,
+            "max_abs_error": 0.001,
+            "model": {
+                "seq_len": 1,
+                "n_layers": 2,
+                "d_model": 768,
+                "d_state": 16,
+                "mimo_rank": 1536,
+            },
+            "ckks": {"rotation_count": 103},
+            "measurement_scope": {
+                "inter_layer_ciphertext_handoff": True,
+                "visible_handoff_ciphertext": True,
+                "full_model_correctness_claimed": False,
+                "plaintext_precomputed_stages": [],
+            },
+            "result": {
+                "layer_count": 2,
+                "no_intermediate_decrypt": True,
+                "final_decrypt_count": 1,
+            },
+            "operation_counts": {"ct_ct_mul": 52, "decrypt": 1},
+            "timing": {"eval_seconds": 0.001},
+        },
         checkpoint_pre_recurrence_layer_sweep={
             "stage": "tracking-24-layer-encrypted-pre-full-gate-summary",
             "layer_count": 24,
@@ -225,6 +252,11 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
     assert report["measurements"]["checkpoint_full_layer_gate"]["rms_norm_mode"] == "newton-invsqrt"
     assert report["measurements"]["checkpoint_full_layer_gate"]["ct_ct_mul_count"] == 26
     assert report["measurements"]["checkpoint_full_layer_gate"]["eval_seconds"] == 0.8
+    assert report["measurements"]["checkpoint_full_layer_chain"]["layer_count"] == 2
+    assert (
+        report["measurements"]["checkpoint_full_layer_chain"]["inter_layer_ciphertext_handoff"]
+        is True
+    )
     pre_sweep = report["measurements"]["checkpoint_pre_recurrence_layer_sweep"]
     assert pre_sweep["passed_count"] == 24
     assert pre_sweep["max_abs_error_layer"] == 18
@@ -241,12 +273,13 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
     assert any(item["name"] == "activation_tuning" for item in report["bottlenecks"])
     assert any(item["name"] == "decay_burst" for item in report["bottlenecks"])
     assert any(item["name"] == "decoding" for item in report["bottlenecks"])
-    assert any("true inter-layer ciphertext chain" in item for item in report["remaining_items"])
+    assert any("measured full-layer ciphertext chain" in item for item in report["remaining_items"])
     assert not any("client-side decoding smoke" in item for item in report["remaining_items"])
     assert any("scheduled bootstrap probe" in item for item in report["completed_items"])
     assert any("range scale plan" in item for item in report["completed_items"])
     assert any("ciphertext handoff smoke" in item for item in report["completed_items"])
     assert any("full-layer ciphertext gate" in item for item in report["completed_items"])
+    assert any("full-layer ciphertext handoff chain" in item for item in report["completed_items"])
     assert any("across all swept layers" in item for item in report["completed_items"])
     assert any("client-side decode smoke" in item for item in report["completed_items"])
 

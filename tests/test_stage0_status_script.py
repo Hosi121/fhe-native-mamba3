@@ -11,6 +11,7 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
     profile_json = tmp_path / "profile.json"
     scale_plan_json = tmp_path / "scale-plan.json"
     full_layer_json = tmp_path / "full-layer.json"
+    full_layer_chain_json = tmp_path / "full-layer-chain.json"
     pre_sweep_json = tmp_path / "pre-sweep.json"
     decode_json = tmp_path / "decode.json"
     output_json = tmp_path / "status.json"
@@ -96,6 +97,37 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
         ),
         encoding="utf-8",
     )
+    full_layer_chain_json.write_text(
+        json.dumps(
+            {
+                "backend": "tracking",
+                "encrypted": False,
+                "passed": True,
+                "max_abs_error": 0.001,
+                "model": {
+                    "seq_len": 1,
+                    "n_layers": 2,
+                    "d_model": 8,
+                    "d_state": 2,
+                    "mimo_rank": 4,
+                },
+                "measurement_scope": {
+                    "inter_layer_ciphertext_handoff": True,
+                    "visible_handoff_ciphertext": True,
+                    "full_model_correctness_claimed": False,
+                    "plaintext_precomputed_stages": [],
+                },
+                "result": {
+                    "layer_count": 2,
+                    "no_intermediate_decrypt": True,
+                    "final_decrypt_count": 1,
+                },
+                "ckks": {"rotation_count": 9},
+                "operation_counts": {"decrypt": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
     pre_sweep_json.write_text(
         json.dumps(
             {
@@ -135,6 +167,8 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
             str(scale_plan_json),
             "--checkpoint-full-layer-gate-json",
             str(full_layer_json),
+            "--checkpoint-full-layer-chain-json",
+            str(full_layer_chain_json),
             "--checkpoint-pre-recurrence-layer-sweep-json",
             str(pre_sweep_json),
             "--client-decode-smoke-json",
@@ -153,6 +187,10 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
     assert payload["measurements"]["checkpoint_source_profile"]["range_score_layer"] == 7
     assert payload["measurements"]["range_scale_plan"]["activation_tuning_layer_count"] == 1
     assert payload["measurements"]["checkpoint_full_layer_gate"]["rotation_count"] == 9
+    assert (
+        payload["measurements"]["checkpoint_full_layer_chain"]["inter_layer_ciphertext_handoff"]
+        is True
+    )
     assert payload["measurements"]["checkpoint_pre_recurrence_layer_sweep"]["passed_count"] == 2
     assert payload["measurements"]["client_decode_smoke"]["new_token_ids"] == [42]
     assert payload["bottlenecks"][0]["name"] == "range"

@@ -14,6 +14,7 @@ def build_stage0_status_report(
     checkpoint_source_profile: dict[str, Any] | None = None,
     range_scale_plan: dict[str, Any] | None = None,
     checkpoint_full_layer_gate: dict[str, Any] | None = None,
+    checkpoint_full_layer_chain: dict[str, Any] | None = None,
     checkpoint_pre_recurrence_layer_sweep: dict[str, Any] | None = None,
     client_decode_smoke: dict[str, Any] | None = None,
     segment_samples: dict[str, Any] | None = None,
@@ -30,6 +31,9 @@ def build_stage0_status_report(
         "range_scale_plan": _range_scale_plan_summary(range_scale_plan),
         "checkpoint_full_layer_gate": _checkpoint_full_layer_gate_summary(
             checkpoint_full_layer_gate
+        ),
+        "checkpoint_full_layer_chain": _checkpoint_full_layer_chain_summary(
+            checkpoint_full_layer_chain
         ),
         "checkpoint_pre_recurrence_layer_sweep": (
             _checkpoint_pre_recurrence_layer_sweep_summary(checkpoint_pre_recurrence_layer_sweep)
@@ -67,15 +71,22 @@ def build_stage0_status_report(
 def _remaining_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
     all_layer = measurements["all_layer_recurrence"]
     full_gate = measurements["checkpoint_full_layer_gate"]
+    full_chain = measurements["checkpoint_full_layer_chain"]
     if all_layer.get("actual_scheduled_bootstraps") and all_layer.get("bootstrap_probe_only"):
         first_item = (
-            "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
-            " using full-layer ciphertext trace"
-            if full_gate.get("visible_handoff_ciphertext")
-            else "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
+            "connect scheduled bootstrap probe to measured full-layer ciphertext chain"
+            if full_chain.get("inter_layer_ciphertext_handoff")
+            else (
+                "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
+                " using full-layer ciphertext trace"
+                if full_gate.get("visible_handoff_ciphertext")
+                else "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
+            )
         )
     elif all_layer.get("actual_scheduled_bootstraps"):
-        if full_gate.get("visible_handoff_ciphertext"):
+        if full_chain.get("inter_layer_ciphertext_handoff"):
+            first_item = "scale measured full-layer ciphertext chain to scheduled 24-layer run"
+        elif full_gate.get("visible_handoff_ciphertext"):
             first_item = (
                 "connect full-layer visible ciphertext trace to encrypted next-layer pre-recurrence"
             )
@@ -264,6 +275,43 @@ def _checkpoint_full_layer_gate_summary(payload: dict[str, Any] | None) -> dict[
     }
 
 
+def _checkpoint_full_layer_chain_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {"available": False}
+    result = payload.get("result", {})
+    scope = payload.get("measurement_scope", {})
+    model = payload.get("model", {})
+    ckks = payload.get("ckks", {})
+    operation_counts = payload.get("operation_counts", {})
+    timing = payload.get("timing", {})
+    return {
+        "available": True,
+        "backend": payload.get("backend"),
+        "encrypted": payload.get("encrypted"),
+        "passed": payload.get("passed"),
+        "max_abs_error": payload.get("max_abs_error", result.get("max_abs_error")),
+        "layer_count": model.get("n_layers", result.get("layer_count")),
+        "d_model": model.get("d_model", result.get("d_model")),
+        "d_state": model.get("d_state", result.get("d_state")),
+        "mimo_rank": model.get("mimo_rank", result.get("mimo_rank")),
+        "seq_len": model.get("seq_len", result.get("seq_len")),
+        "inter_layer_ciphertext_handoff": bool(
+            scope.get("inter_layer_ciphertext_handoff")
+            or result.get("inter_layer_ciphertext_handoff")
+        ),
+        "visible_handoff_ciphertext": bool(scope.get("visible_handoff_ciphertext")),
+        "no_intermediate_decrypt": bool(result.get("no_intermediate_decrypt")),
+        "final_decrypt_count": result.get("final_decrypt_count"),
+        "full_model_correctness_claimed": bool(scope.get("full_model_correctness_claimed")),
+        "plaintext_precomputed_stages": scope.get("plaintext_precomputed_stages", []),
+        "rotation_count": ckks.get("rotation_count"),
+        "ct_ct_mul_count": operation_counts.get("ct_ct_mul"),
+        "decrypt_count": operation_counts.get("decrypt"),
+        "setup_seconds": timing.get("setup_seconds"),
+        "eval_seconds": timing.get("eval_seconds"),
+    }
+
+
 def _scaled_full_gate_validated(full_gate: dict[str, Any]) -> bool:
     scale = full_gate.get("visible_output_scale", 1.0)
     return (
@@ -421,6 +469,15 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         "layer_count"
     ):
         items.append("validate encrypted pre-recurrence full-layer gate across all swept layers")
+    full_chain = measurements["checkpoint_full_layer_chain"]
+    if (
+        full_chain.get("passed")
+        and full_chain.get("inter_layer_ciphertext_handoff")
+        and full_chain.get("no_intermediate_decrypt")
+    ):
+        items.append(
+            "run measured full-layer ciphertext handoff chain without intermediate decrypts"
+        )
     if measurements["client_decode_smoke"].get("passed"):
         items.append("run real checkpoint source-style client-side decode smoke")
     if measurements["segment_samples"].get("bootstrap_enabled_sample_count"):
