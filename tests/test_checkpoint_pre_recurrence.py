@@ -8,6 +8,8 @@ import torch
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
     PRE_RECURRENCE_STAGES,
+    _evaluate_power_polynomial_ciphertext,
+    _evaluate_vector_power_polynomial_ciphertext,
     linear_bsgs_rotation_steps,
     run_checkpoint_pre_recurrence_chain_gate,
     run_checkpoint_pre_recurrence_ciphertexts_with_backend,
@@ -56,6 +58,42 @@ def test_linear_bsgs_rotation_inventory_shrinks_dense_projection_keys() -> None:
     assert naive_rotation_count == 770
     assert len(rotations) < 70
     assert all(rotation != 0 for rotation in rotations)
+
+
+def test_power_polynomial_evaluator_trims_tiny_coefficients() -> None:
+    backend = TinyCoefficientRejectingBackend(batch_size=3)
+    input_ct = backend.encrypt([2.0, 3.0, 4.0])
+
+    result = _evaluate_power_polynomial_ciphertext(
+        input_ct,
+        (1.0, 0.5, 1e-20),
+        output_dim=3,
+        backend=backend,
+    )
+
+    assert backend.decrypt(result, length=3) == (2.0, 2.5, 3.0)
+
+
+def test_vector_power_polynomial_evaluator_trims_tiny_coefficients() -> None:
+    backend = TinyCoefficientRejectingBackend(batch_size=3)
+    input_ct = backend.encrypt([2.0, 3.0, 4.0])
+
+    result = _evaluate_vector_power_polynomial_ciphertext(
+        input_ct,
+        ((1.0, 2.0, 3.0), (0.5, 0.25, 0.125), (1e-20, 0.0, -1e-20)),
+        output_dim=3,
+        backend=backend,
+    )
+
+    assert backend.decrypt(result, length=3) == (2.0, 2.75, 3.5)
+
+
+class TinyCoefficientRejectingBackend(TrackingBackend):
+    def encrypt(self, values: list[float] | tuple[float, ...]):
+        if any(0.0 < abs(float(value)) < 1e-14 for value in values):
+            msg = "tiny non-zero coefficient should have been trimmed"
+            raise RuntimeError(msg)
+        return super().encrypt(values)
 
 
 @pytest.mark.parametrize(

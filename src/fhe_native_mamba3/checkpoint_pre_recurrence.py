@@ -44,6 +44,8 @@ PRE_RECURRENCE_STAGES: tuple[PreRecurrenceStage, ...] = (
     "gate_post_silu",
 )
 
+POLYNOMIAL_COEFFICIENT_EPS = 1e-12
+
 
 @dataclass(frozen=True)
 class CheckpointPreRecurrenceStageGate:
@@ -1504,10 +1506,12 @@ def _evaluate_power_polynomial_ciphertext(
     output_dim: int,
     backend: FHEBackend,
 ) -> Any:
-    result = backend.encrypt([float(coefficients[-1])] * output_dim)
-    for coefficient in reversed(coefficients[:-1]):
+    sanitized = _trim_power_coefficients(coefficients)
+    result = backend.encrypt([float(sanitized[-1])] * output_dim)
+    for coefficient in reversed(sanitized[:-1]):
         result = backend.mul_ct(result, input_ct)
-        result = backend.add(result, backend.encrypt([float(coefficient)] * output_dim))
+        if coefficient:
+            result = backend.add(result, backend.encrypt([float(coefficient)] * output_dim))
     return result
 
 
@@ -1518,14 +1522,44 @@ def _evaluate_vector_power_polynomial_ciphertext(
     output_dim: int,
     backend: FHEBackend,
 ) -> Any:
-    result = backend.encrypt(_padded(coefficient_vectors[-1][:output_dim], backend.batch_size))
-    for coefficient_vector in reversed(coefficient_vectors[:-1]):
+    sanitized = _trim_vector_power_coefficients(coefficient_vectors, output_dim=output_dim)
+    result = backend.encrypt(_padded(sanitized[-1][:output_dim], backend.batch_size))
+    for coefficient_vector in reversed(sanitized[:-1]):
         result = backend.mul_ct(result, input_ct)
-        result = backend.add(
-            result,
-            backend.encrypt(_padded(coefficient_vector[:output_dim], backend.batch_size)),
-        )
+        if any(coefficient_vector[:output_dim]):
+            result = backend.add(
+                result,
+                backend.encrypt(_padded(coefficient_vector[:output_dim], backend.batch_size)),
+            )
     return result
+
+
+def _trim_power_coefficients(coefficients: tuple[float, ...]) -> tuple[float, ...]:
+    sanitized = tuple(_zero_small_coefficient(coefficient) for coefficient in coefficients)
+    while len(sanitized) > 1 and sanitized[-1] == 0.0:
+        sanitized = sanitized[:-1]
+    return sanitized
+
+
+def _trim_vector_power_coefficients(
+    coefficient_vectors: tuple[tuple[float, ...], ...],
+    *,
+    output_dim: int,
+) -> tuple[tuple[float, ...], ...]:
+    sanitized = tuple(
+        tuple(
+            _zero_small_coefficient(coefficient) for coefficient in coefficient_vector[:output_dim]
+        )
+        for coefficient_vector in coefficient_vectors
+    )
+    while len(sanitized) > 1 and not any(sanitized[-1]):
+        sanitized = sanitized[:-1]
+    return sanitized
+
+
+def _zero_small_coefficient(coefficient: float) -> float:
+    value = float(coefficient)
+    return 0.0 if abs(value) < POLYNOMIAL_COEFFICIENT_EPS else value
 
 
 @lru_cache(maxsize=32)
