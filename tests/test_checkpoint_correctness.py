@@ -6,6 +6,8 @@ import torch
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_correctness import (
     required_full_layer_visible_rotations,
+    run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate,
+    run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend,
     run_checkpoint_encrypted_pre_recurrence_full_layer_gate,
     run_checkpoint_encrypted_pre_recurrence_recurrence_gate,
     run_checkpoint_full_layer_ciphertext_gate,
@@ -227,6 +229,65 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_gate_matches_visible_out
     assert payload["pre_recurrence_ciphertext"] is True
     assert payload["pre_recurrence_depth_estimate"] == 23
     assert payload["backend_stats"]["decrypt_count"] == gate.seq_len
+
+
+def test_checkpoint_encrypted_pre_recurrence_full_layer_trace_accepts_input_ciphertexts() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+    backend = TrackingBackend(batch_size=8)
+    input_ciphertexts = tuple(
+        backend.encrypt([float(value) for value in row])
+        for row in layer_input[0].detach().cpu().tolist()
+    )
+
+    trace = run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        readout_strategy="rank-local",
+        newton_range=(0.20, 0.40),
+        input_ciphertexts=input_ciphertexts,
+    )
+    actual = tuple(
+        backend.decrypt(output_ct, length=trace.checked_visible_dim)
+        for output_ct in trace.output_ciphertexts
+    )
+
+    assert trace.decrypt_count_delta == 0
+    assert trace.plaintext_precomputed_stages == ()
+    assert trace.pre_recurrence_depth_estimate == 23
+    for actual_row, expected_row in zip(actual, trace.expected_outputs, strict=True):
+        assert actual_row == pytest.approx(expected_row, abs=5e-2)
+
+
+def test_checkpoint_encrypted_pre_recurrence_full_layer_chain_uses_ciphertext_handoff() -> None:
+    state_dict = _tiny_hf_mamba_state_dict(layer_count=2)
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+    backend = TrackingBackend(batch_size=8)
+
+    gate = run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate(
+        state_dict,
+        layer_input,
+        layer_count=2,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        readout_strategy="rank-local",
+        newton_range=(0.20, 0.40),
+        atol=1.2,
+    )
+    payload = gate.to_json_dict()
+
+    assert gate.inter_layer_ciphertext_handoff is True
+    assert gate.no_intermediate_decrypt is True
+    assert gate.final_decrypt_count == gate.seq_len
+    assert gate.plaintext_precomputed_stages == ()
+    assert gate.layer_depth_estimates == (23, 23)
+    assert gate.max_abs_error < 1.2
+    assert gate.passed is True
+    assert payload["layer_depth_estimates"] == [23, 23]
 
 
 def test_checkpoint_full_layer_ciphertext_trace_does_not_decrypt_outputs() -> None:

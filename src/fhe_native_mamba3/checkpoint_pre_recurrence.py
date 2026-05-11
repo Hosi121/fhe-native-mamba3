@@ -595,6 +595,7 @@ def run_checkpoint_pre_recurrence_ciphertexts_with_backend(
     decay_polynomial_degree: int = 5,
     decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
     atol: float = 1e-2,
+    input_ciphertexts: tuple[Any, ...] | None = None,
 ) -> CheckpointPreRecurrenceCiphertextTrace:
     """Return pre-recurrence stage ciphertexts without decrypting them."""
 
@@ -639,6 +640,13 @@ def run_checkpoint_pre_recurrence_ciphertexts_with_backend(
     if tensors.gate_weight is None:
         msg = f"layer {layer_index} is missing gate weights"
         raise ValueError(msg)
+    if input_ciphertexts is not None:
+        if len(input_ciphertexts) != int(layer_input.shape[1]):
+            msg = "input_ciphertexts length must match seq_len"
+            raise ValueError(msg)
+        if rms_norm_mode == "plaintext-exact":
+            msg = "plaintext-exact RMSNorm cannot consume input ciphertexts"
+            raise ValueError(msg)
 
     rms_cts, rms_depth = _rms_norm_chain_ciphertexts(
         _token_rows(layer_input[0]),
@@ -650,6 +658,7 @@ def run_checkpoint_pre_recurrence_ciphertexts_with_backend(
         inv_sqrt_range=inv_sqrt_range,
         newton_iterations=newton_iterations,
         newton_range=newton_range,
+        input_ciphertexts=input_ciphertexts,
     )
     projected_cts = _linear_sequence_from_ciphertexts(
         rms_cts,
@@ -1070,7 +1079,42 @@ def _rms_norm_chain_ciphertexts(
     inv_sqrt_range: tuple[float, float],
     newton_iterations: int,
     newton_range: tuple[float, float],
+    input_ciphertexts: tuple[Any, ...] | None = None,
 ) -> tuple[tuple[Any, ...], int]:
+    output_dim = len(input_rows[0]) if input_rows else 0
+    if input_ciphertexts is not None:
+        if len(input_ciphertexts) != len(input_rows):
+            msg = "input_ciphertexts length must match input rows"
+            raise ValueError(msg)
+        if mode == "plaintext-exact":
+            msg = "plaintext-exact RMSNorm cannot consume input ciphertexts"
+            raise ValueError(msg)
+        if mode == "poly-invsqrt":
+            return (
+                _rms_norm_ciphertexts_from_ciphertexts(
+                    input_ciphertexts,
+                    output_dim=output_dim,
+                    weight=weight,
+                    eps=eps,
+                    backend=backend,
+                    degree=inv_sqrt_degree,
+                    approximation_range=inv_sqrt_range,
+                ),
+                inv_sqrt_degree + 2,
+            )
+        if mode == "newton-invsqrt":
+            return (
+                _rms_norm_newton_sequence_from_ciphertexts(
+                    input_ciphertexts,
+                    output_dim=output_dim,
+                    weight=weight,
+                    eps=eps,
+                    backend=backend,
+                    iterations=newton_iterations,
+                    approximation_range=newton_range,
+                ),
+                2 + max(0, 3 * (newton_iterations - 1)),
+            )
     if mode == "poly-invsqrt":
         return (
             _rms_norm_sequence_ciphertexts(
@@ -1160,6 +1204,57 @@ def _rms_norm_newton_sequence_ciphertexts(
             iterations=iterations,
         )
         for row in input_rows
+    )
+
+
+def _rms_norm_ciphertexts_from_ciphertexts(
+    input_cts: tuple[Any, ...],
+    *,
+    output_dim: int,
+    weight: Tensor,
+    eps: float,
+    backend: FHEBackend,
+    degree: int,
+    approximation_range: tuple[float, float],
+) -> tuple[Any, ...]:
+    weights = [float(value) for value in weight.detach().cpu().float().reshape(-1)]
+    return tuple(
+        _rms_norm_ciphertext(
+            input_ct,
+            output_dim=output_dim,
+            weight=weights,
+            eps=eps,
+            backend=backend,
+            degree=degree,
+            approximation_range=approximation_range,
+        )
+        for input_ct in input_cts
+    )
+
+
+def _rms_norm_newton_sequence_from_ciphertexts(
+    input_cts: tuple[Any, ...],
+    *,
+    output_dim: int,
+    weight: Tensor,
+    eps: float,
+    backend: FHEBackend,
+    iterations: int,
+    approximation_range: tuple[float, float],
+) -> tuple[Any, ...]:
+    weights = [float(value) for value in weight.detach().cpu().float().reshape(-1)]
+    initial = 1.0 / np.sqrt(0.5 * (approximation_range[0] + approximation_range[1]))
+    return tuple(
+        _rms_norm_newton_ciphertext(
+            input_ct,
+            output_dim=output_dim,
+            weight=weights,
+            eps=eps,
+            backend=backend,
+            initial=float(initial),
+            iterations=iterations,
+        )
+        for input_ct in input_cts
     )
 
 
