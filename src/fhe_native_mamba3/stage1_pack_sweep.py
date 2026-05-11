@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -39,6 +39,9 @@ class Stage1PackSweepRow:
     scan_ciphertext_count: int
     tokens_per_scan_ciphertext: int
     estimated_bootstrap_amortization: float
+    bootstrap_latency_sec: float | None
+    amortized_bootstrap_latency_sec: float | None
+    bootstrap_latency_source: str | None
     feasible_under_key_budget: bool | None
     operation_counts: dict[str, int]
 
@@ -60,6 +63,8 @@ class Stage1PackSweepResult:
     slot_count: int
     readout_strategy: ReadoutStrategy
     key_size_mb: float
+    bootstrap_latency_available: bool
+    bootstrap_latency_source: str | None
     skipped_pack_sizes: tuple[int, ...]
     rows: tuple[Stage1PackSweepRow, ...]
     recommended_pack_size: int
@@ -77,6 +82,8 @@ class Stage1PackSweepResult:
             "slot_count": self.slot_count,
             "readout_strategy": self.readout_strategy,
             "key_size_mb": self.key_size_mb,
+            "bootstrap_latency_available": self.bootstrap_latency_available,
+            "bootstrap_latency_source": self.bootstrap_latency_source,
             "skipped_pack_sizes": self.skipped_pack_sizes,
             "recommended_pack_size": self.recommended_pack_size,
             "recommended_reason": self.recommended_reason,
@@ -99,6 +106,8 @@ def run_stage1_pack_sweep(
     readout_strategy: ReadoutStrategy = "rank-local",
     key_size_mb: float = 200.0,
     max_key_memory_gib: float | None = 80.0,
+    bootstrap_latency_payload: Mapping[str, Any] | None = None,
+    bootstrap_latency_source: str | None = None,
     atol: float = 1e-10,
 ) -> Stage1PackSweepResult:
     """Run tiny-block measurements and attach full Stage 1 inventory estimates."""
@@ -106,6 +115,7 @@ def run_stage1_pack_sweep(
     if not candidate_pack_sizes:
         msg = "candidate_pack_sizes must not be empty"
         raise ValueError(msg)
+    bootstrap_latency_sec = _bootstrap_latency_seconds(bootstrap_latency_payload)
     plan = build_stage1_plan(
         head_count=head_count,
         d_state=d_state,
@@ -136,6 +146,8 @@ def run_stage1_pack_sweep(
             d_state=d_state,
             seq_len=seq_len,
             slot_count=slot_count,
+            bootstrap_latency_sec=bootstrap_latency_sec,
+            bootstrap_latency_source=bootstrap_latency_source,
             atol=atol,
         )
         for pack_size in measured_pack_sizes
@@ -150,6 +162,8 @@ def run_stage1_pack_sweep(
             "real_checkpoint_full_chain": False,
             "backend": backend_name,
             "encrypted": encrypted,
+            "bootstrap_latency_available": bootstrap_latency_sec is not None,
+            "bootstrap_latency_source": bootstrap_latency_source,
             "claim": (
                 "Rows combine tiny MIMO/SSD block execution with full Stage 1 "
                 "rotation-key inventory estimates; they are layout evidence, not "
@@ -164,6 +178,8 @@ def run_stage1_pack_sweep(
         slot_count=slot_count,
         readout_strategy=readout_strategy,
         key_size_mb=key_size_mb,
+        bootstrap_latency_available=bootstrap_latency_sec is not None,
+        bootstrap_latency_source=bootstrap_latency_source,
         skipped_pack_sizes=plan.skipped_pack_sizes,
         rows=rows,
         recommended_pack_size=recommended.pack_size,
@@ -184,6 +200,8 @@ def _run_pack_sweep_row(
     d_state: int,
     seq_len: int,
     slot_count: int,
+    bootstrap_latency_sec: float | None,
+    bootstrap_latency_source: str | None,
     atol: float,
 ) -> Stage1PackSweepRow:
     rotations = required_tiny_mimo_block_rotations(
@@ -225,6 +243,15 @@ def _run_pack_sweep_row(
         scan_ciphertext_count=candidate.scan_ciphertext_count,
         tokens_per_scan_ciphertext=candidate.tokens_per_scan_ciphertext,
         estimated_bootstrap_amortization=candidate.estimated_bootstrap_amortization,
+        bootstrap_latency_sec=bootstrap_latency_sec,
+        amortized_bootstrap_latency_sec=(
+            None
+            if bootstrap_latency_sec is None
+            else bootstrap_latency_sec / candidate.estimated_bootstrap_amortization
+        ),
+        bootstrap_latency_source=(
+            bootstrap_latency_source if bootstrap_latency_sec is not None else None
+        ),
         feasible_under_key_budget=candidate.feasible_under_key_budget,
         operation_counts={
             "ct_ct_mul": int(stats["ct_ct_mul_count"]),
@@ -250,6 +277,18 @@ def _row_sort_key(row: Stage1PackSweepRow) -> tuple[Any, ...]:
         -row.estimated_bootstrap_amortization,
         row.pack_size,
     )
+
+
+def _bootstrap_latency_seconds(payload: Mapping[str, Any] | None) -> float | None:
+    if payload is None:
+        return None
+    if not payload.get("available"):
+        return None
+    for key in ("mean_latency_sec", "median_latency_sec", "min_latency_sec"):
+        value = payload.get(key)
+        if value is not None:
+            return float(value)
+    return None
 
 
 __all__ = [

@@ -51,6 +51,37 @@ def test_stage1_pack_sweep_measures_pack_candidates() -> None:
     assert result.to_json_dict()["measurement_scope"]["full_inventory_estimate"] is True
 
 
+def test_stage1_pack_sweep_attaches_bootstrap_latency_estimates() -> None:
+    result = run_stage1_pack_sweep(
+        backend_factory=lambda batch_size, _rotations: TrackingBackend(batch_size=batch_size),
+        backend_name="tracking",
+        encrypted=False,
+        head_count=4,
+        d_state=2,
+        d_model=16,
+        seq_len=5,
+        scan_len=8,
+        slot_count=16,
+        candidate_pack_sizes=(2, 4),
+        key_size_mb=1.0,
+        max_key_memory_gib=1.0,
+        bootstrap_latency_payload={
+            "stage": "openfhe-bootstrap-latency",
+            "available": True,
+            "mean_latency_sec": 8.0,
+        },
+        bootstrap_latency_source="bootstrap.json",
+        atol=1e-12,
+    )
+
+    assert result.bootstrap_latency_available is True
+    assert result.bootstrap_latency_source == "bootstrap.json"
+    assert result.rows[0].bootstrap_latency_sec == 8.0
+    assert result.rows[0].amortized_bootstrap_latency_sec == pytest.approx(4.0)
+    assert result.rows[1].amortized_bootstrap_latency_sec == pytest.approx(2.0)
+    assert result.to_json_dict()["measurement_scope"]["bootstrap_latency_available"] is True
+
+
 def test_stage1_pack_sweep_skips_infeasible_pack_candidates() -> None:
     result = run_stage1_pack_sweep(
         backend_factory=lambda batch_size, _rotations: TrackingBackend(batch_size=batch_size),

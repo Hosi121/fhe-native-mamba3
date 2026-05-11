@@ -65,6 +65,9 @@ Current partial implementation:
 - `scripts/run_stage1_pack_sweep.py` runs pack-size/readout layout sweeps for
   4/8/16/32 style candidates, including rotation-key count, key-memory estimate,
   tiny-block latency/error, and skipped infeasible pack sizes.
+- When passed a bootstrap-latency JSON, the pack sweep emits per-row amortized
+  bootstrap latency estimates. This is an accounting attachment, not a measured
+  FIDESlib/GPU bootstrap claim.
 
 ## Stage 2
 

@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.artifact_validation import current_git_commit
@@ -21,6 +23,7 @@ def main() -> int:
     args = _parse_args()
     backend_factory, backend_name, encrypted = _make_backend_factory(args)
     execution_slot_count = _execution_slot_count(args)
+    bootstrap_latency_payload = _read_optional_json(args.bootstrap_latency_json)
     result = run_stage1_pack_sweep(
         backend_factory=backend_factory,
         backend_name=backend_name,
@@ -35,6 +38,8 @@ def main() -> int:
         readout_strategy=args.readout_strategy,
         key_size_mb=args.key_size_mb,
         max_key_memory_gib=args.max_key_memory_gib,
+        bootstrap_latency_payload=bootstrap_latency_payload,
+        bootstrap_latency_source=args.bootstrap_latency_json or None,
         atol=args.atol,
     )
     payload = {
@@ -88,6 +93,12 @@ def _execution_slot_count(args: argparse.Namespace) -> int:
     return ckks_batch_size_for_slots(args.slot_count)
 
 
+def _read_optional_json(path: str) -> dict[str, Any] | None:
+    if not path:
+        return None
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
 def _parse_int_tuple(value: str) -> tuple[int, ...]:
     try:
         parsed = tuple(int(part.strip()) for part in value.split(",") if part.strip())
@@ -117,6 +128,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--key-size-mb", type=float, default=200.0)
     parser.add_argument("--max-key-memory-gib", type=float, default=80.0)
+    parser.add_argument("--bootstrap-latency-json", default="")
     parser.add_argument("--multiplicative-depth", type=int, default=16)
     parser.add_argument("--scaling-mod-size", type=int, default=50)
     parser.add_argument("--ring-dimension", type=int, default=65536)

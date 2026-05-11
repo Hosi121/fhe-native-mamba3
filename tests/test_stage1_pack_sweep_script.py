@@ -12,6 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_stage1_pack_sweep_script_runs_tracking(tmp_path) -> None:
     output_json = tmp_path / "stage1-pack-sweep.json"
+    bootstrap_json = tmp_path / "bootstrap.json"
+    bootstrap_json.write_text(
+        json.dumps({"available": True, "mean_latency_sec": 6.0}),
+        encoding="utf-8",
+    )
 
     completed = subprocess.run(
         [
@@ -37,6 +42,8 @@ def test_stage1_pack_sweep_script_runs_tracking(tmp_path) -> None:
             "1",
             "--max-key-memory-gib",
             "1",
+            "--bootstrap-latency-json",
+            str(bootstrap_json),
             "--output-json",
             str(output_json),
         ],
@@ -51,8 +58,10 @@ def test_stage1_pack_sweep_script_runs_tracking(tmp_path) -> None:
     assert payload["stage"] == "stage1-head-pack-readout-sweep"
     assert payload["passed"] is True
     assert payload["measurement_scope"]["tiny_block_execution"] is True
+    assert payload["measurement_scope"]["bootstrap_latency_available"] is True
     assert [row["pack_size"] for row in payload["rows"]] == [2, 4]
     assert all(row["max_abs_error"] < 1e-10 for row in payload["rows"])
+    assert payload["rows"][0]["amortized_bootstrap_latency_sec"] == 3.0
 
 
 def test_stage1_pack_sweep_script_normalizes_openfhe_slot_count() -> None:

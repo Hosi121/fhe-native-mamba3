@@ -28,6 +28,7 @@ CANDIDATE_PACK_SIZES="${CANDIDATE_PACK_SIZES:-4,8,16,32}"
 READOUT_STRATEGY="${READOUT_STRATEGY:-rank-local}"
 KEY_SIZE_MB="${KEY_SIZE_MB:-200}"
 MAX_KEY_MEMORY_GIB="${MAX_KEY_MEMORY_GIB:-80}"
+BOOTSTRAP_LATENCY_JSON="${BOOTSTRAP_LATENCY_JSON:-}"
 MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-16}"
 SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-50}"
 RING_DIMENSION="${RING_DIMENSION:-65536}"
@@ -84,6 +85,11 @@ PY
 fi
 
 section "Run Stage 1 pack sweep"
+bootstrap_latency_args=()
+if [[ -n "${BOOTSTRAP_LATENCY_JSON}" ]]; then
+  bootstrap_latency_args=(--bootstrap-latency-json "${BOOTSTRAP_LATENCY_JSON}")
+fi
+
 "${PYTHON}" scripts/run_stage1_pack_sweep.py \
   --backend "${BACKEND}" \
   --head-count "${HEAD_COUNT}" \
@@ -96,6 +102,7 @@ section "Run Stage 1 pack sweep"
   --readout-strategy "${READOUT_STRATEGY}" \
   --key-size-mb "${KEY_SIZE_MB}" \
   --max-key-memory-gib "${MAX_KEY_MEMORY_GIB}" \
+  "${bootstrap_latency_args[@]}" \
   --multiplicative-depth "${MULTIPLICATIVE_DEPTH}" \
   --scaling-mod-size "${SCALING_MOD_SIZE}" \
   --ring-dimension "${RING_DIMENSION}" \
@@ -126,6 +133,9 @@ summary = {
                 "full_inventory_rotation_key_count"
             ],
             "estimated_key_memory_gib": row["estimated_key_memory_gib"],
+            "amortized_bootstrap_latency_sec": row[
+                "amortized_bootstrap_latency_sec"
+            ],
         }
         for row in payload["rows"]
     ],
