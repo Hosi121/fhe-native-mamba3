@@ -9,13 +9,17 @@ from typing import Any
 import torch
 
 from fhe_native_mamba3 import __version__
+from fhe_native_mamba3.backends.openfhe import ckks_batch_size_for_slots
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
 from fhe_native_mamba3.checkpoint_correctness import (
     required_full_layer_visible_rotations,
     run_checkpoint_encrypted_pre_recurrence_full_layer_gate,
 )
-from fhe_native_mamba3.checkpoint_pre_recurrence import linear_bsgs_rotation_steps
+from fhe_native_mamba3.checkpoint_pre_recurrence import (
+    linear_bsgs_rotation_steps,
+    rms_norm_rotation_steps,
+)
 from fhe_native_mamba3.cli_support import emit_json_payload, parse_int_list
 from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model
 from fhe_native_mamba3.mamba_reference import run_mamba_source_layer
@@ -267,8 +271,12 @@ def _required_rotations(
     rotations.update(_expand_rank_rotations(d_state=d_state, rank=mimo_rank))
     rotations.update(_expand_state_rotations(d_state=d_state, rank=mimo_rank))
     if rms_norm_mode != "plaintext-exact":
-        rotations.update(range(1, d_model))
-        rotations.update(range(1 - d_model, 0))
+        rotations.update(
+            rms_norm_rotation_steps(
+                output_dim=d_model,
+                batch_size=ckks_batch_size_for_slots(d_model),
+            )
+        )
     if state_decay_mode == "poly-composed":
         resolved_dt_rank = dt_rank if dt_rank is not None else mimo_rank
         rotations.update(

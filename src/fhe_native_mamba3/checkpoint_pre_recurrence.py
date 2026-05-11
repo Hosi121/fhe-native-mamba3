@@ -1239,6 +1239,17 @@ def _mean_square_ciphertext(
     backend: FHEBackend,
 ) -> Any:
     square_ct = backend.mul_ct(input_ct, input_ct)
+    if _is_power_of_two(backend.batch_size) and backend.batch_size >= output_dim:
+        total_ct = square_ct
+        for step in _power_two_rotation_steps(backend.batch_size):
+            total_ct = backend.add(total_ct, backend.rotate(total_ct, step))
+        mask = [0.0] * backend.batch_size
+        mask[0] = 1.0 / output_dim
+        return backend.add(
+            backend.mul_plain(total_ct, backend.encode(mask)),
+            backend.encrypt([eps]),
+        )
+
     mean_square_ct = backend.encrypt([eps])
     mean_scale = 1.0 / output_dim
     for slot in range(output_dim):
@@ -1257,11 +1268,46 @@ def _broadcast_slot0(
     output_dim: int,
     backend: FHEBackend,
 ) -> Any:
+    if _is_power_of_two(backend.batch_size) and backend.batch_size >= output_dim:
+        broadcast = ciphertext
+        for step in _power_two_rotation_steps(backend.batch_size):
+            broadcast = backend.add(broadcast, backend.rotate(broadcast, -step))
+        return broadcast
+
     broadcast = backend.encrypt([0.0] * backend.batch_size)
     for slot in range(output_dim):
         term = ciphertext if slot == 0 else backend.rotate(ciphertext, -slot)
         broadcast = backend.add(broadcast, term)
     return broadcast
+
+
+def rms_norm_rotation_steps(*, output_dim: int, batch_size: int | None = None) -> tuple[int, ...]:
+    """Rotation-key inventory for encrypted RMSNorm reduction and broadcast."""
+
+    if output_dim <= 0:
+        msg = "output_dim must be positive"
+        raise ValueError(msg)
+    resolved_batch_size = 1 << (output_dim - 1).bit_length() if batch_size is None else batch_size
+    if not _is_power_of_two(resolved_batch_size) or resolved_batch_size < output_dim:
+        rotations = set(range(1, output_dim))
+        rotations.update(range(1 - output_dim, 0))
+        return tuple(sorted(rotations))
+    steps = set(_power_two_rotation_steps(resolved_batch_size))
+    steps.update(-step for step in _power_two_rotation_steps(resolved_batch_size))
+    return tuple(sorted(steps))
+
+
+def _power_two_rotation_steps(batch_size: int) -> tuple[int, ...]:
+    steps = []
+    step = 1
+    while step < batch_size:
+        steps.append(step)
+        step *= 2
+    return tuple(steps)
+
+
+def _is_power_of_two(value: int) -> bool:
+    return value > 0 and value & (value - 1) == 0
 
 
 def _causal_depthwise_conv_ciphertexts(

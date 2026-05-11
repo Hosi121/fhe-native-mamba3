@@ -8,9 +8,12 @@ import torch
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
     PRE_RECURRENCE_STAGES,
+    _broadcast_slot0,
     _evaluate_power_polynomial_ciphertext,
     _evaluate_vector_power_polynomial_ciphertext,
+    _mean_square_ciphertext,
     linear_bsgs_rotation_steps,
+    rms_norm_rotation_steps,
     run_checkpoint_pre_recurrence_chain_gate,
     run_checkpoint_pre_recurrence_ciphertexts_with_backend,
     run_checkpoint_pre_recurrence_stage_gate,
@@ -86,6 +89,32 @@ def test_vector_power_polynomial_evaluator_trims_tiny_coefficients() -> None:
     )
 
     assert backend.decrypt(result, length=3) == (2.0, 2.75, 3.5)
+
+
+def test_rms_norm_rotation_inventory_uses_log_steps_for_power_two_batch() -> None:
+    rotations = rms_norm_rotation_steps(output_dim=768, batch_size=1024)
+
+    assert len(rotations) == 20
+    assert 512 in rotations
+    assert -512 in rotations
+    assert 767 not in rotations
+
+
+def test_mean_square_and_broadcast_use_log_step_rotations_on_power_two_batch() -> None:
+    backend = TrackingBackend(batch_size=8)
+    input_ct = backend.encrypt([1.0, 2.0, 3.0, 4.0, 5.0])
+
+    mean_square_ct = _mean_square_ciphertext(
+        input_ct,
+        output_dim=5,
+        eps=0.1,
+        backend=backend,
+    )
+    broadcast_ct = _broadcast_slot0(mean_square_ct, output_dim=5, backend=backend)
+
+    assert backend.decrypt(mean_square_ct, length=5) == pytest.approx((11.1, 0.0, 0.0, 0.0, 0.0))
+    assert backend.decrypt(broadcast_ct, length=5) == pytest.approx((11.1, 11.1, 11.1, 11.1, 11.1))
+    assert backend.stats().rotation_count == 6
 
 
 class TinyCoefficientRejectingBackend(TrackingBackend):
