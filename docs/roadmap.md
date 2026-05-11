@@ -49,6 +49,14 @@ Required sweeps:
 - rotation key count and memory estimate,
 - bootstrap availability and cost once FIDESlib is working.
 
+Current partial implementation:
+
+- `scripts/build_stage1_plan.py` emits a non-benchmark planning artifact that
+  combines SSD prefix-scan metadata, head/rank packing candidates, rotation-key
+  inventory, and explicit dependencies.
+- The plan can consume a Stage 0 source-profile JSON for sparse range/decay
+  grouping hints, but it does not claim encrypted speedup.
+
 ## Stage 2
 
 Goal: sketch, lazy bootstrap, and range-aware training.
