@@ -19,6 +19,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     encrypted_pre_full_layer_chain_slurm = (
         ROOT / "slurm" / "mamba_checkpoint_encrypted_pre_recurrence_full_layer_chain.sbatch"
     )
+    synthetic_pre_full_layer_chain_slurm = (
+        ROOT / "slurm" / "synthetic_encrypted_pre_recurrence_full_layer_chain.sbatch"
+    )
     full_layer_sweep_slurm = ROOT / "slurm" / "mamba_checkpoint_full_layer_sweep.sbatch"
     source_profile_slurm = ROOT / "slurm" / "mamba_checkpoint_source_profile.sbatch"
     client_decode_slurm = ROOT / "slurm" / "mamba_checkpoint_client_decode_smoke.sbatch"
@@ -40,6 +43,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert full_layer_gate_slurm.exists()
     assert encrypted_pre_full_layer_gate_slurm.exists()
     assert encrypted_pre_full_layer_chain_slurm.exists()
+    assert synthetic_pre_full_layer_chain_slurm.exists()
     assert full_layer_sweep_slurm.exists()
     assert source_profile_slurm.exists()
     assert client_decode_slurm.exists()
@@ -136,6 +140,13 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     )
     assert "inter_layer_ciphertext_handoff" in encrypted_pre_full_layer_chain_text
     assert "N_LAYERS" in encrypted_pre_full_layer_chain_text
+
+    synthetic_pre_full_layer_chain_text = synthetic_pre_full_layer_chain_slurm.read_text()
+    assert "run_synthetic_encrypted_pre_recurrence_full_layer_chain.py" in (
+        synthetic_pre_full_layer_chain_text
+    )
+    assert "reduced_proxy" in synthetic_pre_full_layer_chain_text
+    assert "D_MODEL" in synthetic_pre_full_layer_chain_text
 
     visible_projection_sweep_text = visible_projection_sweep_slurm.read_text()
     assert "run_checkpoint_visible_projection_sweep.py" in visible_projection_sweep_text
