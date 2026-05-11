@@ -416,6 +416,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_correctness",
         "run_checkpoint_encrypted_pre_recurrence_recurrence_gate",
     ),
+    "run_checkpoint_encrypted_pre_recurrence_full_layer_gate": (
+        "fhe_native_mamba3.checkpoint_correctness",
+        "run_checkpoint_encrypted_pre_recurrence_full_layer_gate",
+    ),
     "run_checkpoint_full_layer_ciphertext_gate": (
         "fhe_native_mamba3.checkpoint_correctness",
         "run_checkpoint_full_layer_ciphertext_gate",
@@ -624,6 +628,7 @@ __all__ = [
     "range_loss",
     "required_full_layer_visible_rotations",
     "run_checkpoint_client_decode_smoke",
+    "run_checkpoint_encrypted_pre_recurrence_full_layer_gate",
     "run_checkpoint_encrypted_pre_recurrence_recurrence_gate",
     "run_checkpoint_full_layer_ciphertext_gate",
     "run_checkpoint_full_layer_ciphertext_sweep",
