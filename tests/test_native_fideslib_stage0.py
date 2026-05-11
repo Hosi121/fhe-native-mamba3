@@ -147,6 +147,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     )
     assert "reduced_proxy" in synthetic_pre_full_layer_chain_text
     assert "D_MODEL" in synthetic_pre_full_layer_chain_text
+    assert "WEIGHT_SCALE" in synthetic_pre_full_layer_chain_text
 
     visible_projection_sweep_text = visible_projection_sweep_slurm.read_text()
     assert "run_checkpoint_visible_projection_sweep.py" in visible_projection_sweep_text

@@ -24,8 +24,12 @@ SOURCE_INNER_DIM="${SOURCE_INNER_DIM:-6}"
 D_STATE="${D_STATE:-2}"
 MIMO_RANK="${MIMO_RANK:-4}"
 DT_RANK="${DT_RANK:-2}"
+WEIGHT_SCALE="${WEIGHT_SCALE:-0.001}"
+LAYER_OFFSET_SCALE="${LAYER_OFFSET_SCALE:-0.0001}"
 N_LAYERS="${N_LAYERS:-2}"
 SEQ_LEN="${SEQ_LEN:-1}"
+INPUT_LOW="${INPUT_LOW:-0.05}"
+INPUT_HIGH="${INPUT_HIGH:-0.08}"
 READOUT_STRATEGY="${READOUT_STRATEGY:-rank-local}"
 MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-28}"
 SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-40}"
@@ -104,8 +108,12 @@ fi
   --d-state "${D_STATE}" \
   --mimo-rank "${MIMO_RANK}" \
   --dt-rank "${DT_RANK}" \
+  --weight-scale "${WEIGHT_SCALE}" \
+  --layer-offset-scale "${LAYER_OFFSET_SCALE}" \
   --n-layers "${N_LAYERS}" \
   --seq-len "${SEQ_LEN}" \
+  --input-low "${INPUT_LOW}" \
+  --input-high "${INPUT_HIGH}" \
   --readout-strategy "${READOUT_STRATEGY}" \
   --multiplicative-depth "${MULTIPLICATIVE_DEPTH}" \
   --scaling-mod-size "${SCALING_MOD_SIZE}" \

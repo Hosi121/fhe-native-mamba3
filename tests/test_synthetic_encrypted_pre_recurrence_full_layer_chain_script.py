@@ -26,10 +26,18 @@ def test_synthetic_encrypted_pre_recurrence_full_layer_chain_runs_tracking(tmp_p
             "4",
             "--dt-rank",
             "2",
+            "--weight-scale",
+            "0.001",
+            "--layer-offset-scale",
+            "0.0001",
             "--n-layers",
             "2",
             "--seq-len",
             "1",
+            "--input-low",
+            "0.05",
+            "--input-high",
+            "0.08",
             "--atol",
             "1.2",
             "--output-json",
@@ -48,6 +56,8 @@ def test_synthetic_encrypted_pre_recurrence_full_layer_chain_runs_tracking(tmp_p
     assert payload["passed"] is True
     assert payload["model"]["d_model"] == 8
     assert payload["model"]["n_layers"] == 2
+    assert payload["model"]["weight_scale"] == 0.001
+    assert payload["model"]["layer_offset_scale"] == 0.0001
     assert payload["measurement_scope"]["reduced_proxy"] is True
     assert payload["measurement_scope"]["real_checkpoint"] is False
     assert payload["measurement_scope"]["inter_layer_ciphertext_handoff"] is True

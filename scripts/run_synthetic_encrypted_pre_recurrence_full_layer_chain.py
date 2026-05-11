@@ -44,6 +44,8 @@ def main() -> int:
         source_inner_dim=args.source_inner_dim,
         d_state=args.d_state,
         dt_rank=args.dt_rank,
+        weight_scale=args.weight_scale,
+        layer_offset_scale=args.layer_offset_scale,
     )
     layer_input = torch.linspace(
         args.input_low,
@@ -108,6 +110,8 @@ def main() -> int:
             "d_state": result.d_state,
             "mimo_rank": result.mimo_rank,
             "dt_rank": args.dt_rank,
+            "weight_scale": args.weight_scale,
+            "layer_offset_scale": args.layer_offset_scale,
             "readout_strategy": args.readout_strategy,
         },
         "approximation": {
@@ -175,6 +179,8 @@ def _synthetic_hf_mamba_state_dict(
     source_inner_dim: int,
     d_state: int,
     dt_rank: int,
+    weight_scale: float,
+    layer_offset_scale: float,
 ) -> dict[str, torch.Tensor]:
     state_dict: dict[str, torch.Tensor] = {
         "backbone.embeddings.weight": torch.arange(
@@ -184,7 +190,7 @@ def _synthetic_hf_mamba_state_dict(
         / 100.0,
     }
     for layer_index in range(layer_count):
-        offset = 0.01 * layer_index
+        offset = layer_offset_scale * layer_index
         prefix = f"backbone.layers.{layer_index}"
         x_proj_rows = dt_rank + 2 * d_state
         state_dict.update(
@@ -194,41 +200,42 @@ def _synthetic_hf_mamba_state_dict(
                     2 * source_inner_dim * d_model,
                     dtype=torch.float32,
                 ).view(2 * source_inner_dim, d_model)
-                / 100.0
+                * weight_scale
                 + offset,
                 f"{prefix}.mixer.x_proj.weight": torch.arange(
                     x_proj_rows * source_inner_dim,
                     dtype=torch.float32,
                 ).view(x_proj_rows, source_inner_dim)
-                / 100.0
+                * weight_scale
                 + offset,
                 f"{prefix}.mixer.dt_proj.weight": torch.arange(
                     source_inner_dim * dt_rank,
                     dtype=torch.float32,
                 ).view(source_inner_dim, dt_rank)
-                / 100.0,
+                * weight_scale,
                 f"{prefix}.mixer.dt_proj.bias": torch.arange(
                     source_inner_dim,
                     dtype=torch.float32,
                 )
-                / 100.0,
+                * weight_scale,
                 f"{prefix}.mixer.out_proj.weight": torch.arange(
                     d_model * source_inner_dim,
                     dtype=torch.float32,
                 ).view(d_model, source_inner_dim)
-                / 100.0
+                * weight_scale
                 + offset,
-                f"{prefix}.mixer.D": torch.arange(source_inner_dim, dtype=torch.float32) / 100.0,
+                f"{prefix}.mixer.D": torch.arange(source_inner_dim, dtype=torch.float32)
+                * weight_scale,
                 f"{prefix}.mixer.conv1d.weight": torch.arange(
                     source_inner_dim * 4,
                     dtype=torch.float32,
                 ).view(source_inner_dim, 1, 4)
-                / 100.0,
+                * weight_scale,
                 f"{prefix}.mixer.conv1d.bias": torch.arange(
                     source_inner_dim,
                     dtype=torch.float32,
                 )
-                / 100.0,
+                * weight_scale,
                 f"{prefix}.mixer.A_log": torch.zeros(source_inner_dim, d_state),
             }
         )
@@ -244,6 +251,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--d-state", type=int, default=2)
     parser.add_argument("--mimo-rank", type=int, default=4)
     parser.add_argument("--dt-rank", type=int, default=2)
+    parser.add_argument("--weight-scale", type=float, default=0.01)
+    parser.add_argument("--layer-offset-scale", type=float, default=0.01)
     parser.add_argument("--n-layers", type=int, default=2)
     parser.add_argument("--seq-len", type=int, default=1)
     parser.add_argument("--input-low", type=float, default=0.45)
