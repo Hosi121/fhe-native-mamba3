@@ -779,6 +779,8 @@ def test_mamba_checkpoint_full_layer_gate_cli_runs_tracking_backend(tmp_path) ->
     assert payload["model"]["checked_visible_dim"] == 8
     assert payload["model"]["d_state"] == 2
     assert payload["model"]["mimo_rank"] == 2
+    assert payload["model"]["visible_output_scale"] == 1.0
+    assert payload["model"]["scale_plan"] is None
     assert payload["measurement_scope"]["source_style_full_layer_formula"] is True
     assert payload["measurement_scope"]["full_visible_output_checked"] is True
     assert payload["measurement_scope"]["partial_visible_output_checked"] is False
@@ -792,6 +794,69 @@ def test_mamba_checkpoint_full_layer_gate_cli_runs_tracking_backend(tmp_path) ->
     assert payload["operation_counts"]["decrypt"] == 2
     assert payload["operation_counts"]["ct_ct_mul"] == 4 * payload["model"]["seq_len"]
     assert json.loads(output_json.read_text(encoding="utf-8"))["result"]["passed"] is True
+
+
+def test_mamba_checkpoint_full_layer_gate_cli_uses_scale_plan(tmp_path) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    scale_plan_path = tmp_path / "full-layer-scale-plan.json"
+    torch.save({"model": _fake_mamba_state_dict()}, checkpoint_path)
+    scale_plan_path.write_text(
+        json.dumps(
+            {
+                "scale_plan": {
+                    "layers": [
+                        {
+                            "layer_index": 0,
+                            "state_scale_to_target": 0.5,
+                            "output_scale": 0.25,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fhe_native_mamba3.cli",
+            "mamba-checkpoint-full-layer-gate",
+            str(checkpoint_path),
+            "--backend",
+            "tracking",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "2",
+            "--n-layers",
+            "1",
+            "--max-seq-len",
+            "8",
+            "--prompt",
+            "1,2",
+            "--input-mode",
+            "encrypted-dynamic-bc",
+            "--readout-strategy",
+            "rank-local",
+            "--scale-plan-json",
+            str(scale_plan_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["version"] == __version__
+    assert payload["model"]["visible_output_scale"] == 0.25
+    assert payload["model"]["scale_plan"]["path"] == str(scale_plan_path)
+    assert payload["model"]["scale_plan"]["used_output_scale"] == 0.25
+    assert payload["model"]["scale_plan"]["cli_output_scale_override"] is False
+    assert payload["result"]["visible_output_scale"] == 0.25
+    assert payload["passed"] is True
+    assert payload["max_abs_error"] < 1e-6
 
 
 def test_mamba_checkpoint_full_layer_gate_cli_labels_partial_visible_output(

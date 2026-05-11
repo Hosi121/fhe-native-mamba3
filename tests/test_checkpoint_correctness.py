@@ -289,6 +289,49 @@ def test_checkpoint_full_layer_ciphertext_trace_outputs_match_source_when_decryp
     assert backend.stats().decrypt_count == trace.seq_len
 
 
+def test_checkpoint_full_layer_ciphertext_trace_applies_visible_output_scale() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(16, dtype=torch.float32).view(1, 2, 8) / 20.0
+    unscaled_backend = TrackingBackend(batch_size=8)
+    scaled_backend = TrackingBackend(batch_size=8)
+
+    unscaled = run_checkpoint_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=unscaled_backend,
+        input_mode="encrypted-dynamic-bc",
+        readout_strategy="rank-local",
+    )
+    scaled = run_checkpoint_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=scaled_backend,
+        input_mode="encrypted-dynamic-bc",
+        readout_strategy="rank-local",
+        visible_output_scale=0.25,
+    )
+    actual = tuple(
+        scaled_backend.decrypt(output_ct, length=scaled.checked_visible_dim)
+        for output_ct in scaled.output_ciphertexts
+    )
+
+    assert scaled.visible_output_scale == 0.25
+    assert scaled.to_json_dict()["visible_output_scale"] == 0.25
+    for scaled_row, unscaled_row in zip(
+        scaled.expected_outputs,
+        unscaled.expected_outputs,
+        strict=True,
+    ):
+        assert scaled_row == pytest.approx(tuple(0.25 * value for value in unscaled_row))
+    for actual_row, expected_row in zip(actual, scaled.expected_outputs, strict=True):
+        assert actual_row == pytest.approx(expected_row)
+    assert any("scaled" in note for note in scaled.notes)
+
+
 def test_checkpoint_full_layer_visible_ciphertexts_cannot_be_rank_input_handoff() -> None:
     state_dict = _tiny_hf_mamba_state_dict()
     layer_input = torch.arange(16, dtype=torch.float32).view(1, 2, 8) / 20.0

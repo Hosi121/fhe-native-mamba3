@@ -89,6 +89,7 @@ class CheckpointFullLayerCiphertextGate:
     encrypted: bool
     input_mode: str
     readout_strategy: str
+    visible_output_scale: float
     max_abs_error: float
     atol: float
     passed: bool
@@ -125,6 +126,7 @@ class CheckpointFullLayerCiphertextTrace:
     encrypted: bool
     input_mode: str
     readout_strategy: str
+    visible_output_scale: float
     output_layout: str
     output_slots: tuple[int, ...]
     layout_contract: CiphertextLayoutContract
@@ -153,6 +155,7 @@ class CheckpointFullLayerCiphertextTrace:
             "encrypted": self.encrypted,
             "input_mode": self.input_mode,
             "readout_strategy": self.readout_strategy,
+            "visible_output_scale": self.visible_output_scale,
             "output_layout": self.output_layout,
             "output_slots": list(self.output_slots),
             "layout_contract": {
@@ -664,6 +667,7 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_gate(
         encrypted=bool(resolved_backend.stats().encrypted),
         input_mode="encrypted-dynamic-bc",
         readout_strategy=readout_strategy,
+        visible_output_scale=1.0,
         max_abs_error=max_abs_error,
         atol=atol,
         passed=max_abs_error <= atol and no_intermediate_decrypt,
@@ -697,6 +701,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
     atol: float = 1e-6,
     norm_eps: float = 1e-5,
     visible_dim_limit: int | None = None,
+    visible_output_scale: float = 1.0,
 ) -> CheckpointFullLayerCiphertextGate:
     """Check source-style full-layer output through encrypted rank handoff.
 
@@ -722,6 +727,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
         multiplicative_depth=multiplicative_depth,
         norm_eps=norm_eps,
         visible_dim_limit=visible_dim_limit,
+        visible_output_scale=visible_output_scale,
     )
     resolved_backend = trace.backend_handle
     started_decrypts = resolved_backend.stats().decrypt_count
@@ -756,6 +762,7 @@ def run_checkpoint_full_layer_ciphertext_gate(
         encrypted=bool(resolved_backend.stats().encrypted),
         input_mode=input_mode,
         readout_strategy=readout_strategy,
+        visible_output_scale=trace.visible_output_scale,
         max_abs_error=max_abs_error,
         atol=atol,
         passed=max_abs_error <= atol and no_intermediate_decrypt,
@@ -784,9 +791,13 @@ def run_checkpoint_full_layer_ciphertexts_with_backend(
     multiplicative_depth: int = 12,
     norm_eps: float = 1e-5,
     visible_dim_limit: int | None = None,
+    visible_output_scale: float = 1.0,
 ) -> CheckpointFullLayerCiphertextTrace:
     """Return full-layer visible output ciphertexts without decrypting them."""
 
+    if visible_output_scale <= 0:
+        msg = "visible_output_scale must be positive"
+        raise ValueError(msg)
     problem = build_mamba_source_recurrence_problem(
         state_dict,
         layer_input,
@@ -833,12 +844,13 @@ def run_checkpoint_full_layer_ciphertexts_with_backend(
             visible=visible,
             checked_visible_dim=checked_visible_dim,
             token_index=token_index,
+            visible_output_scale=visible_output_scale,
         )
         output_ciphertexts.append(final_ct)
 
     expected_rows = tuple(
         tuple(
-            float(value)
+            visible_output_scale * float(value)
             for value in visible.expected_final_output[0, token_index, :checked_visible_dim]
             .detach()
             .cpu()
@@ -873,6 +885,8 @@ def run_checkpoint_full_layer_ciphertexts_with_backend(
         )
     else:
         notes.append("visible output check covers the full d_model")
+    if visible_output_scale != 1.0:
+        notes.append("visible output ciphertext and expected output are scaled before decoding")
     return CheckpointFullLayerCiphertextTrace(
         layer_index=layer_index,
         d_model=visible.d_model,
@@ -886,6 +900,7 @@ def run_checkpoint_full_layer_ciphertexts_with_backend(
         encrypted=bool(resolved_backend.stats().encrypted),
         input_mode=input_mode,
         readout_strategy=readout_strategy,
+        visible_output_scale=visible_output_scale,
         output_layout="visible-output",
         output_slots=output_slots,
         layout_contract=layout_contract,
@@ -920,6 +935,7 @@ def _visible_output_ciphertext(
     visible: MambaSourceVisibleHandoffTensors,
     checked_visible_dim: int,
     token_index: int,
+    visible_output_scale: float = 1.0,
 ) -> Any:
     rank_ct = backend.add(
         recurrence_ct,
@@ -945,14 +961,14 @@ def _visible_output_ciphertext(
         backend=backend,
         rank_ct=gated_ct,
         output_slots=output_slots,
-        out_proj_weight=visible.out_proj_weight,
+        out_proj_weight=visible.out_proj_weight * visible_output_scale,
         checked_visible_dim=checked_visible_dim,
     )
     return backend.add(
         projected_ct,
         backend.encrypt(
             [
-                float(value)
+                visible_output_scale * float(value)
                 for value in visible.residual[0, token_index, :checked_visible_dim].detach().cpu()
             ]
         ),

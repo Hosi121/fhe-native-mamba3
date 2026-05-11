@@ -890,6 +890,10 @@ def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
     )
     from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model
     from fhe_native_mamba3.mamba_reference import run_mamba_source_layer
+    from fhe_native_mamba3.recurrence_scales import (
+        load_recurrence_scale_plan,
+        resolve_recurrence_layer_scales,
+    )
 
     source_state_dict, resolved_key = load_checkpoint_state_dict(
         args.checkpoint,
@@ -954,6 +958,13 @@ def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
         )
         raise ValueError(msg)
 
+    _state_scale, visible_output_scale, scale_plan = resolve_recurrence_layer_scales(
+        args.layer_index,
+        state_scale=None,
+        output_scale=args.visible_output_scale,
+        scale_plan=load_recurrence_scale_plan(args.scale_plan_json),
+    )
+
     checked_visible_dim = (
         min(d_model, args.visible_dim_limit) if args.visible_dim_limit else d_model
     )
@@ -986,6 +997,7 @@ def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
         atol=args.atol,
         norm_eps=args.norm_eps,
         visible_dim_limit=args.visible_dim_limit or None,
+        visible_output_scale=visible_output_scale,
     )
     stats = result.backend_stats
     payload = {
@@ -1012,6 +1024,8 @@ def mamba_checkpoint_full_layer_gate_cmd(args: argparse.Namespace) -> int:
             "input_mode": args.input_mode,
             "input_propagation": args.input_propagation,
             "visible_dim_limit": args.visible_dim_limit or None,
+            "visible_output_scale": visible_output_scale,
+            "scale_plan": scale_plan,
         },
         "ckks": {
             "multiplicative_depth": args.multiplicative_depth,
@@ -2761,6 +2775,19 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="check only the first N visible output dimensions; 0 checks all dimensions",
+    )
+    mamba_full_layer_parser.add_argument(
+        "--visible-output-scale",
+        type=float,
+        default=None,
+        help="multiply the final visible ciphertext and expected output by this positive scale",
+    )
+    mamba_full_layer_parser.add_argument(
+        "--scale-plan-json",
+        default="",
+        help=(
+            "optional source-diagnostics scale plan; uses the layer output_scale unless overridden"
+        ),
     )
     mamba_full_layer_parser.add_argument("--max-plan-layers", type=int, default=8)
     mamba_full_layer_parser.add_argument("--max-statuses", type=int, default=50)

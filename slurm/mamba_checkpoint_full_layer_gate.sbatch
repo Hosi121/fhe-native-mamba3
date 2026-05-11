@@ -35,6 +35,8 @@ SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-40}"
 RING_DIM="${RING_DIM:-}"
 MAX_ROTATION_KEYS="${MAX_ROTATION_KEYS:-512}"
 VISIBLE_DIM_LIMIT="${VISIBLE_DIM_LIMIT:-0}"
+VISIBLE_OUTPUT_SCALE="${VISIBLE_OUTPUT_SCALE:-}"
+SCALE_PLAN_JSON="${SCALE_PLAN_JSON:-}"
 ATOL="${ATOL:-1e-5}"
 NORM_EPS="${NORM_EPS:-1e-5}"
 ENABLE_BOOTSTRAP="${ENABLE_BOOTSTRAP:-0}"
@@ -111,6 +113,13 @@ if [[ "${ENABLE_BOOTSTRAP}" == "1" ]]; then
     openfhe_args+=(--bootstrap-slots "${BOOTSTRAP_SLOTS}")
   fi
 fi
+scale_args=()
+if [[ -n "${VISIBLE_OUTPUT_SCALE}" ]]; then
+  scale_args+=(--visible-output-scale "${VISIBLE_OUTPUT_SCALE}")
+fi
+if [[ -n "${SCALE_PLAN_JSON}" ]]; then
+  scale_args+=(--scale-plan-json "${SCALE_PLAN_JSON}")
+fi
 
 "${PYTHON}" -m fhe_native_mamba3.cli mamba-checkpoint-full-layer-gate "${CHECKPOINT}" \
   --backend "${BACKEND}" \
@@ -131,6 +140,7 @@ fi
   --max-plan-layers 4 \
   --max-statuses 2 \
   "${openfhe_args[@]}" \
+  "${scale_args[@]}" \
   --output-json "${OUTPUT_JSON}" > "${STDOUT_JSON}"
 
 section "Summary"
@@ -150,6 +160,8 @@ summary = {
     "checked_visible_dim": payload["model"]["checked_visible_dim"],
     "d_state": payload["model"]["d_state"],
     "mimo_rank": payload["model"]["mimo_rank"],
+    "visible_output_scale": payload["model"]["visible_output_scale"],
+    "scale_plan": payload["model"]["scale_plan"],
     "rotation_count": payload["ckks"]["rotation_count"],
     "passed": payload["passed"],
     "max_abs_error": payload["max_abs_error"],
