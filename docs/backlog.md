@@ -41,14 +41,14 @@ success.
 | PBI-S1-004 | Stage 1 | Done | PBI-S1-003 | Prefix-scan smoke script runs segmented tracking end to end, persists JSON, and is covered by `tests/test_stage1_prefix_scan_smoke_script.py`. |
 | PBI-S1-005 | Stage 1 | Done | PBI-S1-004 | Integrate tiny encrypted MIMO/SSD block smoke: combine encrypted tiny MIMO recurrence/readout with packed SSD/prefix-scan layout metadata, run without unsupported full-chain claims, emit benchmark/error JSON, and add a focused script test. Evidence: `tests/test_stage1_tiny_mimo.py`, `tests/test_stage1_tiny_mimo_block_smoke_script.py`, and OpenFHE B200 job `10116`. |
 | PBI-S1-006 | Stage 1 | Done | PBI-S1-005 | Run head-pack/readout layout sweeps for 4, 8, 16, and 32 pack sizes with rotation-key count, memory estimate, latency/error JSON, and a clear recommendation. Evidence: `scripts/run_stage1_pack_sweep.py`, `tests/test_stage1_pack_sweep.py`, `tests/test_stage1_pack_sweep_script.py`, high/B200 tracking job `10117`, and OpenFHE non-power-of-two slot regression job `10118`. |
-| PBI-S1-007 | Stage 1 | Open | PBI-S1-006, PBI-S0-004 | Attach measured FIDESlib/OpenFHE bootstrap availability and cost to Stage 1 layout choices; acceptance requires probe notes plus JSON artifacts that distinguish GPU bootstrap from OpenFHE Python bootstrap. OpenFHE bootstrap JSON can now be attached to `scripts/run_stage1_pack_sweep.py`; FIDESlib/GPU bootstrap evidence remains outstanding. |
-| PBI-S2-001 | Stage 2 | Open | PBI-S1-005 | Empirically test sketch dimensions for MIMO SSM trajectories before claiming theory-driven dimension choices; acceptance requires sweep JSON and error/latency tradeoff notes. |
+| PBI-S1-007 | Stage 1 | Open | PBI-S1-006, PBI-S0-004 | Attach measured FIDESlib/OpenFHE bootstrap availability and cost to Stage 1 layout choices; acceptance requires probe notes plus JSON artifacts that distinguish GPU bootstrap from OpenFHE Python bootstrap. OpenFHE bootstrap JSON can now be attached to `scripts/run_stage1_pack_sweep.py`; basic FIDESlib GPU bootstrap readiness has probe evidence, but a Stage 1-attached FIDESlib/GPU bootstrap cost JSON remains outstanding. |
+| PBI-S2-001 | Stage 2 | Open | PBI-S1-005 | Empirically test sketch dimensions for MIMO SSM trajectories before claiming theory-driven dimension choices; initial synthetic SRHT sweep is implemented in `scripts/run_stage2_sketch_sweep.py` and `tests/test_stage2_sketch_sweep.py`; acceptance still requires recorded sweep JSON and error/latency tradeoff notes. |
 | PBI-S2-002 | Stage 2 | Open | PBI-S0-010, PBI-S1-005 | Prototype lazy bootstrap/range-aware training policy with measured range contraction and bootstrap schedule impact. |
-| PBI-S2-003 | Stage 2 | Open | PBI-S1-005 | Track encrypted vocab argmax/CutMax separately from the default client-side decoding path. This is not a Stage 0 or `0.3.0` blocker. |
+| PBI-S2-003 | Stage 2 | Open | PBI-S1-005 | Track encrypted vocab argmax/CutMax separately from the default client-side decoding path. This is not a current `0.3.x` blocker. |
 
 ## Stale Or Obsolete Notes
 
-- README version `0.2.100` was stale and has been updated through `0.3.2`.
+- README version `0.2.100` was stale and has been updated through `0.3.3`.
 - Any backlog item phrased as "full OpenFHE chain success" is stale unless it
   points to a validated integrated artifact with no intermediate decrypts. The
   current evidence supports recurrence smokes, bootstrap probes, pre-recurrence

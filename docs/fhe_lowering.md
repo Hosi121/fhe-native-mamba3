@@ -4,11 +4,12 @@ This prototype separates three research tracks.
 
 ## Symbolic CKKS First
 
-Version `0.2.0` adds a symbolic CKKS layer tracker before OpenFHE lowering. It
+Version `0.2.0` added a symbolic CKKS layer tracker before OpenFHE lowering. It
 records ciphertext-ciphertext products, ciphertext-plaintext products, rotations,
 remaining levels, greedy bootstrap positions, and head/MIMO packing. This keeps
-the research memo's assumptions executable without claiming that encrypted
-OpenFHE inference is already implemented.
+the research memo's assumptions executable. Current `0.3.x` code has targeted
+OpenFHE execution harnesses, while full end-to-end encrypted model lowering
+remains out of scope.
 
 ## Static B/C
 
@@ -40,9 +41,9 @@ This is more expressive, but it adds ciphertext-ciphertext products inside the
 recurrence and readout. It should be treated as an accuracy baseline and then
 distilled or constrained toward static/low-rank plaintext B/C for FHE inference.
 
-## Next Backend Step
+## Backend Lowering Status
 
-The next concrete step is an OpenFHE CKKS lowering pass that maps:
+Targeted OpenFHE CKKS harnesses now map:
 
 - rank channels to SIMD slots,
 - state dimension to either packed slots or separate ciphertexts,
@@ -50,4 +51,4 @@ The next concrete step is an OpenFHE CKKS lowering pass that maps:
 - the polynomial gate to one rescale level.
 
 The current `estimate_block_cost` function is a backend-agnostic first pass, not
-a replacement for a concrete OpenFHE/TenSEAL/HEaaN schedule.
+a replacement for an integrated full-model OpenFHE/FIDESlib/HEaaN schedule.

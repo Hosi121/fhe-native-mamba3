@@ -28,7 +28,8 @@ Required outputs:
 Current backend roles:
 
 - OpenFHE CPU: correctness baseline.
-- FIDESlib: GPU CKKS/bootstrap candidate to probe.
+- FIDESlib: GPU CKKS backend with native toy/stage probes; Stage 1 GPU
+  bootstrap-cost attachment remains open.
 - Tracking: operation-count backend.
 - Phantom-FHE: optional non-bootstrap microbenchmark backend only.
 
@@ -50,9 +51,10 @@ Required sweeps:
 - head pack size: 4, 8, 16, 32,
 - readout layout,
 - rotation key count and memory estimate,
-- bootstrap availability and cost once FIDESlib is working.
+- bootstrap availability and cost, distinguishing measured OpenFHE Python
+  bootstrap from pending Stage 1 FIDESlib/GPU cost artifacts.
 
-Current partial implementation:
+Current implementation status:
 
 - `scripts/build_stage1_plan.py` emits a non-benchmark planning artifact that
   combines SSD prefix-scan metadata, head/rank packing candidates, rotation-key
@@ -76,6 +78,14 @@ Goal: sketch, lazy bootstrap, and range-aware training.
 Sketching should be tested empirically before claiming theory-driven dimension
 choices. The theory gives worst-case dimensions; the benchmark sweep decides
 whether small dimensions work for actual MIMO SSM trajectories.
+
+Current partial implementation:
+
+- `scripts/run_stage2_sketch_sweep.py` runs a backend-neutral SRHT sketch-size
+  sweep over deterministic scalar SSM trajectories. It measures exact sketch
+  recurrence compatibility, readout inner-product error, compression ratio, and
+  SRHT rotation metadata. This is design evidence only; checkpoint perplexity
+  and encrypted sketch execution remain separate gates.
 
 ## Version Boundary
 

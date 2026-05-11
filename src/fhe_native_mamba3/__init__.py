@@ -268,6 +268,14 @@ _LAZY_IMPORTS = {
         "Stage1PackSweepRow",
     ),
     "Stage1ProfileHints": ("fhe_native_mamba3.stage1_plan", "Stage1ProfileHints"),
+    "Stage2SketchSweepResult": (
+        "fhe_native_mamba3.stage2_sketch_sweep",
+        "Stage2SketchSweepResult",
+    ),
+    "Stage2SketchSweepRow": (
+        "fhe_native_mamba3.stage2_sketch_sweep",
+        "Stage2SketchSweepRow",
+    ),
     "TinyMimoBlockProblem": (
         "fhe_native_mamba3.stage1_tiny_mimo",
         "TinyMimoBlockProblem",
@@ -597,6 +605,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_pack_sweep",
         "run_stage1_pack_sweep",
     ),
+    "run_stage2_sketch_sweep": (
+        "fhe_native_mamba3.stage2_sketch_sweep",
+        "run_stage2_sketch_sweep",
+    ),
     "run_tiny_mimo_block_smoke": (
         "fhe_native_mamba3.stage1_tiny_mimo",
         "run_tiny_mimo_block_smoke",
@@ -710,6 +722,8 @@ __all__ = [
     "Stage1PackSweepRow",
     "Stage1Plan",
     "Stage1ProfileHints",
+    "Stage2SketchSweepResult",
+    "Stage2SketchSweepRow",
     "StateDictMappingDraft",
     "StateDictMappingReport",
     "StateDictMappingRule",
@@ -809,6 +823,7 @@ __all__ = [
     "run_stage0_mimo",
     "run_stage0_sweep",
     "run_stage1_pack_sweep",
+    "run_stage2_sketch_sweep",
     "run_static_mimo_recurrence_ciphertext_chain_with_backend",
     "run_static_mimo_recurrence_ciphertexts_with_backend",
     "run_tiny_mimo_block_smoke",

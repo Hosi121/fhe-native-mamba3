@@ -6,7 +6,7 @@ it keeps a MIMO state-space recurrence, but avoids ciphertext-hostile inference
 operations such as softmax, exp over encrypted values, data-dependent
 normalization, and high-degree activations.
 
-The project is currently at SemVer `0.3.2`. Future changes should bump
+The project is currently at SemVer `0.3.3`. Future changes should bump
 `MAJOR.MINOR.PATCH`; do not use `version1`, `version2`, or date-only naming.
 
 Versioning policy:
@@ -36,8 +36,9 @@ Versioning policy:
 - `FixedScaleNorm`: a plaintext gain and compile-time scale instead of
   RMSNorm/LayerNorm during encrypted inference.
 - Symbolic CKKS model: tracks levels, bootstraps, MIMO/head packing, rotations,
-  and the current conjecture-style seconds/token estimate. It is not OpenFHE
-  execution yet.
+  and planning estimates. Targeted OpenFHE execution exists for recurrence,
+  pre-recurrence, tiny MIMO/SSD, and layout smokes; this is still not an
+  end-to-end encrypted model claim.
 
 References used for the prototype:
 
