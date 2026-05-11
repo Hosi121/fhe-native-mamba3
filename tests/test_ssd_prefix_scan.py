@@ -357,6 +357,15 @@ def test_backend_packed_static_mimo_readout_sums_state_lanes_per_rank() -> None:
     )
 
 
+def test_ssd_prefix_scan_all_exports_backend_affine_and_readout_helpers() -> None:
+    import fhe_native_mamba3.ssd_prefix_scan as module
+
+    assert "BackendAffinePrefixScanResult" in module.__all__
+    assert "BackendPackedMimoReadoutResult" in module.__all__
+    assert "backend_segmented_hillis_steele_affine_scan" in module.__all__
+    assert "backend_packed_static_mimo_readout" in module.__all__
+
+
 def test_ssd_prefix_scan_prefill_matches_sequential_and_ssd_scalar_decay() -> None:
     torch.manual_seed(13)
     rank_input = torch.randn(2, 7, 3)

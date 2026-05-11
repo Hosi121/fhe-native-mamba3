@@ -92,6 +92,7 @@ class Stage1Plan:
     bootstrap_internal_key_count: int
     key_size_mb: float
     max_key_memory_gib: float | None
+    skipped_pack_sizes: tuple[int, ...]
     recommended_candidate: Stage1CandidatePlan
     candidates: tuple[Stage1CandidatePlan, ...]
 
@@ -112,6 +113,7 @@ class Stage1Plan:
             "bootstrap_internal_key_count": self.bootstrap_internal_key_count,
             "key_size_mb": self.key_size_mb,
             "max_key_memory_gib": self.max_key_memory_gib,
+            "skipped_pack_sizes": self.skipped_pack_sizes,
             "recommended_candidate": self.recommended_candidate.to_json_dict(),
             "candidates": [candidate.to_json_dict() for candidate in self.candidates],
         }
@@ -173,6 +175,15 @@ def build_stage1_plan(
     if max_key_memory_gib is not None and max_key_memory_gib <= 0:
         msg = "max_key_memory_gib must be positive when provided"
         raise ValueError(msg)
+    requested_pack_sizes = tuple(candidate_pack_sizes)
+    feasible_pack_sizes = _feasible_pack_sizes(
+        requested_pack_sizes,
+        d_state=d_state,
+        slot_count=slot_count,
+    )
+    skipped_pack_sizes = tuple(
+        pack_size for pack_size in requested_pack_sizes if pack_size not in feasible_pack_sizes
+    )
 
     scan_metadata = build_prefix_scan_metadata(
         seq_len=scan_len,
@@ -183,7 +194,7 @@ def build_stage1_plan(
         head_count=head_count,
         d_state=d_state,
         slot_count=slot_count,
-        candidate_pack_sizes=candidate_pack_sizes,
+        candidate_pack_sizes=feasible_pack_sizes,
         grouping_strategies=grouping_strategies,
         head_decays=head_decays,
         head_ranges=head_ranges,
@@ -192,7 +203,7 @@ def build_stage1_plan(
         scan_len=scan_metadata.window,
         d_state=d_state,
         d_model=d_model,
-        head_pack_sizes=tuple(candidate_pack_sizes),
+        head_pack_sizes=feasible_pack_sizes,
         slot_count=slot_count,
         scan_lanes_by_head_pack=True,
         matmul_diagonal_stride=matmul_diagonal_stride,
@@ -239,6 +250,7 @@ def build_stage1_plan(
             "benchmark": False,
             "stage1_execution_started": False,
             "packed_time_major_scan_accounting": True,
+            "skipped_infeasible_pack_sizes": skipped_pack_sizes,
         },
         dependencies=(
             Stage1Dependency(
@@ -289,6 +301,7 @@ def build_stage1_plan(
         bootstrap_internal_key_count=bootstrap_internal_key_count,
         key_size_mb=key_size_mb,
         max_key_memory_gib=max_key_memory_gib,
+        skipped_pack_sizes=skipped_pack_sizes,
         recommended_candidate=recommended,
         candidates=candidates,
     )
@@ -446,6 +459,24 @@ def _validate_positive(name: str, value: int) -> None:
     if value <= 0:
         msg = f"{name} must be positive"
         raise ValueError(msg)
+
+
+def _feasible_pack_sizes(
+    candidate_pack_sizes: Sequence[int],
+    *,
+    d_state: int,
+    slot_count: int,
+) -> tuple[int, ...]:
+    if any(pack_size <= 0 for pack_size in candidate_pack_sizes):
+        msg = "candidate_pack_sizes must contain positive integers"
+        raise ValueError(msg)
+    feasible = tuple(
+        pack_size for pack_size in candidate_pack_sizes if pack_size * d_state <= slot_count
+    )
+    if not feasible:
+        msg = "no candidate_pack_sizes fit in slot_count"
+        raise ValueError(msg)
+    return feasible
 
 
 __all__ = [

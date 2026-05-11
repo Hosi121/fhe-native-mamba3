@@ -259,6 +259,14 @@ _LAZY_IMPORTS = {
     "Stage1CandidatePlan": ("fhe_native_mamba3.stage1_plan", "Stage1CandidatePlan"),
     "Stage1Dependency": ("fhe_native_mamba3.stage1_plan", "Stage1Dependency"),
     "Stage1Plan": ("fhe_native_mamba3.stage1_plan", "Stage1Plan"),
+    "Stage1PackSweepResult": (
+        "fhe_native_mamba3.stage1_pack_sweep",
+        "Stage1PackSweepResult",
+    ),
+    "Stage1PackSweepRow": (
+        "fhe_native_mamba3.stage1_pack_sweep",
+        "Stage1PackSweepRow",
+    ),
     "Stage1ProfileHints": ("fhe_native_mamba3.stage1_plan", "Stage1ProfileHints"),
     "TinyMimoBlockProblem": (
         "fhe_native_mamba3.stage1_tiny_mimo",
@@ -585,9 +593,17 @@ _LAZY_IMPORTS = {
     ),
     "run_stage0_mimo": ("fhe_native_mamba3.benchmarks.stage0_mimo", "run_stage0_mimo"),
     "run_stage0_sweep": ("fhe_native_mamba3.benchmarks.stage0_sweep", "run_stage0_sweep"),
+    "run_stage1_pack_sweep": (
+        "fhe_native_mamba3.stage1_pack_sweep",
+        "run_stage1_pack_sweep",
+    ),
     "run_tiny_mimo_block_smoke": (
         "fhe_native_mamba3.stage1_tiny_mimo",
         "run_tiny_mimo_block_smoke",
+    ),
+    "required_tiny_mimo_block_rotations": (
+        "fhe_native_mamba3.stage1_tiny_mimo",
+        "required_tiny_mimo_block_rotations",
     ),
     "validate_artifact_file": (
         "fhe_native_mamba3.artifact_validation",
@@ -690,6 +706,8 @@ __all__ = [
     "Stage0SweepConfig",
     "Stage1CandidatePlan",
     "Stage1Dependency",
+    "Stage1PackSweepResult",
+    "Stage1PackSweepRow",
     "Stage1Plan",
     "Stage1ProfileHints",
     "StateDictMappingDraft",
@@ -772,6 +790,7 @@ __all__ = [
     "profile_recurrence_traces",
     "range_loss",
     "required_full_layer_visible_rotations",
+    "required_tiny_mimo_block_rotations",
     "resolve_pre_recurrence_shape",
     "run_checkpoint_client_decode_smoke",
     "run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate",
@@ -789,6 +808,7 @@ __all__ = [
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
+    "run_stage1_pack_sweep",
     "run_static_mimo_recurrence_ciphertext_chain_with_backend",
     "run_static_mimo_recurrence_ciphertexts_with_backend",
     "run_tiny_mimo_block_smoke",

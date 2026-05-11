@@ -53,6 +53,18 @@ def test_default_sweep_includes_contiguous_and_range_sorted_strategies() -> None
     assert (32, "range-sorted") in seen
 
 
+def test_head_pack_sweep_skips_infeasible_candidate_sizes() -> None:
+    sweep = sweep_head_pack_candidates(
+        head_count=4,
+        d_state=3,
+        slot_count=18,
+        candidate_pack_sizes=(2, 8),
+        grouping_strategies=("contiguous",),
+    )
+
+    assert tuple(candidate.pack_size for candidate in sweep.candidates) == (2,)
+
+
 def test_head_pack_rejects_invalid_candidates_and_stats() -> None:
     with pytest.raises(ValueError, match="candidate_pack_sizes"):
         sweep_head_pack_candidates(

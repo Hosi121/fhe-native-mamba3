@@ -200,6 +200,31 @@ def run_tiny_mimo_block_smoke(
     )
 
 
+def required_tiny_mimo_block_rotations(
+    *,
+    seq_len: int,
+    d_state: int,
+    rank: int,
+    batch_size: int,
+) -> tuple[int, ...]:
+    """Return rotation steps required by the tiny packed MIMO block."""
+
+    if d_state <= 0 or rank <= 0:
+        msg = "d_state and rank must be positive"
+        raise ValueError(msg)
+    plan = build_packed_prefix_scan_plan(
+        seq_len=seq_len,
+        lanes=d_state * rank,
+        slot_count=batch_size,
+    )
+    rotations = set(plan.rotations)
+    rotations.update(-rotation for rotation in plan.rotations)
+    rotations.update(plan.carry_rotations)
+    rotations.update(-rotation for rotation in plan.carry_rotations)
+    rotations.update(range(1, d_state))
+    return tuple(sorted(rotation for rotation in rotations if rotation))
+
+
 def _packed_decay_values(problem: TinyMimoBlockProblem) -> Tensor:
     lanes = problem.d_state * problem.rank
     values = torch.empty(problem.seq_len, lanes, dtype=torch.float64)

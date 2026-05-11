@@ -1150,6 +1150,8 @@ def _state_rank_causal_weights(decay_sequence: Tensor, *, window: int) -> Tensor
 
 
 __all__ = [
+    "BackendAffinePrefixScanResult",
+    "BackendPackedMimoReadoutResult",
     "BackendPrefixScanResult",
     "BackendSegmentedPrefixScanResult",
     "DecayMode",
@@ -1161,11 +1163,15 @@ __all__ = [
     "ScanAlgorithm",
     "ScanPhase",
     "SsdPrefixScanResult",
+    "backend_hillis_steele_affine_scan",
     "backend_hillis_steele_prefix_products",
+    "backend_packed_static_mimo_readout",
+    "backend_segmented_hillis_steele_affine_scan",
     "backend_segmented_hillis_steele_prefix_products",
     "build_packed_prefix_scan_plan",
     "build_prefix_scan_metadata",
     "causal_decay_weights",
+    "packed_mimo_readout_output_slots",
     "packed_prefix_scan_carry_rotation_steps",
     "packed_prefix_scan_rotation_steps",
     "prefix_decay_products",

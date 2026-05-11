@@ -62,6 +62,9 @@ Current partial implementation:
 - Packed SSD prefix-scan planning, segmented cross-ciphertext carry accounting,
   and JSON-emitting Stage 1 prefix-scan and tiny encrypted MIMO/SSD block smokes
   are implemented. They do not yet claim real-checkpoint full-chain speedup.
+- `scripts/run_stage1_pack_sweep.py` runs pack-size/readout layout sweeps for
+  4/8/16/32 style candidates, including rotation-key count, key-memory estimate,
+  tiny-block latency/error, and skipped infeasible pack sizes.
 
 ## Stage 2
 

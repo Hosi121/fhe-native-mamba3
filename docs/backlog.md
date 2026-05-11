@@ -40,7 +40,7 @@ success.
 | PBI-S1-003 | Stage 1 | Done | PBI-S1-002 | Segmented packed prefix-scan carry propagates across ciphertext chunks and updates rotation inventory; covered by `tests/test_ssd_prefix_scan.py`, `tests/test_rotation_inventory.py`, and `tests/test_stage1_plan.py`. |
 | PBI-S1-004 | Stage 1 | Done | PBI-S1-003 | Prefix-scan smoke script runs segmented tracking end to end, persists JSON, and is covered by `tests/test_stage1_prefix_scan_smoke_script.py`. |
 | PBI-S1-005 | Stage 1 | Done | PBI-S1-004 | Integrate tiny encrypted MIMO/SSD block smoke: combine encrypted tiny MIMO recurrence/readout with packed SSD/prefix-scan layout metadata, run without unsupported full-chain claims, emit benchmark/error JSON, and add a focused script test. Evidence: `tests/test_stage1_tiny_mimo.py`, `tests/test_stage1_tiny_mimo_block_smoke_script.py`, and OpenFHE B200 job `10116`. |
-| PBI-S1-006 | Stage 1 | Open | PBI-S1-005 | Run head-pack/readout layout sweeps for 4, 8, 16, and 32 pack sizes with rotation-key count, memory estimate, latency/error JSON, and a clear recommendation. |
+| PBI-S1-006 | Stage 1 | Done | PBI-S1-005 | Run head-pack/readout layout sweeps for 4, 8, 16, and 32 pack sizes with rotation-key count, memory estimate, latency/error JSON, and a clear recommendation. Evidence: `scripts/run_stage1_pack_sweep.py`, `tests/test_stage1_pack_sweep.py`, `tests/test_stage1_pack_sweep_script.py`, high/B200 tracking job `10117`, and OpenFHE non-power-of-two slot regression job `10118`. |
 | PBI-S1-007 | Stage 1 | Blocked | PBI-S1-006, PBI-S0-004 | Attach measured FIDESlib/OpenFHE bootstrap availability and cost to Stage 1 layout choices; acceptance requires probe notes plus JSON artifacts that distinguish GPU bootstrap from OpenFHE Python bootstrap. |
 | PBI-S2-001 | Stage 2 | Open | PBI-S1-005 | Empirically test sketch dimensions for MIMO SSM trajectories before claiming theory-driven dimension choices; acceptance requires sweep JSON and error/latency tradeoff notes. |
 | PBI-S2-002 | Stage 2 | Open | PBI-S0-010, PBI-S1-005 | Prototype lazy bootstrap/range-aware training policy with measured range contraction and bootstrap schedule impact. |
@@ -48,12 +48,13 @@ success.
 
 ## Stale Or Obsolete Notes
 
-- README version `0.2.100` was stale and has been updated through `0.3.0`.
+- README version `0.2.100` was stale and has been updated through `0.3.1`.
 - Any backlog item phrased as "full OpenFHE chain success" is stale unless it
   points to a validated integrated artifact with no intermediate decrypts. The
   current evidence supports recurrence smokes, bootstrap probes, pre-recurrence
   and full-layer gate/proxy artifacts, segmented prefix-scan planning, a Stage 1
-  prefix-scan smoke, and a tiny encrypted MIMO/SSD block smoke.
+  prefix-scan smoke, a tiny encrypted MIMO/SSD block smoke, and head-pack/readout
+  layout sweeps.
 - Stage 1 prefix scan, segmented carry, and prefix-scan smoke are completed and
   should not remain open PBIs.
 - Full encrypted vocab argmax remains a Stage 2 research branch; client-side

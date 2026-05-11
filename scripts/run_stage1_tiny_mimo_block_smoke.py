@@ -9,10 +9,10 @@ from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.cli_support import emit_json_payload
-from fhe_native_mamba3.ssd_prefix_scan import build_packed_prefix_scan_plan
 from fhe_native_mamba3.stage1_tiny_mimo import (
     build_tiny_mimo_block_problem,
     payload_for_tiny_mimo_block_smoke,
+    required_tiny_mimo_block_rotations,
     run_tiny_mimo_block_smoke,
 )
 
@@ -49,7 +49,7 @@ def _make_backend(args: argparse.Namespace) -> FHEBackend:
             batch_size=batch_size,
             multiplicative_depth=args.multiplicative_depth,
             scaling_mod_size=args.scaling_mod_size,
-            rotations=_required_rotations(
+            rotations=required_tiny_mimo_block_rotations(
                 seq_len=args.seq_len,
                 d_state=args.d_state,
                 rank=args.rank,
@@ -59,24 +59,6 @@ def _make_backend(args: argparse.Namespace) -> FHEBackend:
         )
     msg = f"unsupported backend: {args.backend}"
     raise ValueError(msg)
-
-
-def _required_rotations(
-    *,
-    seq_len: int,
-    d_state: int,
-    rank: int,
-    batch_size: int,
-) -> tuple[int, ...]:
-    plan = build_packed_prefix_scan_plan(
-        seq_len=seq_len,
-        lanes=d_state * rank,
-        slot_count=batch_size,
-    )
-    rotations = set(plan.rotations)
-    rotations.update(plan.carry_rotations)
-    rotations.update(range(1, d_state))
-    return tuple(sorted(rotation for rotation in rotations if rotation))
 
 
 def _parse_args() -> argparse.Namespace:

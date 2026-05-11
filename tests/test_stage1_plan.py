@@ -75,6 +75,23 @@ def test_stage1_plan_respects_key_memory_budget_in_recommendation() -> None:
     assert plan.recommended_candidate.estimated_key_memory_gib > 10.0
 
 
+def test_stage1_plan_skips_infeasible_candidate_pack_sizes() -> None:
+    plan = build_stage1_plan(
+        head_count=32,
+        d_state=2048,
+        d_model=768,
+        scan_len=8,
+        slot_count=32768,
+        candidate_pack_sizes=(4, 8, 16, 32),
+        grouping_strategies=("contiguous",),
+    )
+
+    payload = plan.to_json_dict()
+    assert payload["skipped_pack_sizes"] == (32,)
+    assert [candidate["pack_size"] for candidate in payload["candidates"]] == [4, 8, 16]
+    assert payload["measurement_scope"]["skipped_infeasible_pack_sizes"] == (32,)
+
+
 def test_extract_stage1_profile_hints_reads_sparse_worst_heads() -> None:
     hints = extract_stage1_profile_hints(
         {

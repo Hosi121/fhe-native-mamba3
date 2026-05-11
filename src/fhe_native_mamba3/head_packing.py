@@ -159,6 +159,12 @@ def sweep_head_pack_candidates(
     if not grouping_strategies:
         msg = "grouping_strategies must not be empty"
         raise ValueError(msg)
+    feasible_pack_sizes = tuple(
+        pack_size for pack_size in candidate_pack_sizes if pack_size * d_state <= slot_count
+    )
+    if not feasible_pack_sizes:
+        msg = "no candidate_pack_sizes fit in slot_count"
+        raise ValueError(msg)
 
     candidates = tuple(
         evaluate_head_pack_candidate(
@@ -170,7 +176,7 @@ def sweep_head_pack_candidates(
             head_decays=head_decays,
             head_ranges=head_ranges,
         )
-        for pack_size in candidate_pack_sizes
+        for pack_size in feasible_pack_sizes
         for grouping_strategy in grouping_strategies
     )
     return HeadPackSweep(
