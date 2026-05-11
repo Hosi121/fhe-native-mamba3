@@ -214,7 +214,9 @@ def _checkpoint_full_layer_gate_summary(payload: dict[str, Any] | None) -> dict[
     scope = payload.get("measurement_scope", {})
     model = payload.get("model", {})
     ckks = payload.get("ckks", {})
+    approximation = payload.get("approximation", {})
     operation_counts = payload.get("operation_counts", {})
+    timing = payload.get("timing", {})
     return {
         "available": True,
         "backend": payload.get("backend"),
@@ -236,18 +238,25 @@ def _checkpoint_full_layer_gate_summary(payload: dict[str, Any] | None) -> dict[
             result.get("visible_output_scale", 1.0),
         ),
         "scale_plan": model.get("scale_plan"),
-        "source_style_full_layer_formula": bool(scope.get("source_style_full_layer_formula")),
+        "source_style_full_layer_formula": bool(
+            scope.get("source_style_full_layer_formula") or result.get("full_layer_formula_checked")
+        ),
         "full_visible_output_checked": bool(scope.get("full_visible_output_checked")),
         "partial_visible_output_checked": bool(scope.get("partial_visible_output_checked")),
         "pre_recurrence_ciphertext": bool(result.get("pre_recurrence_ciphertext")),
         "pre_recurrence_depth_estimate": result.get("pre_recurrence_depth_estimate"),
+        "rms_norm_mode": approximation.get("rms_norm_mode"),
+        "state_decay_mode": approximation.get("state_decay_mode"),
         "recurrence_ciphertext": bool(result.get("recurrence_ciphertext")),
         "visible_handoff_ciphertext": bool(result.get("visible_handoff_ciphertext")),
         "no_intermediate_decrypt": bool(result.get("no_intermediate_decrypt")),
         "full_model_correctness_claimed": bool(scope.get("full_model_correctness_claimed")),
         "plaintext_precomputed_stages": scope.get("plaintext_precomputed_stages", []),
         "rotation_count": ckks.get("rotation_count"),
+        "ct_ct_mul_count": operation_counts.get("ct_ct_mul"),
         "decrypt_count": operation_counts.get("decrypt"),
+        "setup_seconds": timing.get("setup_seconds"),
+        "eval_seconds": timing.get("eval_seconds"),
     }
 
 

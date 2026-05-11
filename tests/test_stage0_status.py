@@ -105,6 +105,10 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
                 "readout_strategy": "rank-local",
             },
             "ckks": {"rotation_count": 1559},
+            "approximation": {
+                "rms_norm_mode": "newton-invsqrt",
+                "state_decay_mode": "poly-composed",
+            },
             "measurement_scope": {
                 "source_style_full_layer_formula": True,
                 "full_visible_output_checked": True,
@@ -124,7 +128,8 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
                 "visible_handoff_ciphertext": True,
                 "no_intermediate_decrypt": True,
             },
-            "operation_counts": {"decrypt": 3},
+            "operation_counts": {"ct_ct_mul": 26, "decrypt": 3},
+            "timing": {"setup_seconds": 11.7, "eval_seconds": 0.8},
         },
         client_decode_smoke={
             "passed": True,
@@ -209,6 +214,9 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
     assert report["measurements"]["range_scale_plan"]["worst_activation_abs"] == 27.75
     assert report["measurements"]["checkpoint_full_layer_gate"]["passed"] is True
     assert report["measurements"]["checkpoint_full_layer_gate"]["rotation_count"] == 1559
+    assert report["measurements"]["checkpoint_full_layer_gate"]["rms_norm_mode"] == "newton-invsqrt"
+    assert report["measurements"]["checkpoint_full_layer_gate"]["ct_ct_mul_count"] == 26
+    assert report["measurements"]["checkpoint_full_layer_gate"]["eval_seconds"] == 0.8
     assert report["measurements"]["client_decode_smoke"]["new_token_ids"] == [44191]
     assert report["measurements"]["segment_samples"]["bootstrap_enabled_sample_count"] == 1
     assert report["measurements"]["all_layer_recurrence"]["success_count"] == 24
