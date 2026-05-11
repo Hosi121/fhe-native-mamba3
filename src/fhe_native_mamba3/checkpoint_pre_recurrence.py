@@ -13,6 +13,7 @@ from torch.nn import functional
 
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.tracking import TrackingBackend
+from fhe_native_mamba3.mamba_checkpoint import _fit_tensor
 from fhe_native_mamba3.mamba_reference import (
     _build_layer_tensors,
     _run_source_dynamic_formula,
@@ -29,6 +30,7 @@ PreRecurrenceStage = Literal[
     "gate_post_silu",
 ]
 RmsNormMode = Literal["plaintext-exact", "poly-invsqrt", "newton-invsqrt"]
+StateDecayMode = Literal["plaintext-exact", "poly-composed"]
 
 PRE_RECURRENCE_STAGES: tuple[PreRecurrenceStage, ...] = (
     "rms_norm_output",
@@ -64,6 +66,9 @@ class CheckpointPreRecurrenceStageGate:
     inv_sqrt_range: tuple[float, float] | None
     newton_iterations: int | None
     newton_range: tuple[float, float] | None
+    state_decay_mode: str | None
+    decay_polynomial_degree: int | None
+    decay_polynomial_range: tuple[float, float] | None
     max_abs_error: float
     atol: float
     passed: bool
@@ -97,6 +102,9 @@ def run_checkpoint_pre_recurrence_stage_gate(
     inv_sqrt_range: tuple[float, float] = (0.01, 4.0),
     newton_iterations: int = 2,
     newton_range: tuple[float, float] = (0.25, 0.5),
+    state_decay_mode: StateDecayMode = "plaintext-exact",
+    decay_polynomial_degree: int = 5,
+    decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
     atol: float = 1e-6,
 ) -> CheckpointPreRecurrenceStageGate:
     """Run one source-style pre-recurrence stage with encrypted stage arithmetic."""
@@ -130,6 +138,15 @@ def run_checkpoint_pre_recurrence_stage_gate(
         raise ValueError(msg)
     if newton_range[0] <= 0 or newton_range[1] <= newton_range[0]:
         msg = "newton_range must be a positive increasing pair"
+        raise ValueError(msg)
+    if state_decay_mode not in {"plaintext-exact", "poly-composed"}:
+        msg = f"unsupported state_decay_mode: {state_decay_mode}"
+        raise ValueError(msg)
+    if decay_polynomial_degree <= 0:
+        msg = "decay_polynomial_degree must be positive"
+        raise ValueError(msg)
+    if decay_polynomial_range[1] <= decay_polynomial_range[0]:
+        msg = "decay_polynomial_range must be an increasing pair"
         raise ValueError(msg)
     if atol < 0:
         msg = "atol must be non-negative"
@@ -269,16 +286,42 @@ def run_checkpoint_pre_recurrence_stage_gate(
         if stages.decay_by_token is None:
             msg = f"layer {layer_index} has no token-dependent state-rank decay"
             raise ValueError(msg)
-        output_cts = tuple(
-            resolved_backend.encrypt(row)
-            for row in _rank_state_decay_rows(stages.decay_by_token[0])
-        )
+        if state_decay_mode == "poly-composed":
+            if (
+                tensors.dt_in_weight is None
+                or tensors.dt_proj_weight is None
+                or tensors.dt_proj_bias is None
+            ):
+                msg = f"layer {layer_index} has no dt projection for state-rank decay"
+                raise ValueError(msg)
+            output_cts = _state_rank_decay_sequence_ciphertexts(
+                _token_rows(stages.causal_conv_post_silu[0]),
+                dt_in_weight=tensors.dt_in_weight,
+                dt_proj_weight=tensors.dt_proj_weight,
+                dt_proj_bias=tensors.dt_proj_bias,
+                a_log=tensors.a_log,
+                d_state=resolved_d_state,
+                mimo_rank=resolved_rank,
+                backend=resolved_backend,
+                degree=decay_polynomial_degree,
+                approximation_range=decay_polynomial_range,
+            )
+            operation_class = "ct-pt dt projection + ct-ct composed decay polynomial"
+            approximation = "chebyshev-power-exp-softplus-decay"
+            degree = decay_polynomial_degree
+            poly_range = None
+            depth = decay_polynomial_degree
+        else:
+            output_cts = tuple(
+                resolved_backend.encrypt(row)
+                for row in _rank_state_decay_rows(stages.decay_by_token[0])
+            )
+            operation_class = "plaintext exact stage output"
+            approximation = "exact-plaintext"
+            degree = None
+            poly_range = None
+            depth = 0
         expected = stages.decay_by_token[0].reshape(stages.decay_by_token.shape[1], -1)
-        operation_class = "plaintext exact stage output"
-        approximation = "exact-plaintext"
-        degree = None
-        poly_range = None
-        depth = 0
     else:
         if tensors.gate_weight is None:
             msg = f"layer {layer_index} is missing gate weights"
@@ -335,6 +378,9 @@ def run_checkpoint_pre_recurrence_stage_gate(
         inv_sqrt_range=inv_sqrt_range if stage == "rms_norm_output" else None,
         newton_iterations=newton_iterations if stage == "rms_norm_output" else None,
         newton_range=newton_range if stage == "rms_norm_output" else None,
+        state_decay_mode=state_decay_mode if stage == "state_rank_decay" else None,
+        decay_polynomial_degree=(decay_polynomial_degree if stage == "state_rank_decay" else None),
+        decay_polynomial_range=(decay_polynomial_range if stage == "state_rank_decay" else None),
         max_abs_error=max_abs_error,
         atol=atol,
         passed=max_abs_error <= atol,
@@ -614,6 +660,99 @@ def _silu_ciphertext(
     )
 
 
+def _state_rank_decay_sequence_ciphertexts(
+    input_rows: tuple[tuple[float, ...], ...],
+    *,
+    dt_in_weight: Tensor,
+    dt_proj_weight: Tensor,
+    dt_proj_bias: Tensor,
+    a_log: Tensor,
+    d_state: int,
+    mimo_rank: int,
+    backend: FHEBackend,
+    degree: int,
+    approximation_range: tuple[float, float],
+) -> tuple[Any, ...]:
+    coefficient_vectors = _decay_polynomial_coefficient_vectors(
+        a_log,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        degree=degree,
+        approximation_range=approximation_range,
+    )
+    bias_values = [float(value) for value in dt_proj_bias.detach().cpu().float().reshape(-1)]
+    return tuple(
+        _state_rank_decay_ciphertext(
+            backend.encrypt(row),
+            dt_in_weight=dt_in_weight,
+            dt_proj_weight=dt_proj_weight,
+            dt_proj_bias=bias_values,
+            coefficient_vectors=coefficient_vectors,
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            backend=backend,
+        )
+        for row in input_rows
+    )
+
+
+def _state_rank_decay_ciphertext(
+    conv_post_ct: Any,
+    *,
+    dt_in_weight: Tensor,
+    dt_proj_weight: Tensor,
+    dt_proj_bias: list[float],
+    coefficient_vectors: tuple[tuple[float, ...], ...],
+    d_state: int,
+    mimo_rank: int,
+    backend: FHEBackend,
+) -> Any:
+    dt_hidden_ct = _linear_ciphertext(
+        conv_post_ct,
+        weight=dt_in_weight,
+        bias=[0.0] * int(dt_in_weight.shape[0]),
+        backend=backend,
+    )
+    dt_pre_ct = _linear_ciphertext(
+        dt_hidden_ct,
+        weight=dt_proj_weight,
+        bias=dt_proj_bias,
+        backend=backend,
+    )
+    repeated_dt_ct = _repeat_rank_slots_ciphertext(
+        dt_pre_ct,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        backend=backend,
+    )
+    return _evaluate_vector_power_polynomial_ciphertext(
+        repeated_dt_ct,
+        coefficient_vectors,
+        output_dim=d_state * mimo_rank,
+        backend=backend,
+    )
+
+
+def _repeat_rank_slots_ciphertext(
+    rank_ct: Any,
+    *,
+    d_state: int,
+    mimo_rank: int,
+    backend: FHEBackend,
+) -> Any:
+    output_ct = backend.encrypt([0.0] * backend.batch_size)
+    for rank_index in range(mimo_rank):
+        mask = [0.0] * backend.batch_size
+        mask[rank_index] = 1.0
+        selected = backend.mul_plain(rank_ct, backend.encode(mask))
+        for state_index in range(d_state):
+            output_slot = rank_index * d_state + state_index
+            shift = rank_index - output_slot
+            term = selected if shift == 0 else backend.rotate(selected, shift)
+            output_ct = backend.add(output_ct, term)
+    return output_ct
+
+
 def _evaluate_power_polynomial_ciphertext(
     input_ct: Any,
     coefficients: tuple[float, ...],
@@ -625,6 +764,23 @@ def _evaluate_power_polynomial_ciphertext(
     for coefficient in reversed(coefficients[:-1]):
         result = backend.mul_ct(result, input_ct)
         result = backend.add(result, backend.encrypt([float(coefficient)] * output_dim))
+    return result
+
+
+def _evaluate_vector_power_polynomial_ciphertext(
+    input_ct: Any,
+    coefficient_vectors: tuple[tuple[float, ...], ...],
+    *,
+    output_dim: int,
+    backend: FHEBackend,
+) -> Any:
+    result = backend.encrypt(_padded(coefficient_vectors[-1][:output_dim], backend.batch_size))
+    for coefficient_vector in reversed(coefficient_vectors[:-1]):
+        result = backend.mul_ct(result, input_ct)
+        result = backend.add(
+            result,
+            backend.encrypt(_padded(coefficient_vector[:output_dim], backend.batch_size)),
+        )
     return result
 
 
@@ -650,6 +806,44 @@ def _inv_sqrt_power_coefficients(
     lower, upper = approximation_range
     xs = np.linspace(lower, upper, max(2048, 128 * degree + 1))
     ys = 1.0 / np.sqrt(xs)
+    chebyshev = Chebyshev.fit(xs, ys, deg=degree, domain=[lower, upper])
+    polynomial = chebyshev.convert(kind=Polynomial)
+    return tuple(float(value) for value in polynomial.coef)
+
+
+def _decay_polynomial_coefficient_vectors(
+    a_log: Tensor,
+    *,
+    d_state: int,
+    mimo_rank: int,
+    degree: int,
+    approximation_range: tuple[float, float],
+) -> tuple[tuple[float, ...], ...]:
+    if a_log.ndim == 1:
+        a_fitted = _fit_tensor(a_log.reshape(-1, 1), (mimo_rank, 1)).expand(
+            mimo_rank,
+            d_state,
+        )
+    else:
+        a_fitted = _fit_tensor(a_log, (mimo_rank, d_state))
+    a_pos_values = [float(value) for value in a_fitted.exp().reshape(-1)]
+    coefficients_by_slot = [
+        _decay_power_coefficients(degree, approximation_range, a_pos) for a_pos in a_pos_values
+    ]
+    return tuple(
+        tuple(slot_coefficients[coefficient_index] for slot_coefficients in coefficients_by_slot)
+        for coefficient_index in range(degree + 1)
+    )
+
+
+def _decay_power_coefficients(
+    degree: int,
+    approximation_range: tuple[float, float],
+    a_pos: float,
+) -> tuple[float, ...]:
+    lower, upper = approximation_range
+    xs = np.linspace(lower, upper, max(2048, 128 * degree + 1))
+    ys = np.exp(-a_pos * np.log1p(np.exp(xs)))
     chebyshev = Chebyshev.fit(xs, ys, deg=degree, domain=[lower, upper])
     polynomial = chebyshev.convert(kind=Polynomial)
     return tuple(float(value) for value in polynomial.coef)

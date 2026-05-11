@@ -100,6 +100,35 @@ def test_pre_recurrence_rms_norm_newton_gate_reports_encrypted_approximation() -
     assert gate.max_abs_error < 1e-2
 
 
+def test_pre_recurrence_state_rank_decay_poly_composed_gate_reports_approximation() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    gate = run_checkpoint_pre_recurrence_stage_gate(
+        state_dict,
+        layer_input,
+        stage="state_rank_decay",
+        d_state=2,
+        mimo_rank=4,
+        backend=TrackingBackend(batch_size=8),
+        state_decay_mode="poly-composed",
+        decay_polynomial_degree=5,
+        decay_polynomial_range=(-0.5, 0.5),
+        atol=1e-3,
+    )
+
+    assert gate.passed is True
+    assert gate.operation_class == "ct-pt dt projection + ct-ct composed decay polynomial"
+    assert gate.approximation == "chebyshev-power-exp-softplus-decay"
+    assert gate.state_decay_mode == "poly-composed"
+    assert gate.decay_polynomial_degree == 5
+    assert gate.decay_polynomial_range == (-0.5, 0.5)
+    assert gate.depth_estimate == 5
+    assert gate.backend_stats["ct_pt_mul_count"] > 0
+    assert gate.backend_stats["ct_ct_mul_count"] > 0
+    assert gate.max_abs_error < 1e-3
+
+
 @pytest.mark.parametrize("stage", ["dynamic_b", "dynamic_c"])
 def test_pre_recurrence_dynamic_bc_gates_match_source(stage: str) -> None:
     state_dict = _tiny_hf_mamba_state_dict()
