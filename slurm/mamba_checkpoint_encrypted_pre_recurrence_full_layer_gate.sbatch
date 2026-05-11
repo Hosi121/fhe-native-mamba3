@@ -34,6 +34,8 @@ SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-40}"
 RING_DIM="${RING_DIM:-}"
 MAX_ROTATION_KEYS="${MAX_ROTATION_KEYS:-2048}"
 VISIBLE_DIM_LIMIT="${VISIBLE_DIM_LIMIT:-8}"
+VISIBLE_OUTPUT_SCALE="${VISIBLE_OUTPUT_SCALE:-}"
+SCALE_PLAN_JSON="${SCALE_PLAN_JSON:-}"
 ATOL="${ATOL:-5e-2}"
 NORM_EPS="${NORM_EPS:-1e-5}"
 POLYNOMIAL_DEGREE="${POLYNOMIAL_DEGREE:-7}"
@@ -104,6 +106,13 @@ openfhe_args=()
 if [[ -n "${RING_DIM}" ]]; then
   openfhe_args+=(--ring-dim "${RING_DIM}")
 fi
+scale_args=()
+if [[ -n "${VISIBLE_OUTPUT_SCALE}" ]]; then
+  scale_args+=(--visible-output-scale "${VISIBLE_OUTPUT_SCALE}")
+fi
+if [[ -f "${SCALE_PLAN_JSON}" ]]; then
+  scale_args+=(--scale-plan-json "${SCALE_PLAN_JSON}")
+fi
 
 "${PYTHON}" scripts/run_checkpoint_encrypted_pre_recurrence_full_layer_gate.py \
   "${CHECKPOINT}" \
@@ -130,6 +139,7 @@ fi
   --decay-polynomial-degree "${DECAY_POLYNOMIAL_DEGREE}" \
   --decay-polynomial-range="${DECAY_POLYNOMIAL_RANGE}" \
   --max-statuses 2 \
+  "${scale_args[@]}" \
   "${openfhe_args[@]}" \
   --output-json "${OUTPUT_JSON}" > "${STDOUT_JSON}"
 
@@ -148,6 +158,8 @@ summary = {
     "seq_len": payload["model"]["seq_len"],
     "d_model": payload["model"]["d_model"],
     "checked_visible_dim": payload["model"]["checked_visible_dim"],
+    "visible_output_scale": payload["model"]["visible_output_scale"],
+    "scale_plan": payload["model"]["scale_plan"],
     "pre_recurrence_depth_estimate": payload["approximation"][
         "pre_recurrence_depth_estimate"
     ],
