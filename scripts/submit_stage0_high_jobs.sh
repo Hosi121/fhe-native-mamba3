@@ -17,6 +17,7 @@ PY
 DRY_RUN="${DRY_RUN:-0}"
 
 SUBMIT_FULL_LAYER_GATE="${SUBMIT_FULL_LAYER_GATE:-1}"
+SUBMIT_ENCRYPTED_PRE_RECURRENCE_FULL_LAYER_GATE="${SUBMIT_ENCRYPTED_PRE_RECURRENCE_FULL_LAYER_GATE:-1}"
 SUBMIT_RECURRENCE_CHAIN="${SUBMIT_RECURRENCE_CHAIN:-1}"
 SUBMIT_BOOTSTRAP_LATENCY="${SUBMIT_BOOTSTRAP_LATENCY:-1}"
 SUBMIT_FULL_LAYER_SWEEP="${SUBMIT_FULL_LAYER_SWEEP:-1}"
@@ -59,6 +60,19 @@ if [[ "${SUBMIT_FULL_LAYER_GATE}" == "1" ]]; then
       SCALING_MOD_SIZE=40 \
       MAX_ROTATION_KEYS=256 \
       sbatch slurm/mamba_checkpoint_full_layer_gate.sbatch
+fi
+
+if [[ "${SUBMIT_ENCRYPTED_PRE_RECURRENCE_FULL_LAYER_GATE}" == "1" ]]; then
+  run_cmd "tracking encrypted pre-recurrence full-layer gate" \
+    env \
+      PYTHON="${PYTHON}" \
+      CHECKPOINT="${CHECKPOINT}" \
+      RUN_NAME="${RUN_PREFIX}-tracking-encrypted-pre-full-gate-l0-vis8" \
+      BACKEND=tracking \
+      LAYER_INDEX=0 \
+      PROMPT=1 \
+      VISIBLE_DIM_LIMIT=8 \
+      sbatch slurm/mamba_checkpoint_encrypted_pre_recurrence_full_layer_gate.sbatch
 fi
 
 if [[ "${SUBMIT_RECURRENCE_CHAIN}" == "1" ]]; then
