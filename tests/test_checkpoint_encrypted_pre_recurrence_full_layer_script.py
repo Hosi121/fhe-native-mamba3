@@ -63,6 +63,48 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_script_runs_tracking(
     assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
 
 
+def test_checkpoint_encrypted_pre_recurrence_full_layer_script_shrinks_plaintext_exact_keys(
+    tmp_path,
+) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    torch.save({"model": _tiny_hf_mamba_state_dict()}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_checkpoint_encrypted_pre_recurrence_full_layer_gate.py",
+            str(checkpoint_path),
+            "--backend",
+            "tracking",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "4",
+            "--n-layers",
+            "1",
+            "--prompt",
+            "1",
+            "--visible-dim-limit",
+            "3",
+            "--rms-norm-mode",
+            "plaintext-exact",
+            "--state-decay-mode",
+            "plaintext-exact",
+            "--atol",
+            "5e-2",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["passed"] is True
+    assert payload["ckks"]["rotation_count"] < 800
+    assert payload["approximation"]["rms_norm_mode"] == "plaintext-exact"
+    assert payload["approximation"]["state_decay_mode"] == "plaintext-exact"
+
+
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:
     return {
         "backbone.embeddings.weight": torch.arange(88, dtype=torch.float32).view(11, 8) / 100.0,

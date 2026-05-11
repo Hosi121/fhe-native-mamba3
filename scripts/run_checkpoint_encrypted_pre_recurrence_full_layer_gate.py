@@ -75,6 +75,9 @@ def main() -> int:
         mimo_rank=mimo_rank,
         readout_strategy=args.readout_strategy,
         visible_dim_limit=args.visible_dim_limit or None,
+        rms_norm_mode=args.rms_norm_mode,
+        state_decay_mode=args.state_decay_mode,
+        dt_rank=_resolve_dt_rank(state_dict, layer_index=args.layer_index),
     )
     if args.backend == "openfhe" and len(rotations) > args.max_rotation_keys:
         msg = (
@@ -245,6 +248,9 @@ def _required_rotations(
     mimo_rank: int,
     readout_strategy: str,
     visible_dim_limit: int | None,
+    rms_norm_mode: str,
+    state_decay_mode: str,
+    dt_rank: int | None,
 ) -> tuple[int, ...]:
     rotations = set(
         required_full_layer_visible_rotations(
@@ -255,11 +261,54 @@ def _required_rotations(
             visible_dim_limit=visible_dim_limit,
         )
     )
-    # RMSNorm reductions/broadcasts and dense diagonal-style linear layers in the
-    # encrypted pre-recurrence path can rotate across the d_model slots.
-    rotations.update(range(1, d_model))
-    rotations.update(range(1 - d_model, 0))
+    rotations.update(_linear_rotations(input_dim=d_model, output_dim=mimo_rank))
+    rotations.update(_linear_rotations(input_dim=mimo_rank, output_dim=d_state))
+    rotations.update(_expand_rank_rotations(d_state=d_state, rank=mimo_rank))
+    rotations.update(_expand_state_rotations(d_state=d_state, rank=mimo_rank))
+    if rms_norm_mode != "plaintext-exact":
+        rotations.update(range(1, d_model))
+        rotations.update(range(1 - d_model, 0))
+    if state_decay_mode == "poly-composed":
+        resolved_dt_rank = dt_rank if dt_rank is not None else mimo_rank
+        rotations.update(_linear_rotations(input_dim=mimo_rank, output_dim=resolved_dt_rank))
+        rotations.update(_linear_rotations(input_dim=resolved_dt_rank, output_dim=mimo_rank))
     return tuple(sorted(rotations))
+
+
+def _linear_rotations(*, input_dim: int, output_dim: int) -> set[int]:
+    return {
+        input_index - output_index
+        for output_index in range(output_dim)
+        for input_index in range(input_dim)
+        if input_index != output_index
+    }
+
+
+def _expand_rank_rotations(*, d_state: int, rank: int) -> set[int]:
+    return {
+        rank_index - (rank_index * d_state + state_index)
+        for rank_index in range(rank)
+        for state_index in range(d_state)
+        if rank_index != rank_index * d_state + state_index
+    }
+
+
+def _expand_state_rotations(*, d_state: int, rank: int) -> set[int]:
+    return {
+        state_index - (rank_index * d_state + state_index)
+        for state_index in range(d_state)
+        for rank_index in range(rank)
+        if state_index != rank_index * d_state + state_index
+    }
+
+
+def _resolve_dt_rank(state_dict: dict[str, torch.Tensor], *, layer_index: int) -> int | None:
+    from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint
+
+    plan = plan_mamba_checkpoint(state_dict)
+    if layer_index >= len(plan.layers):
+        return None
+    return plan.layers[layer_index].inferred_dt_rank
 
 
 def _resolve_shape(
