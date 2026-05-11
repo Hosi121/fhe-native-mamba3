@@ -239,6 +239,8 @@ def _checkpoint_full_layer_gate_summary(payload: dict[str, Any] | None) -> dict[
         "source_style_full_layer_formula": bool(scope.get("source_style_full_layer_formula")),
         "full_visible_output_checked": bool(scope.get("full_visible_output_checked")),
         "partial_visible_output_checked": bool(scope.get("partial_visible_output_checked")),
+        "pre_recurrence_ciphertext": bool(result.get("pre_recurrence_ciphertext")),
+        "pre_recurrence_depth_estimate": result.get("pre_recurrence_depth_estimate"),
         "recurrence_ciphertext": bool(result.get("recurrence_ciphertext")),
         "visible_handoff_ciphertext": bool(result.get("visible_handoff_ciphertext")),
         "no_intermediate_decrypt": bool(result.get("no_intermediate_decrypt")),

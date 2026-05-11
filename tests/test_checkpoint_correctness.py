@@ -218,10 +218,14 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_gate_matches_visible_out
     assert gate.passed is True
     assert gate.recurrence_ciphertext is True
     assert gate.visible_handoff_ciphertext is True
+    assert gate.pre_recurrence_ciphertext is True
+    assert gate.pre_recurrence_depth_estimate == 23
     assert gate.no_intermediate_decrypt is True
     assert gate.full_layer_formula_checked is True
     assert gate.max_abs_error < 5e-2
     assert payload["plaintext_precomputed_stages"] == ["residual_input"]
+    assert payload["pre_recurrence_ciphertext"] is True
+    assert payload["pre_recurrence_depth_estimate"] == 23
     assert payload["backend_stats"]["decrypt_count"] == gate.seq_len
 
 

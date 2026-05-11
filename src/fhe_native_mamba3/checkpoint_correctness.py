@@ -102,6 +102,8 @@ class CheckpointFullLayerCiphertextGate:
     plaintext_precomputed_stages: tuple[str, ...]
     backend_stats: dict[str, Any]
     notes: tuple[str, ...]
+    pre_recurrence_ciphertext: bool = False
+    pre_recurrence_depth_estimate: int | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -684,6 +686,8 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_gate(
             "gate and skip input come from encrypted pre-recurrence ciphertexts",
             "residual input is encrypted per token; lm_head/client decoding is not included",
         ),
+        pre_recurrence_ciphertext=True,
+        pre_recurrence_depth_estimate=pre_trace.depth_estimate,
     )
 
 
