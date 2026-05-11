@@ -1670,7 +1670,8 @@ def _decay_power_coefficients(
     ys = np.exp(-a_pos * np.log1p(np.exp(xs)))
     chebyshev = Chebyshev.fit(xs, ys, deg=degree, domain=[lower, upper])
     polynomial = chebyshev.convert(kind=Polynomial)
-    return tuple(float(value) for value in polynomial.coef)
+    coefficients = tuple(float(value) for value in polynomial.coef)
+    return coefficients + (0.0,) * (degree + 1 - len(coefficients))
 
 
 def _token_rows(tensor: Tensor) -> tuple[tuple[float, ...], ...]:

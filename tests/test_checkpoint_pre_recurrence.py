@@ -9,6 +9,8 @@ from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
     PRE_RECURRENCE_STAGES,
     _broadcast_slot0,
+    _decay_polynomial_coefficient_vectors,
+    _decay_power_coefficients,
     _evaluate_power_polynomial_ciphertext,
     _evaluate_vector_power_polynomial_ciphertext,
     _mean_square_ciphertext,
@@ -89,6 +91,26 @@ def test_vector_power_polynomial_evaluator_trims_tiny_coefficients() -> None:
     )
 
     assert backend.decrypt(result, length=3) == (2.0, 2.75, 3.5)
+
+
+def test_decay_polynomial_coefficients_are_padded_to_requested_degree() -> None:
+    coefficient_vectors = _decay_polynomial_coefficient_vectors(
+        torch.zeros(4),
+        d_state=2,
+        mimo_rank=4,
+        degree=5,
+        approximation_range=(-0.5, 0.5),
+    )
+
+    assert len(coefficient_vectors) == 6
+    assert all(len(vector) == 8 for vector in coefficient_vectors)
+
+    scalar_coefficients = _decay_power_coefficients(
+        5,
+        (-0.5, 0.5),
+        0.0,
+    )
+    assert scalar_coefficients == pytest.approx((1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
 
 
 def test_rms_norm_rotation_inventory_uses_log_steps_for_power_two_batch() -> None:
