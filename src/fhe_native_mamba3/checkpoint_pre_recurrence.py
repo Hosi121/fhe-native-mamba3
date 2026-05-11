@@ -942,19 +942,46 @@ def _linear_ciphertext(
 ) -> Any:
     output_dim = int(weight.shape[0])
     input_dim = int(weight.shape[1])
+    return slot_linear_ciphertext(
+        input_ct,
+        source_slots=tuple(range(input_dim)),
+        weight=weight,
+        bias=bias,
+        output_dim=output_dim,
+        backend=backend,
+    )
+
+
+def slot_linear_ciphertext(
+    input_ct: Any,
+    *,
+    source_slots: tuple[int, ...],
+    weight: Tensor,
+    bias: list[float],
+    output_dim: int,
+    backend: FHEBackend,
+) -> Any:
+    """Evaluate a dense linear map from selected slots into contiguous output slots."""
+
+    if int(weight.shape[0]) < output_dim:
+        msg = "weight first dimension must cover output_dim"
+        raise ValueError(msg)
+    if int(weight.shape[1]) != len(source_slots):
+        msg = "weight second dimension must match source_slots"
+        raise ValueError(msg)
     output_ct = backend.encrypt(_padded(bias[:output_dim], backend.batch_size))
-    baby_step = linear_bsgs_baby_step(input_dim=input_dim, output_dim=output_dim)
+    baby_step = slot_linear_bsgs_baby_step(source_slots=source_slots, output_dim=output_dim)
     baby_cts: dict[int, Any] = {}
     grouped_masks: dict[tuple[int, int], list[float]] = {}
     for output_index in range(output_dim):
-        for input_index in range(input_dim):
-            coefficient = float(weight[output_index, input_index])
+        for source_index, source_slot in enumerate(source_slots):
+            coefficient = float(weight[output_index, source_index])
             if coefficient == 0.0:
                 continue
-            giant_index, baby_index = divmod(input_index - output_index, baby_step)
+            giant_index, baby_index = divmod(source_slot - output_index, baby_step)
             key = (giant_index, baby_index)
             mask = grouped_masks.setdefault(key, [0.0] * backend.batch_size)
-            mask[(input_index - baby_index) % backend.batch_size] = coefficient
+            mask[(source_slot - baby_index) % backend.batch_size] = coefficient
 
     for giant_index, baby_index in sorted(grouped_masks):
         if baby_index not in baby_cts:
@@ -981,17 +1008,47 @@ def linear_bsgs_baby_step(*, input_dim: int, output_dim: int) -> int:
     if output_dim <= 0:
         msg = "output_dim must be positive"
         raise ValueError(msg)
-    return max(1, math.ceil(math.sqrt(input_dim + output_dim - 1)))
+    return slot_linear_bsgs_baby_step(
+        source_slots=tuple(range(input_dim)),
+        output_dim=output_dim,
+    )
 
 
 def linear_bsgs_rotation_steps(*, input_dim: int, output_dim: int) -> tuple[int, ...]:
     """Rotation-key inventory for ``_linear_ciphertext``'s BSGS schedule."""
 
-    baby_step = linear_bsgs_baby_step(input_dim=input_dim, output_dim=output_dim)
+    return slot_linear_bsgs_rotation_steps(
+        source_slots=tuple(range(input_dim)),
+        output_dim=output_dim,
+    )
+
+
+def slot_linear_bsgs_baby_step(*, source_slots: tuple[int, ...], output_dim: int) -> int:
+    """Baby-step width for selected-source slot-linear evaluation."""
+
+    if not source_slots:
+        msg = "source_slots must not be empty"
+        raise ValueError(msg)
+    if output_dim <= 0:
+        msg = "output_dim must be positive"
+        raise ValueError(msg)
+    min_shift = min(source_slots) - (output_dim - 1)
+    max_shift = max(source_slots)
+    return max(1, math.ceil(math.sqrt(max_shift - min_shift + 1)))
+
+
+def slot_linear_bsgs_rotation_steps(
+    *,
+    source_slots: tuple[int, ...],
+    output_dim: int,
+) -> tuple[int, ...]:
+    """Rotation-key inventory for ``slot_linear_ciphertext``'s BSGS schedule."""
+
+    baby_step = slot_linear_bsgs_baby_step(source_slots=source_slots, output_dim=output_dim)
     rotations: set[int] = set()
     for output_index in range(output_dim):
-        for input_index in range(input_dim):
-            giant_index, baby_index = divmod(input_index - output_index, baby_step)
+        for source_slot in source_slots:
+            giant_index, baby_index = divmod(source_slot - output_index, baby_step)
             if baby_index:
                 rotations.add(baby_index)
             giant_shift = giant_index * baby_step

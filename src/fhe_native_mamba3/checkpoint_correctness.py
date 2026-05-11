@@ -13,6 +13,8 @@ from fhe_native_mamba3.checkpoint_pre_recurrence import (
     RmsNormMode,
     StateDecayMode,
     run_checkpoint_pre_recurrence_ciphertexts_with_backend,
+    slot_linear_bsgs_rotation_steps,
+    slot_linear_ciphertext,
 )
 from fhe_native_mamba3.ciphertext_handoff import (
     CiphertextHandoffLayer,
@@ -1138,22 +1140,14 @@ def _project_rank_slots_to_visible(
     if int(out_proj_weight.shape[1]) != len(output_slots):
         msg = "out_proj_weight second dimension must match recurrence rank"
         raise ValueError(msg)
-
-    output_ct = backend.encrypt([0.0] * backend.batch_size)
-    weights = out_proj_weight.detach().cpu()
-    for visible_index in range(checked_visible_dim):
-        for rank_index, source in enumerate(output_slots):
-            weight = float(weights[visible_index, rank_index])
-            if weight == 0.0:
-                continue
-            mask = [0.0] * backend.batch_size
-            mask[source] = weight
-            term = backend.mul_plain(rank_ct, backend.encode(mask))
-            shift = source - visible_index
-            if shift:
-                term = backend.rotate(term, shift)
-            output_ct = backend.add(output_ct, term)
-    return output_ct
+    return slot_linear_ciphertext(
+        rank_ct,
+        source_slots=output_slots,
+        weight=out_proj_weight.detach().cpu().float(),
+        bias=[0.0] * checked_visible_dim,
+        output_dim=checked_visible_dim,
+        backend=backend,
+    )
 
 
 def required_full_layer_visible_rotations(
@@ -1185,11 +1179,12 @@ def required_full_layer_visible_rotations(
             readout_strategy=readout_strategy,
         )
     )
-    for visible_index in range(checked_visible_dim):
-        for source in output_slots:
-            shift = source - visible_index
-            if shift:
-                rotations.add(shift)
+    rotations.update(
+        slot_linear_bsgs_rotation_steps(
+            source_slots=output_slots,
+            output_dim=checked_visible_dim,
+        )
+    )
     return tuple(sorted(rotations))
 
 

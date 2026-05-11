@@ -460,9 +460,8 @@ def test_full_layer_visible_rotation_inventory_covers_rank_projection() -> None:
         readout_strategy="rank-local",
     )
 
-    assert -7 in rotations
-    assert 6 in rotations
     assert 1 in rotations
+    assert len(rotations) == 6
 
     partial_rotations = required_full_layer_visible_rotations(
         d_model=8,
@@ -472,7 +471,14 @@ def test_full_layer_visible_rotation_inventory_covers_rank_projection() -> None:
         visible_dim_limit=3,
     )
     assert len(partial_rotations) < len(rotations)
-    assert -7 not in partial_rotations
+
+    full_model_rotations = required_full_layer_visible_rotations(
+        d_model=768,
+        d_state=2,
+        mimo_rank=4,
+        readout_strategy="rank-local",
+    )
+    assert len(full_model_rotations) < 70
 
 
 def _tiny_hf_mamba_state_dict(layer_count: int = 1) -> dict[str, torch.Tensor]:
