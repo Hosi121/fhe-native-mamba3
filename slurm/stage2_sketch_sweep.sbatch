@@ -27,6 +27,7 @@ DECAY_JITTER="${DECAY_JITTER:-0.04}"
 UPDATE_SCALE="${UPDATE_SCALE:-0.05}"
 READOUT_SCALE="${READOUT_SCALE:-0.05}"
 MAX_PAIRNORM_L2_ERROR="${MAX_PAIRNORM_L2_ERROR:-0.25}"
+TRAJECTORY_JSON="${TRAJECTORY_JSON:-}"
 
 mkdir -p runs slurm
 export PYTHONPATH="${PWD}/src:${PYTHONPATH:-}"
@@ -45,6 +46,11 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 fi
 
 section "Run Stage 2 sketch sweep"
+trajectory_args=()
+if [[ -n "${TRAJECTORY_JSON}" ]]; then
+  trajectory_args=(--trajectory-json "${TRAJECTORY_JSON}")
+fi
+
 "${PYTHON}" scripts/run_stage2_sketch_sweep.py \
   --state-width "${STATE_WIDTH}" \
   --seq-len "${SEQ_LEN}" \
@@ -56,6 +62,7 @@ section "Run Stage 2 sketch sweep"
   --update-scale "${UPDATE_SCALE}" \
   --readout-scale "${READOUT_SCALE}" \
   --max-pairnorm-l2-error "${MAX_PAIRNORM_L2_ERROR}" \
+  "${trajectory_args[@]}" \
   --output-json "${OUTPUT_JSON}"
 
 section "Summary"

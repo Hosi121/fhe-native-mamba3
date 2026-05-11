@@ -57,6 +57,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_profile",
         "CheckpointSourceProfileLayer",
     ),
+    "CheckpointSourceSketchTrace": (
+        "fhe_native_mamba3.checkpoint_sketch_trace",
+        "CheckpointSourceSketchTrace",
+    ),
     "CheckpointRecurrenceCorrectnessGate": (
         "fhe_native_mamba3.checkpoint_correctness",
         "CheckpointRecurrenceCorrectnessGate",
@@ -300,6 +304,10 @@ _LAZY_IMPORTS = {
     "build_rotation_inventory": (
         "fhe_native_mamba3.rotation_inventory",
         "build_rotation_inventory",
+    ),
+    "build_checkpoint_source_sketch_trace": (
+        "fhe_native_mamba3.checkpoint_sketch_trace",
+        "build_checkpoint_source_sketch_trace",
     ),
     "build_bootstrap_execution_schedule": (
         "fhe_native_mamba3.bootstrap_schedule",
@@ -671,6 +679,7 @@ __all__ = [
     "CheckpointRecurrenceCorrectnessGate",
     "CheckpointSourceProfile",
     "CheckpointSourceProfileLayer",
+    "CheckpointSourceSketchTrace",
     "CheckpointTensorSpec",
     "CheckpointVisibleProjectionSweepResult",
     "CheckpointVisibleProjectionSweepRow",
@@ -746,6 +755,7 @@ __all__ = [
     "backend_segmented_hillis_steele_affine_scan",
     "backend_segmented_hillis_steele_prefix_products",
     "build_bootstrap_execution_schedule",
+    "build_checkpoint_source_sketch_trace",
     "build_mamba_source_recurrence_problem",
     "build_mamba_source_visible_handoff_tensors",
     "build_packed_prefix_scan_plan",

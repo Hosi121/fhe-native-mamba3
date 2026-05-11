@@ -86,6 +86,12 @@ Current partial implementation:
   recurrence compatibility, readout inner-product error, compression ratio, and
   SRHT rotation metadata. This is design evidence only; checkpoint perplexity
   and encrypted sketch execution remain separate gates.
+- `scripts/run_checkpoint_source_sketch_trace.py` extracts plaintext
+  source-style checkpoint state/update/readout trajectories for selected ranks,
+  and `scripts/run_stage2_sketch_sweep.py --trajectory-json ...` can consume
+  that artifact. Rank/state selective decay is marked as non-commuting with the
+  scalar SRHT recurrence claim, so these rows measure direct-state readout error
+  rather than encrypted/sketched recurrence correctness.
 
 ## Version Boundary
 
