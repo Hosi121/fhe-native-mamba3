@@ -82,3 +82,41 @@ def test_build_stage1_plan_script_accepts_source_profile(tmp_path) -> None:
     assert payload["recommended_candidate"]["pack_size"] == 8
     assert payload["profile_hints"]["known_head_range_count"] == 2
     assert persisted["recommended_candidate"] == payload["recommended_candidate"]
+
+
+def test_build_stage1_plan_script_accepts_explicit_shape_without_profile(tmp_path) -> None:
+    output_json = tmp_path / "stage1-plan-explicit.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/build_stage1_plan.py",
+            "--head-count",
+            "32",
+            "--d-state",
+            "64",
+            "--d-model",
+            "768",
+            "--scan-len",
+            "256",
+            "--window",
+            "64",
+            "--slot-count",
+            "32768",
+            "--candidate-pack-sizes",
+            "4,8,16,32",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+
+    assert payload["version"] == __version__
+    assert payload["profile_hints"] is None
+    assert payload["recommended_candidate"]["pack_size"] == 8
+    assert payload["recommended_candidate"]["requires_cross_ciphertext_carry"] is False
+    assert any(candidate["requires_cross_ciphertext_carry"] for candidate in payload["candidates"])

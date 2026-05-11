@@ -32,10 +32,14 @@ def test_stage1_plan_combines_scan_packing_and_rotation_inventory() -> None:
     assert payload["stage"] == "stage1-plan"
     assert payload["measurement_scope"]["benchmark"] is False
     assert payload["window"] == 64
-    assert recommended["pack_size"] == 32
+    assert recommended["pack_size"] == 8
     assert recommended["recommendation_rank"] == 1
     assert recommended["scan_depth"] == 6
-    assert recommended["estimated_bootstrap_amortization"] == pytest.approx(32.0)
+    assert recommended["estimated_bootstrap_amortization"] == pytest.approx(8.0)
+    assert recommended["packed_scan_lanes"] == 512
+    assert recommended["tokens_per_scan_ciphertext"] == 64
+    assert recommended["requires_cross_ciphertext_carry"] is False
+    assert any(candidate["requires_cross_ciphertext_carry"] for candidate in candidates)
     assert any(candidate["grouping_strategy"] == "range-sorted" for candidate in candidates)
     assert all(candidate["rotation_key_count"] > 0 for candidate in candidates)
     assert any(
@@ -64,7 +68,8 @@ def test_stage1_plan_respects_key_memory_budget_in_recommendation() -> None:
     )
 
     assert plan.recommended_candidate.feasible_under_key_budget is False
-    assert plan.recommended_candidate.pack_size == 32
+    assert plan.recommended_candidate.pack_size == 4
+    assert plan.recommended_candidate.requires_cross_ciphertext_carry is False
     assert plan.recommended_candidate.estimated_key_memory_gib > 10.0
 
 

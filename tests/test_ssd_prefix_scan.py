@@ -3,11 +3,15 @@ from __future__ import annotations
 import pytest
 import torch
 
+from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.ssd import sequential_static_scan, ssd_static_scan
 from fhe_native_mamba3.ssd_prefix_scan import (
     PlaintextPrefixScanKernel,
+    backend_hillis_steele_prefix_products,
+    build_packed_prefix_scan_plan,
     build_prefix_scan_metadata,
     causal_decay_weights,
+    packed_prefix_scan_rotation_steps,
     prefix_decay_products,
     ssd_prefix_scan,
     ssd_prefix_scan_prefill,
@@ -109,6 +113,69 @@ def test_prefix_scan_metadata_tracks_hillis_steele_and_blelloch_work() -> None:
         "down_sweep",
         "down_sweep",
     )
+
+
+def test_packed_prefix_scan_plan_accounts_for_lane_stride_and_slot_capacity() -> None:
+    plan = build_packed_prefix_scan_plan(
+        seq_len=64,
+        window=32,
+        lanes=16,
+        slot_count=64,
+    )
+
+    assert plan.tokens_per_ciphertext == 4
+    assert plan.ciphertext_count == 16
+    assert plan.in_ciphertext_window == 4
+    assert plan.rotations == (16, 32)
+    assert plan.scan_depth == 2
+    assert plan.requires_cross_ciphertext_carry is True
+    assert plan.to_json_dict()["lanes"] == 16
+
+    assert packed_prefix_scan_rotation_steps(seq_len=8, lanes=3, window=5) == (
+        3,
+        6,
+        12,
+    )
+
+
+def test_backend_hillis_steele_prefix_products_matches_packed_cumprod() -> None:
+    values = torch.tensor(
+        [
+            [0.5, 0.25],
+            [0.2, 0.4],
+            [0.1, 0.5],
+            [0.8, 0.2],
+        ],
+        dtype=torch.float32,
+    )
+    backend = TrackingBackend(batch_size=8)
+    decay_ct = backend.encrypt(tuple(float(value) for value in values.flatten()))
+
+    result = backend_hillis_steele_prefix_products(
+        decay_ct,
+        seq_len=4,
+        lanes=2,
+        backend=backend,
+    )
+    decrypted = torch.tensor(backend.decrypt(result.ciphertext, length=8)).view(4, 2)
+
+    assert torch.allclose(decrypted, torch.cumprod(values, dim=0))
+    assert result.plan.rotations == (2, 4)
+    assert backend.stats().rotation_count == 2
+    assert backend.stats().ct_ct_mul_count == 2
+
+
+def test_backend_hillis_steele_prefix_products_rejects_cross_ciphertext_scan() -> None:
+    backend = TrackingBackend(batch_size=4)
+    decay_ct = backend.encrypt((0.5, 0.5, 0.5, 0.5))
+
+    with pytest.raises(ValueError, match="fit in one ciphertext"):
+        backend_hillis_steele_prefix_products(
+            decay_ct,
+            seq_len=3,
+            lanes=2,
+            backend=backend,
+        )
 
 
 def test_ssd_prefix_scan_prefill_matches_sequential_and_ssd_scalar_decay() -> None:

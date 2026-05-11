@@ -57,6 +57,24 @@ def test_rotation_inventory_estimates_each_head_pack_size() -> None:
     assert estimates[8].estimated_key_memory_gib == estimates[8].unique_key_count * 32.0 / 1024.0
 
 
+def test_rotation_inventory_can_use_packed_time_major_scan_rotations() -> None:
+    inventory = build_rotation_inventory(
+        scan_len=8,
+        d_state=2,
+        d_model=8,
+        head_pack_sizes=(2, 4),
+        slot_count=16,
+        scan_lanes_by_head_pack=True,
+        matmul_diagonal_stride=8,
+    )
+
+    groups = {group.name: group for group in inventory.groups}
+    assert groups["scan"].steps == (4, 8)
+    estimates = {estimate.pack_size: estimate for estimate in inventory.head_pack_estimates}
+    assert 4 in estimates[2].unique_steps
+    assert 8 in estimates[4].unique_steps
+
+
 def test_rank_local_d_skip_does_not_need_alignment_rotations() -> None:
     inventory = build_rotation_inventory(
         scan_len=4,

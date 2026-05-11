@@ -117,6 +117,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.artifact_validation",
         "ArtifactValidationResult",
     ),
+    "BackendPrefixScanResult": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "BackendPrefixScanResult",
+    ),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
     "CiphertextHandoffLayer": (
         "fhe_native_mamba3.ciphertext_handoff",
@@ -190,6 +194,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_pre_recurrence",
         "encrypted_pre_recurrence_logical_batch_size",
     ),
+    "PackedPrefixScanPlan": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "PackedPrefixScanPlan",
+    ),
     "SsdPrefixScanResult": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "SsdPrefixScanResult",
@@ -261,6 +269,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.bootstrap_schedule",
         "build_bootstrap_execution_schedule",
     ),
+    "build_packed_prefix_scan_plan": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "build_packed_prefix_scan_plan",
+    ),
     "build_prefix_scan_metadata": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "build_prefix_scan_metadata",
@@ -276,6 +288,10 @@ _LAZY_IMPORTS = {
     "calibrate_weight_values": (
         "fhe_native_mamba3.weight_encoding",
         "calibrate_weight_values",
+    ),
+    "backend_hillis_steele_prefix_products": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "backend_hillis_steele_prefix_products",
     ),
     "causal_decay_weights": (
         "fhe_native_mamba3.ssd_prefix_scan",
@@ -379,6 +395,10 @@ _LAZY_IMPORTS = {
     "load_mapping_rules": ("fhe_native_mamba3.state_dict_mapping", "load_mapping_rules"),
     "make_demo_problem": ("fhe_native_mamba3.openfhe_backend", "make_demo_problem"),
     "map_state_dict": ("fhe_native_mamba3.state_dict_mapping", "map_state_dict"),
+    "packed_prefix_scan_rotation_steps": (
+        "fhe_native_mamba3.ssd_prefix_scan",
+        "packed_prefix_scan_rotation_steps",
+    ),
     "plaintext_static_recurrence": (
         "fhe_native_mamba3.openfhe_backend",
         "plaintext_static_recurrence",
@@ -543,6 +563,7 @@ __all__ = [
     "ArtifactValidationIssue",
     "ArtifactValidationResult",
     "BackendCapability",
+    "BackendPrefixScanResult",
     "BackendStats",
     "BootstrapExecutionBlockCost",
     "BootstrapExecutionPolicy",
@@ -597,6 +618,7 @@ __all__ = [
     "OpenFheRecurrenceCiphertextTrace",
     "OpenFheRecurrenceProblem",
     "OpenFheRecurrenceResult",
+    "PackedPrefixScanPlan",
     "PackingPlan",
     "RangeLossConfig",
     "RangeLossResult",
@@ -625,9 +647,11 @@ __all__ = [
     "apply_lora_to_linear_modules",
     "apply_srht_sketch",
     "backend_capability_matrix",
+    "backend_hillis_steele_prefix_products",
     "build_bootstrap_execution_schedule",
     "build_mamba_source_recurrence_problem",
     "build_mamba_source_visible_handoff_tensors",
+    "build_packed_prefix_scan_plan",
     "build_prefix_scan_metadata",
     "build_recurrence_bootstrap_plan",
     "build_rotation_inventory",
@@ -668,6 +692,7 @@ __all__ = [
     "map_state_dict",
     "mark_only_lora_trainable",
     "measure_openfhe_bootstrap_latency",
+    "packed_prefix_scan_rotation_steps",
     "plaintext_recurrence_trace",
     "plaintext_static_recurrence",
     "plan_mamba_checkpoint",

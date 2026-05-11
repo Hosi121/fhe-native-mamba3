@@ -31,9 +31,21 @@ def main() -> int:
             source=args.source_profile_json,
         )
 
-    head_count = _resolve_int("head_count", args.head_count, profile_hints.head_count)
-    d_state = _resolve_int("d_state", args.d_state, profile_hints.d_state)
-    d_model = _resolve_int("d_model", args.d_model, profile_hints.d_model)
+    head_count = _resolve_int(
+        "head_count",
+        args.head_count,
+        profile_hints.head_count if profile_hints else None,
+    )
+    d_state = _resolve_int(
+        "d_state",
+        args.d_state,
+        profile_hints.d_state if profile_hints else None,
+    )
+    d_model = _resolve_int(
+        "d_model",
+        args.d_model,
+        profile_hints.d_model if profile_hints else None,
+    )
     scan_len = args.scan_len or (profile_hints.seq_len if profile_hints else None) or 256
     plan = build_stage1_plan(
         head_count=head_count,

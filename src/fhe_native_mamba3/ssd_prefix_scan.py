@@ -8,11 +8,14 @@ reuse the same schedule accounting without changing the reference math.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal, Protocol
+from dataclasses import asdict, dataclass
+from math import ceil
+from typing import Any, Literal, Protocol
 
 import torch
 from torch import Tensor
+
+from fhe_native_mamba3.backends.base import FHEBackend
 
 DecayMode = Literal["scalar", "state_rank"]
 ScanAlgorithm = Literal["hillis_steele", "blelloch"]
@@ -43,6 +46,25 @@ class PrefixScanMetadata:
 
 
 @dataclass(frozen=True)
+class PackedPrefixScanPlan:
+    """Slot-level plan for a time-major packed prefix scan."""
+
+    seq_len: int
+    window: int
+    lanes: int
+    slot_count: int
+    tokens_per_ciphertext: int
+    ciphertext_count: int
+    in_ciphertext_window: int
+    scan_depth: int
+    rotations: tuple[int, ...]
+    requires_cross_ciphertext_carry: bool
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class SsdPrefixScanResult:
     """Plaintext SSD prefix-scan prefill result and schedule metrics."""
 
@@ -53,6 +75,14 @@ class SsdPrefixScanResult:
     decay_mode: DecayMode
     algorithm: ScanAlgorithm
     metadata: PrefixScanMetadata
+
+
+@dataclass(frozen=True)
+class BackendPrefixScanResult:
+    """Result of a backend-evaluated packed prefix product scan."""
+
+    ciphertext: Any
+    plan: PackedPrefixScanPlan
 
 
 class PrefixScanKernel(Protocol):
@@ -146,6 +176,134 @@ def build_prefix_scan_metadata(
         scan_work_items=sum(step.active_items for step in steps),
         steps=steps,
     )
+
+
+def build_packed_prefix_scan_plan(
+    *,
+    seq_len: int,
+    lanes: int,
+    slot_count: int,
+    window: int | None = None,
+) -> PackedPrefixScanPlan:
+    """Build slot-level accounting for time-major packed prefix scan.
+
+    A packed scan stores ``lanes`` independent values for each token in one
+    contiguous token-major block. A Hillis-Steele scan therefore rotates by
+    ``stride * lanes`` slots, not just by ``stride``. When ``seq_len * lanes``
+    exceeds the ciphertext capacity, this plan records that a cross-ciphertext
+    carry is required; the single-ciphertext backend primitive intentionally
+    rejects that case.
+    """
+
+    effective_window = _effective_window(seq_len=seq_len, window=window)
+    if lanes <= 0:
+        msg = "lanes must be positive"
+        raise ValueError(msg)
+    if slot_count <= 0:
+        msg = "slot_count must be positive"
+        raise ValueError(msg)
+    if lanes > slot_count:
+        msg = f"lanes={lanes} cannot fit in slot_count={slot_count}"
+        raise ValueError(msg)
+    tokens_per_ciphertext = slot_count // lanes
+    ciphertext_count = ceil(seq_len / tokens_per_ciphertext)
+    in_ciphertext_window = min(effective_window, tokens_per_ciphertext)
+    rotations = packed_prefix_scan_rotation_steps(
+        seq_len=seq_len,
+        lanes=lanes,
+        window=in_ciphertext_window,
+    )
+    return PackedPrefixScanPlan(
+        seq_len=seq_len,
+        window=effective_window,
+        lanes=lanes,
+        slot_count=slot_count,
+        tokens_per_ciphertext=tokens_per_ciphertext,
+        ciphertext_count=ciphertext_count,
+        in_ciphertext_window=in_ciphertext_window,
+        scan_depth=len(rotations),
+        rotations=rotations,
+        requires_cross_ciphertext_carry=(
+            ciphertext_count > 1 and effective_window > tokens_per_ciphertext
+        ),
+    )
+
+
+def packed_prefix_scan_rotation_steps(
+    *,
+    seq_len: int,
+    lanes: int = 1,
+    window: int | None = None,
+    slot_count: int | None = None,
+) -> tuple[int, ...]:
+    """Return Hillis-Steele slot rotations for a time-major packed scan."""
+
+    effective_window = _effective_window(seq_len=seq_len, window=window)
+    if lanes <= 0:
+        msg = "lanes must be positive"
+        raise ValueError(msg)
+    if slot_count is not None:
+        if slot_count <= 0:
+            msg = "slot_count must be positive when provided"
+            raise ValueError(msg)
+        if lanes > slot_count:
+            msg = f"lanes={lanes} cannot fit in slot_count={slot_count}"
+            raise ValueError(msg)
+        effective_window = min(effective_window, slot_count // lanes)
+
+    rotations: list[int] = []
+    stride = 1
+    while stride < effective_window:
+        rotations.append(stride * lanes)
+        stride *= 2
+    return tuple(rotations)
+
+
+def backend_hillis_steele_prefix_products(
+    decay_ct: Any,
+    *,
+    seq_len: int,
+    lanes: int,
+    backend: FHEBackend,
+) -> BackendPrefixScanResult:
+    """Evaluate inclusive prefix products for one packed ciphertext.
+
+    The ciphertext layout is token-major:
+    ``slot = token_index * lanes + lane_index``. This primitive is intentionally
+    single-ciphertext only; larger prefill windows need an explicit
+    cross-ciphertext carry path instead of silently wrapping through CKKS slots.
+    """
+
+    plan = build_packed_prefix_scan_plan(
+        seq_len=seq_len,
+        lanes=lanes,
+        slot_count=backend.batch_size,
+    )
+    if plan.ciphertext_count != 1:
+        msg = (
+            "backend_hillis_steele_prefix_products requires seq_len * lanes "
+            "to fit in one ciphertext"
+        )
+        raise ValueError(msg)
+
+    current = decay_ct
+    for rotation in plan.rotations:
+        stride = rotation // lanes
+        previous = backend.rotate(current, -rotation)
+        active_mask = _packed_scan_active_mask(
+            seq_len=seq_len,
+            lanes=lanes,
+            stride=stride,
+            batch_size=backend.batch_size,
+        )
+        inactive_factor = tuple(1.0 - value for value in active_mask)
+        factor = backend.add(
+            backend.mul_plain(previous, backend.encode(active_mask)),
+            backend.encrypt(inactive_factor),
+        )
+        current = backend.mul_ct(current, factor)
+
+    return BackendPrefixScanResult(ciphertext=current, plan=plan)
 
 
 def prefix_decay_products(
@@ -423,6 +581,23 @@ def _blelloch_steps(*, window: int) -> tuple[PrefixScanStep, ...]:
     return up_sweep + down_sweep
 
 
+def _packed_scan_active_mask(
+    *,
+    seq_len: int,
+    lanes: int,
+    stride: int,
+    batch_size: int,
+) -> tuple[float, ...]:
+    if seq_len * lanes > batch_size:
+        msg = "packed scan mask requires seq_len * lanes <= batch_size"
+        raise ValueError(msg)
+    active = [0.0] * batch_size
+    for token_index in range(stride, seq_len):
+        start = token_index * lanes
+        active[start : start + lanes] = [1.0] * lanes
+    return tuple(active)
+
+
 def _scalar_causal_weights(decay_sequence: Tensor, *, window: int) -> Tensor:
     seq_len, rank = decay_sequence.shape
     weights = decay_sequence.new_zeros((seq_len, seq_len, rank))
@@ -452,7 +627,9 @@ def _state_rank_causal_weights(decay_sequence: Tensor, *, window: int) -> Tensor
 
 
 __all__ = [
+    "BackendPrefixScanResult",
     "DecayMode",
+    "PackedPrefixScanPlan",
     "PlaintextPrefixScanKernel",
     "PrefixScanKernel",
     "PrefixScanMetadata",
@@ -460,8 +637,11 @@ __all__ = [
     "ScanAlgorithm",
     "ScanPhase",
     "SsdPrefixScanResult",
+    "backend_hillis_steele_prefix_products",
+    "build_packed_prefix_scan_plan",
     "build_prefix_scan_metadata",
     "causal_decay_weights",
+    "packed_prefix_scan_rotation_steps",
     "prefix_decay_products",
     "ssd_prefix_scan",
     "ssd_prefix_scan_prefill",

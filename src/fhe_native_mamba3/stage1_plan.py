@@ -12,7 +12,11 @@ from fhe_native_mamba3.head_packing import (
 )
 from fhe_native_mamba3.layout import ReadoutStrategy
 from fhe_native_mamba3.rotation_inventory import build_rotation_inventory
-from fhe_native_mamba3.ssd_prefix_scan import ScanAlgorithm, build_prefix_scan_metadata
+from fhe_native_mamba3.ssd_prefix_scan import (
+    ScanAlgorithm,
+    build_packed_prefix_scan_plan,
+    build_prefix_scan_metadata,
+)
 
 Stage1DependencyName = Literal[
     "stage0_source_profile",
@@ -51,6 +55,12 @@ class Stage1CandidatePlan:
     scan_work_items: int
     rotation_key_count: int
     estimated_key_memory_gib: float
+    packed_scan_lanes: int
+    tokens_per_scan_ciphertext: int
+    scan_ciphertext_count: int
+    packed_scan_depth: int
+    packed_scan_rotation_count: int
+    requires_cross_ciphertext_carry: bool
     max_group_range_span: float | None
     known_range_group_count: int
     feasible_under_key_budget: bool | None
@@ -180,6 +190,8 @@ def build_stage1_plan(
         d_state=d_state,
         d_model=d_model,
         head_pack_sizes=tuple(candidate_pack_sizes),
+        slot_count=slot_count,
+        scan_lanes_by_head_pack=True,
         matmul_diagonal_stride=matmul_diagonal_stride,
         bootstrap_internal_key_count=bootstrap_internal_key_count,
         readout_strategy=readout_strategy,
@@ -187,30 +199,18 @@ def build_stage1_plan(
     )
     estimates_by_pack = {estimate.pack_size: estimate for estimate in inventory.head_pack_estimates}
     raw_candidates = tuple(
-        Stage1CandidatePlan(
-            pack_size=candidate.pack_size,
-            grouping_strategy=candidate.grouping_strategy,
-            ciphertext_groups=candidate.ciphertext_groups,
-            slots_per_group=candidate.slots_per_group,
-            slot_utilization=candidate.slot_utilization,
-            estimated_bootstrap_amortization=candidate.estimated_bootstrap_amortization,
+        _build_candidate_plan(
+            candidate=candidate,
+            scan_len=scan_len,
+            window=scan_metadata.window,
+            slot_count=slot_count,
             scan_depth=scan_metadata.scan_depth,
             scan_work_items=scan_metadata.scan_work_items,
             rotation_key_count=estimates_by_pack[candidate.pack_size].unique_key_count,
             estimated_key_memory_gib=estimates_by_pack[
                 candidate.pack_size
             ].estimated_key_memory_gib,
-            max_group_range_span=_max_group_range_span(candidate.groups),
-            known_range_group_count=sum(
-                1 for group in candidate.groups if group.range_span is not None
-            ),
-            feasible_under_key_budget=(
-                None
-                if max_key_memory_gib is None
-                else estimates_by_pack[candidate.pack_size].estimated_key_memory_gib
-                <= max_key_memory_gib
-            ),
-            recommendation_rank=None,
+            max_key_memory_gib=max_key_memory_gib,
         )
         for candidate in head_sweep.candidates
     )
@@ -235,6 +235,7 @@ def build_stage1_plan(
             "encrypted": False,
             "benchmark": False,
             "stage1_execution_started": False,
+            "packed_time_major_scan_accounting": True,
         },
         dependencies=(
             Stage1Dependency(
@@ -343,12 +344,59 @@ def _candidate_sort_key(candidate: Stage1CandidatePlan) -> tuple[Any, ...]:
     )
     return (
         feasible is False,
+        candidate.requires_cross_ciphertext_carry,
         -candidate.estimated_bootstrap_amortization,
         range_span,
         candidate.rotation_key_count,
         candidate.ciphertext_groups,
         candidate.pack_size,
         candidate.grouping_strategy,
+    )
+
+
+def _build_candidate_plan(
+    *,
+    candidate: Any,
+    scan_len: int,
+    window: int,
+    slot_count: int,
+    scan_depth: int,
+    scan_work_items: int,
+    rotation_key_count: int,
+    estimated_key_memory_gib: float,
+    max_key_memory_gib: float | None,
+) -> Stage1CandidatePlan:
+    packed_scan = build_packed_prefix_scan_plan(
+        seq_len=scan_len,
+        lanes=candidate.slots_per_group,
+        slot_count=slot_count,
+        window=window,
+    )
+    return Stage1CandidatePlan(
+        pack_size=candidate.pack_size,
+        grouping_strategy=candidate.grouping_strategy,
+        ciphertext_groups=candidate.ciphertext_groups,
+        slots_per_group=candidate.slots_per_group,
+        slot_utilization=candidate.slot_utilization,
+        estimated_bootstrap_amortization=candidate.estimated_bootstrap_amortization,
+        scan_depth=scan_depth,
+        scan_work_items=scan_work_items,
+        rotation_key_count=rotation_key_count,
+        estimated_key_memory_gib=estimated_key_memory_gib,
+        packed_scan_lanes=packed_scan.lanes,
+        tokens_per_scan_ciphertext=packed_scan.tokens_per_ciphertext,
+        scan_ciphertext_count=packed_scan.ciphertext_count,
+        packed_scan_depth=packed_scan.scan_depth,
+        packed_scan_rotation_count=len(packed_scan.rotations),
+        requires_cross_ciphertext_carry=packed_scan.requires_cross_ciphertext_carry,
+        max_group_range_span=_max_group_range_span(candidate.groups),
+        known_range_group_count=sum(
+            1 for group in candidate.groups if group.range_span is not None
+        ),
+        feasible_under_key_budget=(
+            None if max_key_memory_gib is None else estimated_key_memory_gib <= max_key_memory_gib
+        ),
+        recommendation_rank=None,
     )
 
 
