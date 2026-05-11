@@ -14,11 +14,13 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     all_layer_openfhe_slurm = ROOT / "slurm" / "openfhe_all_layer_recurrence.sbatch"
     full_layer_gate_slurm = ROOT / "slurm" / "mamba_checkpoint_full_layer_gate.sbatch"
     full_layer_sweep_slurm = ROOT / "slurm" / "mamba_checkpoint_full_layer_sweep.sbatch"
+    source_profile_slurm = ROOT / "slurm" / "mamba_checkpoint_source_profile.sbatch"
     visible_projection_sweep_slurm = (
         ROOT / "slurm" / "mamba_checkpoint_visible_projection_sweep.sbatch"
     )
     handoff_openfhe_slurm = ROOT / "slurm" / "openfhe_ciphertext_handoff.sbatch"
     recurrence_chain_openfhe_slurm = ROOT / "slurm" / "openfhe_recurrence_chain.sbatch"
+    submit_stage0_jobs = ROOT / "scripts" / "submit_stage0_high_jobs.sh"
 
     assert source.exists()
     assert cmake.exists()
@@ -30,9 +32,11 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert all_layer_openfhe_slurm.exists()
     assert full_layer_gate_slurm.exists()
     assert full_layer_sweep_slurm.exists()
+    assert source_profile_slurm.exists()
     assert visible_projection_sweep_slurm.exists()
     assert handoff_openfhe_slurm.exists()
     assert recurrence_chain_openfhe_slurm.exists()
+    assert submit_stage0_jobs.exists()
 
     source_text = source.read_text()
     assert "fideslib-static-mimo-recurrence" in source_text
@@ -97,6 +101,11 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "VISIBLE_DIM_LIMIT" in full_layer_sweep_text
     assert "full-layer sweep" in full_layer_sweep_text
 
+    source_profile_text = source_profile_slurm.read_text()
+    assert "run_checkpoint_source_profile.py" in source_profile_text
+    assert "PROFILE_ALL_LAYERS" in source_profile_text
+    assert "top1_top2_gap" in source_profile_text
+
     visible_projection_sweep_text = visible_projection_sweep_slurm.read_text()
     assert "run_checkpoint_visible_projection_sweep.py" in visible_projection_sweep_text
     assert "VISIBLE_DIM_LIMITS" in visible_projection_sweep_text
@@ -111,3 +120,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "run_openfhe_recurrence_chain_smoke.py" in recurrence_chain_openfhe_text
     assert "BOOTSTRAP_AFTER_LAYERS" in recurrence_chain_openfhe_text
     assert "ciphertext_chain" in recurrence_chain_openfhe_text
+
+    submit_jobs_text = submit_stage0_jobs.read_text()
+    assert "SUBMIT_FULL_LAYER_GATE" in submit_jobs_text
+    assert "mamba_checkpoint_full_layer_gate.sbatch" in submit_jobs_text
+    assert "openfhe_all_layer_recurrence.sbatch" in submit_jobs_text
+    assert "mamba_checkpoint_source_profile.sbatch" in submit_jobs_text

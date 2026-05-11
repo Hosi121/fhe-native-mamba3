@@ -1,11 +1,25 @@
 """FHE-native Mamba-3 MIMO research prototype."""
 
+import re
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 _PACKAGE_NAME = "fhe-native-mamba3"
 
+
+def _source_tree_version() -> str | None:
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if not pyproject.exists():
+        return None
+    match = re.search(
+        r'(?m)^version\s*=\s*"([^"]+)"\s*$',
+        pyproject.read_text(encoding="utf-8"),
+    )
+    return match.group(1) if match else None
+
+
 try:
-    __version__ = version(_PACKAGE_NAME)
+    __version__ = _source_tree_version() or version(_PACKAGE_NAME)
 except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
