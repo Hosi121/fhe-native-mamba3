@@ -14,6 +14,7 @@ def build_stage0_status_report(
     checkpoint_source_profile: dict[str, Any] | None = None,
     range_scale_plan: dict[str, Any] | None = None,
     checkpoint_full_layer_gate: dict[str, Any] | None = None,
+    checkpoint_pre_recurrence_layer_sweep: dict[str, Any] | None = None,
     client_decode_smoke: dict[str, Any] | None = None,
     segment_samples: dict[str, Any] | None = None,
     all_layer_recurrence: dict[str, Any] | None = None,
@@ -29,6 +30,9 @@ def build_stage0_status_report(
         "range_scale_plan": _range_scale_plan_summary(range_scale_plan),
         "checkpoint_full_layer_gate": _checkpoint_full_layer_gate_summary(
             checkpoint_full_layer_gate
+        ),
+        "checkpoint_pre_recurrence_layer_sweep": (
+            _checkpoint_pre_recurrence_layer_sweep_summary(checkpoint_pre_recurrence_layer_sweep)
         ),
         "client_decode_smoke": _client_decode_smoke_summary(client_decode_smoke),
         "segment_samples": _segment_sample_summary(segment_samples),
@@ -296,6 +300,22 @@ def _client_decode_smoke_summary(payload: dict[str, Any] | None) -> dict[str, An
     }
 
 
+def _checkpoint_pre_recurrence_layer_sweep_summary(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not payload:
+        return {"available": False}
+    return {
+        "available": True,
+        "stage": payload.get("stage"),
+        "layer_count": payload.get("layer_count"),
+        "passed_count": payload.get("passed_count"),
+        "failed_count": payload.get("failed_count"),
+        "max_abs_error": payload.get("max_abs_error"),
+        "max_abs_error_layer": payload.get("max_abs_error_layer"),
+    }
+
+
 def _segment_sample_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
     if not payload:
         return {"available": False}
@@ -396,6 +416,11 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         )
     if full_gate.get("passed") and _scaled_full_gate_validated(full_gate):
         items.append("validate range-scaled full-layer visible output ciphertext")
+    pre_sweep = measurements["checkpoint_pre_recurrence_layer_sweep"]
+    if pre_sweep.get("layer_count") and pre_sweep.get("passed_count") == pre_sweep.get(
+        "layer_count"
+    ):
+        items.append("validate encrypted pre-recurrence full-layer gate across all swept layers")
     if measurements["client_decode_smoke"].get("passed"):
         items.append("run real checkpoint source-style client-side decode smoke")
     if measurements["segment_samples"].get("bootstrap_enabled_sample_count"):

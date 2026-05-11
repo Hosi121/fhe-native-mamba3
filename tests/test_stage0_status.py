@@ -131,6 +131,14 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
             "operation_counts": {"ct_ct_mul": 26, "decrypt": 3},
             "timing": {"setup_seconds": 11.7, "eval_seconds": 0.8},
         },
+        checkpoint_pre_recurrence_layer_sweep={
+            "stage": "tracking-24-layer-encrypted-pre-full-gate-summary",
+            "layer_count": 24,
+            "passed_count": 24,
+            "failed_count": 0,
+            "max_abs_error": 0.0268,
+            "max_abs_error_layer": 18,
+        },
         client_decode_smoke={
             "passed": True,
             "result": {
@@ -217,6 +225,9 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
     assert report["measurements"]["checkpoint_full_layer_gate"]["rms_norm_mode"] == "newton-invsqrt"
     assert report["measurements"]["checkpoint_full_layer_gate"]["ct_ct_mul_count"] == 26
     assert report["measurements"]["checkpoint_full_layer_gate"]["eval_seconds"] == 0.8
+    pre_sweep = report["measurements"]["checkpoint_pre_recurrence_layer_sweep"]
+    assert pre_sweep["passed_count"] == 24
+    assert pre_sweep["max_abs_error_layer"] == 18
     assert report["measurements"]["client_decode_smoke"]["new_token_ids"] == [44191]
     assert report["measurements"]["segment_samples"]["bootstrap_enabled_sample_count"] == 1
     assert report["measurements"]["all_layer_recurrence"]["success_count"] == 24
@@ -236,6 +247,7 @@ def test_stage0_status_report_summarizes_measurements_and_remaining_work() -> No
     assert any("range scale plan" in item for item in report["completed_items"])
     assert any("ciphertext handoff smoke" in item for item in report["completed_items"])
     assert any("full-layer ciphertext gate" in item for item in report["completed_items"])
+    assert any("across all swept layers" in item for item in report["completed_items"])
     assert any("client-side decode smoke" in item for item in report["completed_items"])
 
 
@@ -246,6 +258,7 @@ def test_stage0_status_report_handles_missing_artifacts() -> None:
     assert report["measurements"]["checkpoint_source_profile"]["available"] is False
     assert report["measurements"]["range_scale_plan"]["available"] is False
     assert report["measurements"]["checkpoint_full_layer_gate"]["available"] is False
+    assert report["measurements"]["checkpoint_pre_recurrence_layer_sweep"]["available"] is False
     assert report["measurements"]["client_decode_smoke"]["available"] is False
     assert report["measurements"]["segment_samples"]["available"] is False
     assert report["measurements"]["ciphertext_handoff"]["available"] is False

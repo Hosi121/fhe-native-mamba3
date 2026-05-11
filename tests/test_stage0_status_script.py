@@ -11,6 +11,7 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
     profile_json = tmp_path / "profile.json"
     scale_plan_json = tmp_path / "scale-plan.json"
     full_layer_json = tmp_path / "full-layer.json"
+    pre_sweep_json = tmp_path / "pre-sweep.json"
     decode_json = tmp_path / "decode.json"
     output_json = tmp_path / "status.json"
     profile_json.write_text(
@@ -95,6 +96,19 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
         ),
         encoding="utf-8",
     )
+    pre_sweep_json.write_text(
+        json.dumps(
+            {
+                "stage": "tracking-24-layer-encrypted-pre-full-gate-summary",
+                "layer_count": 2,
+                "passed_count": 2,
+                "failed_count": 0,
+                "max_abs_error": 1e-3,
+                "max_abs_error_layer": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
     decode_json.write_text(
         json.dumps(
             {
@@ -121,6 +135,8 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
             str(scale_plan_json),
             "--checkpoint-full-layer-gate-json",
             str(full_layer_json),
+            "--checkpoint-pre-recurrence-layer-sweep-json",
+            str(pre_sweep_json),
             "--client-decode-smoke-json",
             str(decode_json),
             "--output-json",
@@ -137,6 +153,7 @@ def test_build_stage0_status_report_script_accepts_profile_and_decode_artifacts(
     assert payload["measurements"]["checkpoint_source_profile"]["range_score_layer"] == 7
     assert payload["measurements"]["range_scale_plan"]["activation_tuning_layer_count"] == 1
     assert payload["measurements"]["checkpoint_full_layer_gate"]["rotation_count"] == 9
+    assert payload["measurements"]["checkpoint_pre_recurrence_layer_sweep"]["passed_count"] == 2
     assert payload["measurements"]["client_decode_smoke"]["new_token_ids"] == [42]
     assert payload["bottlenecks"][0]["name"] == "range"
     assert json.loads(output_json.read_text(encoding="utf-8"))["next_bottleneck"]
