@@ -28,6 +28,9 @@ from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict  # noqa: E40
 from fhe_native_mamba3.checkpoint_correctness import (  # noqa: E402
     run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate,
 )
+from fhe_native_mamba3.checkpoint_pre_recurrence import (  # noqa: E402
+    encrypted_pre_recurrence_logical_batch_size,
+)
 from fhe_native_mamba3.cli_support import emit_json_payload, parse_int_list  # noqa: E402
 from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model  # noqa: E402
 
@@ -77,12 +80,18 @@ def main() -> int:
             input_propagation=args.input_propagation,
         )
 
+    logical_batch_size = encrypted_pre_recurrence_logical_batch_size(
+        d_model=int(layer_input.shape[-1]),
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+    )
     rotations = _chain_required_rotations(
         state_dict,
         n_layers=args.n_layers,
         d_model=int(layer_input.shape[-1]),
         d_state=d_state,
         mimo_rank=mimo_rank,
+        logical_batch_size=logical_batch_size,
         readout_strategy=args.readout_strategy,
         rms_norm_mode=args.rms_norm_mode,
         state_decay_mode=args.state_decay_mode,
@@ -95,7 +104,7 @@ def main() -> int:
         raise ValueError(msg)
     backend = _make_backend(
         args,
-        batch_size=max(int(layer_input.shape[-1]), d_state * mimo_rank),
+        batch_size=logical_batch_size,
         rotations=rotations,
     )
 
@@ -203,6 +212,7 @@ def _chain_required_rotations(
     d_model: int,
     d_state: int,
     mimo_rank: int,
+    logical_batch_size: int,
     readout_strategy: str,
     rms_norm_mode: str,
     state_decay_mode: str,
@@ -214,6 +224,7 @@ def _chain_required_rotations(
                 d_model=d_model,
                 d_state=d_state,
                 mimo_rank=mimo_rank,
+                logical_batch_size=logical_batch_size,
                 readout_strategy=readout_strategy,
                 visible_dim_limit=None,
                 rms_norm_mode=rms_norm_mode,
@@ -258,7 +269,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--polynomial-range", type=float, default=6.0)
     parser.add_argument(
         "--rms-norm-mode",
-        choices=["plaintext-exact", "poly-invsqrt", "newton-invsqrt"],
+        choices=["poly-invsqrt", "newton-invsqrt"],
         default="newton-invsqrt",
     )
     parser.add_argument("--newton-iterations", type=int, default=2)

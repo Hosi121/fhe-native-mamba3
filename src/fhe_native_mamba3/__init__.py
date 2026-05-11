@@ -186,6 +186,10 @@ _LAZY_IMPORTS = {
     "RangeLossResult": ("fhe_native_mamba3.range_finetune", "RangeLossResult"),
     "RangeLossTerm": ("fhe_native_mamba3.range_finetune", "RangeLossTerm"),
     "RecurrenceTraceProfile": ("fhe_native_mamba3.profiling", "RecurrenceTraceProfile"),
+    "encrypted_pre_recurrence_logical_batch_size": (
+        "fhe_native_mamba3.checkpoint_pre_recurrence",
+        "encrypted_pre_recurrence_logical_batch_size",
+    ),
     "SsdPrefixScanResult": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "SsdPrefixScanResult",
@@ -393,6 +397,10 @@ _LAZY_IMPORTS = {
         "profile_recurrence_traces",
     ),
     "range_loss": ("fhe_native_mamba3.range_finetune", "range_loss"),
+    "resolve_pre_recurrence_shape": (
+        "fhe_native_mamba3.checkpoint_pre_recurrence",
+        "resolve_pre_recurrence_shape",
+    ),
     "fhe_aware_loss": ("fhe_native_mamba3.range_finetune", "fhe_aware_loss"),
     "mark_only_lora_trainable": (
         "fhe_native_mamba3.range_finetune",
@@ -641,6 +649,7 @@ __all__ = [
     "current_git_commit",
     "decoding_policies",
     "draft_mapping_rules",
+    "encrypted_pre_recurrence_logical_batch_size",
     "estimate_block_cost",
     "estimate_cumulative_log_contraction",
     "estimate_high_decay_burst_len",
@@ -669,6 +678,7 @@ __all__ = [
     "profile_recurrence_traces",
     "range_loss",
     "required_full_layer_visible_rotations",
+    "resolve_pre_recurrence_shape",
     "run_checkpoint_client_decode_smoke",
     "run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate",
     "run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend",

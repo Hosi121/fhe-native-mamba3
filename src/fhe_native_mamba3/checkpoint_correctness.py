@@ -885,6 +885,12 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate(
     if atol < 0:
         msg = "atol must be non-negative"
         raise ValueError(msg)
+    if rms_norm_mode == "plaintext-exact":
+        msg = (
+            "encrypted full-layer chain cannot use plaintext-exact RMSNorm because each "
+            "layer consumes visible-output ciphertexts"
+        )
+        raise ValueError(msg)
 
     first_problem = build_mamba_source_recurrence_problem(
         state_dict,

@@ -14,7 +14,7 @@ from torch.nn import functional
 
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.tracking import TrackingBackend
-from fhe_native_mamba3.mamba_checkpoint import _fit_tensor
+from fhe_native_mamba3.mamba_checkpoint import _fit_tensor, plan_mamba_checkpoint
 from fhe_native_mamba3.mamba_reference import (
     _build_layer_tensors,
     _run_source_dynamic_formula,
@@ -45,6 +45,48 @@ PRE_RECURRENCE_STAGES: tuple[PreRecurrenceStage, ...] = (
 )
 
 POLYNOMIAL_COEFFICIENT_EPS = 1e-12
+
+
+def resolve_pre_recurrence_shape(
+    state_dict: dict[str, Tensor],
+    *,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+) -> tuple[int, int]:
+    """Resolve pre-recurrence state/rank shape from arguments or checkpoint tensors."""
+
+    resolved_d_state = d_state
+    resolved_mimo_rank = mimo_rank
+    if resolved_d_state is None or resolved_mimo_rank is None:
+        plan = plan_mamba_checkpoint(state_dict)
+        if resolved_d_state is None:
+            resolved_d_state = plan.inferred_d_state
+        if resolved_mimo_rank is None:
+            resolved_mimo_rank = plan.inferred_mimo_rank
+    return (
+        _resolve_positive(resolved_d_state, "d_state"),
+        _resolve_positive(resolved_mimo_rank, "mimo_rank"),
+    )
+
+
+def encrypted_pre_recurrence_logical_batch_size(
+    *,
+    d_model: int,
+    d_state: int,
+    mimo_rank: int,
+    visible_dim_limit: int | None = None,
+) -> int:
+    """Return the logical slots needed by encrypted pre-recurrence full-layer gates."""
+
+    _resolve_positive(d_model, "d_model")
+    _resolve_positive(d_state, "d_state")
+    _resolve_positive(mimo_rank, "mimo_rank")
+    checked_visible_dim = (
+        d_model
+        if visible_dim_limit is None
+        else min(d_model, _resolve_positive(visible_dim_limit, "visible_dim_limit"))
+    )
+    return max(d_model, d_state * mimo_rank, checked_visible_dim)
 
 
 @dataclass(frozen=True)
@@ -258,13 +300,18 @@ def run_checkpoint_pre_recurrence_stage_gate(
         msg = "atol must be non-negative"
         raise ValueError(msg)
 
+    resolved_d_state, resolved_mimo_rank = resolve_pre_recurrence_shape(
+        state_dict,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+    )
     d_model = int(layer_input.shape[-1])
     tensors = _build_layer_tensors(
         state_dict,
         layer_index=layer_index,
         d_model=d_model,
-        d_state=_resolve_positive(d_state, "d_state"),
-        mimo_rank=_resolve_positive(mimo_rank, "mimo_rank"),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_mimo_rank,
         include_gate=True,
     )
     stages = _run_source_dynamic_formula(layer_input, tensors, norm_eps=norm_eps)
@@ -614,13 +661,18 @@ def run_checkpoint_pre_recurrence_ciphertexts_with_backend(
         atol=atol,
     )
 
+    resolved_d_state, resolved_mimo_rank = resolve_pre_recurrence_shape(
+        state_dict,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+    )
     d_model = int(layer_input.shape[-1])
     tensors = _build_layer_tensors(
         state_dict,
         layer_index=layer_index,
         d_model=d_model,
-        d_state=_resolve_positive(d_state, "d_state"),
-        mimo_rank=_resolve_positive(mimo_rank, "mimo_rank"),
+        d_state=resolved_d_state,
+        mimo_rank=resolved_mimo_rank,
         include_gate=True,
     )
     stages = _run_source_dynamic_formula(layer_input, tensors, norm_eps=norm_eps)

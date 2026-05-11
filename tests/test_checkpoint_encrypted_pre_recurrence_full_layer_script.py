@@ -1,12 +1,28 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import torch
 
 from fhe_native_mamba3 import __version__
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_gate_script_module():
+    spec = importlib.util.spec_from_file_location(
+        "run_checkpoint_encrypted_pre_recurrence_full_layer_gate",
+        ROOT / "scripts" / "run_checkpoint_encrypted_pre_recurrence_full_layer_gate.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_checkpoint_encrypted_pre_recurrence_full_layer_script_runs_tracking(
@@ -125,6 +141,39 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_script_shrinks_plaintext
     assert payload["ckks"]["rotation_count"] < 100
     assert payload["approximation"]["rms_norm_mode"] == "plaintext-exact"
     assert payload["approximation"]["state_decay_mode"] == "plaintext-exact"
+
+
+def test_encrypted_pre_full_layer_rotation_inventory_uses_logical_batch_size() -> None:
+    module = _load_gate_script_module()
+    base_rotations = set(
+        module._required_rotations(
+            d_model=8,
+            d_state=2,
+            mimo_rank=5,
+            logical_batch_size=10,
+            readout_strategy="rank-local",
+            visible_dim_limit=1,
+            rms_norm_mode="plaintext-exact",
+            state_decay_mode="plaintext-exact",
+            dt_rank=None,
+        )
+    )
+    encrypted_rms_rotations = set(
+        module._required_rotations(
+            d_model=8,
+            d_state=2,
+            mimo_rank=5,
+            logical_batch_size=10,
+            readout_strategy="rank-local",
+            visible_dim_limit=1,
+            rms_norm_mode="newton-invsqrt",
+            state_decay_mode="plaintext-exact",
+            dt_rank=None,
+        )
+    )
+
+    assert 8 not in base_rotations
+    assert 8 in encrypted_rms_rotations
 
 
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:

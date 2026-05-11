@@ -333,6 +333,22 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_chain_uses_ciphertext_ha
     assert payload["layer_depth_estimates"] == [23, 23]
 
 
+def test_checkpoint_encrypted_pre_recurrence_full_layer_chain_rejects_plaintext_rmsnorm() -> None:
+    state_dict = _tiny_hf_mamba_state_dict(layer_count=2)
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+
+    with pytest.raises(ValueError, match="cannot use plaintext-exact RMSNorm"):
+        run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate(
+            state_dict,
+            layer_input,
+            layer_count=2,
+            d_state=2,
+            mimo_rank=4,
+            backend=TrackingBackend(batch_size=8),
+            rms_norm_mode="plaintext-exact",
+        )
+
+
 def test_checkpoint_full_layer_ciphertext_trace_does_not_decrypt_outputs() -> None:
     class NoDecryptTrackingBackend(TrackingBackend):
         def decrypt(self, value: object, *, length: int) -> tuple[float, ...]:

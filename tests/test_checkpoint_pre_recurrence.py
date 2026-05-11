@@ -14,7 +14,9 @@ from fhe_native_mamba3.checkpoint_pre_recurrence import (
     _evaluate_power_polynomial_ciphertext,
     _evaluate_vector_power_polynomial_ciphertext,
     _mean_square_ciphertext,
+    encrypted_pre_recurrence_logical_batch_size,
     linear_bsgs_rotation_steps,
+    resolve_pre_recurrence_shape,
     rms_norm_rotation_steps,
     run_checkpoint_pre_recurrence_chain_gate,
     run_checkpoint_pre_recurrence_ciphertexts_with_backend,
@@ -47,6 +49,46 @@ def test_pre_recurrence_projected_rank_input_gate_matches_source() -> None:
     assert payload["backend_stats"]["decrypt_count"] == 3
     assert payload["backend_stats"]["ct_pt_mul_count"] > 0
     json.dumps(payload)
+
+
+def test_pre_recurrence_direct_apis_infer_checkpoint_shape() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+
+    assert resolve_pre_recurrence_shape(state_dict) == (2, 4)
+
+    gate = run_checkpoint_pre_recurrence_stage_gate(
+        state_dict,
+        layer_input,
+        stage="projected_rank_input",
+        backend=TrackingBackend(batch_size=8),
+        atol=1e-6,
+    )
+    trace = run_checkpoint_pre_recurrence_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        backend=TrackingBackend(batch_size=8),
+        rms_norm_mode="newton-invsqrt",
+        newton_range=(0.25, 0.75),
+        atol=5e-2,
+    )
+
+    assert gate.d_state == 2
+    assert gate.mimo_rank == 4
+    assert trace.d_state == 2
+    assert trace.mimo_rank == 4
+
+
+def test_encrypted_pre_recurrence_logical_batch_size_covers_state_rank_slots() -> None:
+    assert (
+        encrypted_pre_recurrence_logical_batch_size(
+            d_model=8,
+            d_state=2,
+            mimo_rank=5,
+            visible_dim_limit=1,
+        )
+        == 10
+    )
 
 
 def test_linear_bsgs_rotation_inventory_shrinks_dense_projection_keys() -> None:

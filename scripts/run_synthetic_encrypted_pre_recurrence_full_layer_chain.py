@@ -26,6 +26,9 @@ from fhe_native_mamba3.artifact_validation import current_git_commit  # noqa: E4
 from fhe_native_mamba3.checkpoint_correctness import (  # noqa: E402
     run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate,
 )
+from fhe_native_mamba3.checkpoint_pre_recurrence import (  # noqa: E402
+    encrypted_pre_recurrence_logical_batch_size,
+)
 from fhe_native_mamba3.cli_support import emit_json_payload  # noqa: E402
 
 
@@ -53,12 +56,18 @@ def main() -> int:
         args.seq_len * args.d_model,
         dtype=torch.float32,
     ).view(1, args.seq_len, args.d_model)
+    logical_batch_size = encrypted_pre_recurrence_logical_batch_size(
+        d_model=args.d_model,
+        d_state=args.d_state,
+        mimo_rank=args.mimo_rank,
+    )
     rotations = _chain_required_rotations(
         state_dict,
         n_layers=args.n_layers,
         d_model=args.d_model,
         d_state=args.d_state,
         mimo_rank=args.mimo_rank,
+        logical_batch_size=logical_batch_size,
         readout_strategy=args.readout_strategy,
         rms_norm_mode=args.rms_norm_mode,
         state_decay_mode=args.state_decay_mode,
@@ -72,7 +81,7 @@ def main() -> int:
 
     backend = _make_backend(
         args,
-        batch_size=max(args.d_model, args.d_state * args.mimo_rank),
+        batch_size=logical_batch_size,
         rotations=rotations,
     )
     result = run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate(
@@ -272,7 +281,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--polynomial-range", type=float, default=6.0)
     parser.add_argument(
         "--rms-norm-mode",
-        choices=["plaintext-exact", "poly-invsqrt", "newton-invsqrt"],
+        choices=["poly-invsqrt", "newton-invsqrt"],
         default="newton-invsqrt",
     )
     parser.add_argument("--newton-iterations", type=int, default=2)

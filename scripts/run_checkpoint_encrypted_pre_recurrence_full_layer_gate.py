@@ -17,6 +17,7 @@ from fhe_native_mamba3.checkpoint_correctness import (
     run_checkpoint_encrypted_pre_recurrence_full_layer_gate,
 )
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
+    encrypted_pre_recurrence_logical_batch_size,
     linear_bsgs_rotation_steps,
     rms_norm_rotation_steps,
 )
@@ -78,16 +79,17 @@ def main() -> int:
         scale_plan=load_recurrence_scale_plan(args.scale_plan_json),
     )
 
-    checked_visible_dim = (
-        min(int(layer_input.shape[-1]), args.visible_dim_limit)
-        if args.visible_dim_limit
-        else int(layer_input.shape[-1])
+    batch_size = encrypted_pre_recurrence_logical_batch_size(
+        d_model=int(layer_input.shape[-1]),
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        visible_dim_limit=args.visible_dim_limit or None,
     )
-    batch_size = max(int(layer_input.shape[-1]), d_state * mimo_rank, checked_visible_dim)
     rotations = _required_rotations(
         d_model=int(layer_input.shape[-1]),
         d_state=d_state,
         mimo_rank=mimo_rank,
+        logical_batch_size=batch_size,
         readout_strategy=args.readout_strategy,
         visible_dim_limit=args.visible_dim_limit or None,
         rms_norm_mode=args.rms_norm_mode,
@@ -264,6 +266,7 @@ def _required_rotations(
     d_model: int,
     d_state: int,
     mimo_rank: int,
+    logical_batch_size: int,
     readout_strategy: str,
     visible_dim_limit: int | None,
     rms_norm_mode: str,
@@ -287,7 +290,7 @@ def _required_rotations(
         rotations.update(
             rms_norm_rotation_steps(
                 output_dim=d_model,
-                batch_size=ckks_batch_size_for_slots(d_model),
+                batch_size=ckks_batch_size_for_slots(logical_batch_size),
             )
         )
     if state_decay_mode == "poly-composed":
