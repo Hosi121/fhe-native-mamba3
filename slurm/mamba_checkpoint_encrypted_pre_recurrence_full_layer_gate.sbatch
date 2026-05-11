@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=512G
 #SBATCH --time=00:12:00
 #SBATCH --output=slurm/mamba_checkpoint_encrypted_pre_recurrence_full_layer_gate_%j.out
 #SBATCH --error=slurm/mamba_checkpoint_encrypted_pre_recurrence_full_layer_gate_%j.err

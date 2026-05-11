@@ -105,6 +105,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "run_checkpoint_encrypted_pre_recurrence_full_layer_gate.py" in (
         encrypted_pre_full_layer_gate_text
     )
+    assert "#SBATCH --mem=512G" in encrypted_pre_full_layer_gate_text
     assert "RMS_NORM_MODE" in encrypted_pre_full_layer_gate_text
     assert "--decay-polynomial-range=" in encrypted_pre_full_layer_gate_text
     assert "pre_recurrence_depth_estimate" in encrypted_pre_full_layer_gate_text
