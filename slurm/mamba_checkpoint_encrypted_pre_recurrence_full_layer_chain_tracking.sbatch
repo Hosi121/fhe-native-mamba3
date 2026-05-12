@@ -22,6 +22,8 @@ STDOUT_JSON="${STDOUT_JSON:-runs/${RUN_NAME}.stdout.json}"
 PROMPT="${PROMPT:-1}"
 MAX_SEQ_LEN="${MAX_SEQ_LEN:-8}"
 N_LAYERS="${N_LAYERS:-2}"
+VISIBLE_DIM_LIMIT="${VISIBLE_DIM_LIMIT:-0}"
+PARTIAL_VISIBLE_PROXY="${PARTIAL_VISIBLE_PROXY:-0}"
 D_STATE="${D_STATE:-2}"
 MIMO_RANK="${MIMO_RANK:-4}"
 INFER_SHAPE="${INFER_SHAPE:-0}"
@@ -56,12 +58,17 @@ shape_args=(--d-state "${D_STATE}" --mimo-rank "${MIMO_RANK}")
 if [[ "${INFER_SHAPE}" == "1" ]]; then
   shape_args=(--infer-shape)
 fi
+partial_visible_args=()
+if [[ "${PARTIAL_VISIBLE_PROXY}" == "1" ]]; then
+  partial_visible_args+=(--partial-visible-proxy --visible-dim-limit "${VISIBLE_DIM_LIMIT}")
+fi
 
 "${PYTHON}" scripts/run_checkpoint_encrypted_pre_recurrence_full_layer_chain.py \
   "${CHECKPOINT}" \
   --backend tracking \
   "${shape_args[@]}" \
   --n-layers "${N_LAYERS}" \
+  "${partial_visible_args[@]}" \
   --max-seq-len "${MAX_SEQ_LEN}" \
   --prompt "${PROMPT}" \
   --input-propagation "${INPUT_PROPAGATION}" \

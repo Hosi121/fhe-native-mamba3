@@ -552,6 +552,7 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
     visible_dim_limit: int | None = None,
     visible_output_scale: float = 1.0,
     input_ciphertexts: tuple[Any, ...] | None = None,
+    allow_partial_input_ciphertext_handoff: bool = False,
 ) -> CheckpointFullLayerCiphertextTrace:
     """Return encrypted pre-recurrence full-layer visible outputs as ciphertexts."""
 
@@ -592,7 +593,7 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
             d_model=visible.d_model,
             seq_len=visible.seq_len,
         )
-        if checked_visible_dim != visible.d_model:
+        if checked_visible_dim != visible.d_model and not allow_partial_input_ciphertext_handoff:
             msg = "input ciphertext handoff requires full visible output, not visible_dim_limit"
             raise ValueError(msg)
 
@@ -670,7 +671,12 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
             checked_visible_dim=checked_visible_dim,
             token_index=token_index,
             visible_output_scale=visible_output_scale,
-            residual_ct=None if input_ciphertexts is None else input_ciphertexts[token_index],
+            residual_ct=_visible_residual_ciphertext_for_checked_dim(
+                backend=resolved_backend,
+                ciphertexts=input_ciphertexts,
+                token_index=token_index,
+                checked_visible_dim=checked_visible_dim,
+            ),
         )
         for token_index, (recurrence_ct, rank_input_ct, gate_ct) in enumerate(
             zip(
@@ -754,6 +760,190 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
         backend_stats=resolved_backend.stats().to_json_dict(),
         notes=tuple(notes),
         pre_recurrence_depth_estimate=pre_trace.depth_estimate,
+    )
+
+
+def run_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_count: int,
+    visible_dim_limit: int,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    backend: FHEBackend | None = None,
+    readout_strategy: ReadoutStrategy = "rank-local",
+    multiplicative_depth: int = 28,
+    norm_eps: float = 1e-5,
+    polynomial_degree: int = 13,
+    polynomial_range: float = 6.0,
+    rms_norm_mode: RmsNormMode = "newton-invsqrt",
+    newton_iterations: int = 2,
+    newton_range: tuple[float, float] = (0.25, 0.5),
+    state_decay_mode: StateDecayMode = "poly-composed",
+    decay_polynomial_degree: int = 5,
+    decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
+    atol: float = 5e-2,
+) -> CheckpointFullLayerCiphertextChainGate:
+    """Chain the first K visible dimensions and inject plaintext remainder.
+
+    This is an explicit Stage 0 proxy for real-checkpoint handoff. It does not
+    claim a full visible-output chain because dimensions ``K:d_model`` are
+    supplied from the plaintext reference after every layer.
+    """
+
+    if layer_count <= 0:
+        msg = "layer_count must be positive"
+        raise ValueError(msg)
+    if layer_input.ndim != 3 or layer_input.shape[0] != 1:
+        msg = "layer_input must have shape [1, seq_len, d_model]"
+        raise ValueError(msg)
+    if atol < 0:
+        msg = "atol must be non-negative"
+        raise ValueError(msg)
+    if rms_norm_mode == "plaintext-exact":
+        msg = (
+            "encrypted partial-visible chain proxy cannot use plaintext-exact RMSNorm "
+            "because each layer consumes visible-output ciphertexts"
+        )
+        raise ValueError(msg)
+    d_model = int(layer_input.shape[-1])
+    checked_visible_dim = _resolve_visible_dim_limit(
+        d_model=d_model,
+        visible_dim_limit=visible_dim_limit,
+    )
+    if checked_visible_dim == d_model:
+        msg = "partial-visible proxy requires visible_dim_limit smaller than d_model"
+        raise ValueError(msg)
+
+    first_problem = build_mamba_source_recurrence_problem(
+        state_dict,
+        layer_input,
+        layer_index=0,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        norm_eps=norm_eps,
+    )
+    batch_size = max(d_model, first_problem.d_state * first_problem.mimo_rank)
+    resolved_backend = backend or TrackingBackend(batch_size=batch_size)
+    if resolved_backend.batch_size < batch_size:
+        msg = (
+            "encrypted partial-visible chain backend batch_size is too small; "
+            f"need at least {batch_size}, got {resolved_backend.batch_size}"
+        )
+        raise ValueError(msg)
+
+    started_decrypts = resolved_backend.stats().decrypt_count
+    hidden = layer_input
+    input_ciphertexts = _visible_tensor_ciphertexts(
+        hidden,
+        backend=resolved_backend,
+        d_state=first_problem.d_state,
+        mimo_rank=first_problem.mimo_rank,
+        readout_strategy=readout_strategy,
+    )
+    layer_depths: list[int | None] = []
+    traces: list[CheckpointFullLayerCiphertextTrace] = []
+    for layer_index in range(layer_count):
+        trace = run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
+            state_dict,
+            hidden,
+            layer_index=layer_index,
+            d_state=first_problem.d_state,
+            mimo_rank=first_problem.mimo_rank,
+            backend=resolved_backend,
+            readout_strategy=readout_strategy,
+            multiplicative_depth=multiplicative_depth,
+            norm_eps=norm_eps,
+            polynomial_degree=polynomial_degree,
+            polynomial_range=polynomial_range,
+            rms_norm_mode=rms_norm_mode,
+            newton_iterations=newton_iterations,
+            newton_range=newton_range,
+            state_decay_mode=state_decay_mode,
+            decay_polynomial_degree=decay_polynomial_degree,
+            decay_polynomial_range=decay_polynomial_range,
+            visible_dim_limit=checked_visible_dim,
+            input_ciphertexts=input_ciphertexts,
+            allow_partial_input_ciphertext_handoff=True,
+        )
+        traces.append(trace)
+        layer_depths.append(trace.pre_recurrence_depth_estimate)
+        hidden = run_mamba_source_layer(
+            state_dict,
+            hidden,
+            layer_index=layer_index,
+            d_state=first_problem.d_state,
+            mimo_rank=first_problem.mimo_rank,
+            norm_eps=norm_eps,
+        )
+        input_ciphertexts = _inject_plaintext_visible_remainder(
+            trace.output_ciphertexts,
+            hidden,
+            checked_visible_dim=checked_visible_dim,
+            backend=resolved_backend,
+            d_state=first_problem.d_state,
+            mimo_rank=first_problem.mimo_rank,
+            readout_strategy=readout_strategy,
+        )
+
+    final_started_decrypts = resolved_backend.stats().decrypt_count
+    actual_rows = tuple(
+        resolved_backend.decrypt(output_ct, length=checked_visible_dim)
+        for output_ct in traces[-1].output_ciphertexts
+    )
+    expected_rows = tuple(
+        tuple(float(value) for value in row[:checked_visible_dim])
+        for row in hidden[0].detach().cpu().float().tolist()
+    )
+    max_abs_error = max(
+        (
+            abs(actual - expected)
+            for actual_row, expected_row in zip(actual_rows, expected_rows, strict=True)
+            for actual, expected in zip(actual_row, expected_row, strict=True)
+        ),
+        default=0.0,
+    )
+    final_decrypt_count = resolved_backend.stats().decrypt_count - final_started_decrypts
+    no_intermediate_decrypt = (
+        all(trace.decrypt_count_delta == 0 for trace in traces)
+        and final_decrypt_count == int(layer_input.shape[1])
+        and final_started_decrypts == started_decrypts
+    )
+    plaintext_precomputed = tuple(
+        sorted(
+            {
+                "visible_plaintext_remainder",
+                *(stage for trace in traces for stage in trace.plaintext_precomputed_stages),
+            }
+        )
+    )
+    return CheckpointFullLayerCiphertextChainGate(
+        layer_count=layer_count,
+        d_model=d_model,
+        checked_visible_dim=checked_visible_dim,
+        full_visible_output_checked=False,
+        partial_visible_output_checked=True,
+        d_state=first_problem.d_state,
+        mimo_rank=first_problem.mimo_rank,
+        seq_len=int(layer_input.shape[1]),
+        backend=resolved_backend.stats().backend,
+        encrypted=bool(resolved_backend.stats().encrypted),
+        readout_strategy=readout_strategy,
+        max_abs_error=max_abs_error,
+        atol=atol,
+        passed=max_abs_error <= atol and no_intermediate_decrypt,
+        inter_layer_ciphertext_handoff=True,
+        no_intermediate_decrypt=no_intermediate_decrypt,
+        final_decrypt_count=final_decrypt_count,
+        plaintext_precomputed_stages=plaintext_precomputed,
+        layer_depth_estimates=tuple(layer_depths),
+        backend_stats=resolved_backend.stats().to_json_dict(),
+        notes=(
+            "partial-visible proxy chains only the checked visible prefix as ciphertext",
+            "the unchecked visible suffix is injected from plaintext reference after each layer",
+            "this is not a full visible-output or full-model correctness claim",
+        ),
     )
 
 
@@ -1413,6 +1603,59 @@ def _visible_tensor_ciphertexts(
         for row in values[0].detach().cpu().float().tolist()
     )
     return LayoutBoundCiphertexts(ciphertexts, layout_contract=layout_contract)
+
+
+def _visible_residual_ciphertext_for_checked_dim(
+    *,
+    backend: FHEBackend,
+    ciphertexts: tuple[Any, ...] | None,
+    token_index: int,
+    checked_visible_dim: int,
+) -> Any | None:
+    if ciphertexts is None:
+        return None
+    ciphertext = ciphertexts[token_index]
+    if checked_visible_dim >= backend.batch_size:
+        return ciphertext
+    mask = [0.0] * backend.batch_size
+    mask[:checked_visible_dim] = [1.0] * checked_visible_dim
+    return backend.mul_plain(ciphertext, backend.encode(mask))
+
+
+def _inject_plaintext_visible_remainder(
+    partial_ciphertexts: tuple[Any, ...],
+    values: Tensor,
+    *,
+    checked_visible_dim: int,
+    backend: FHEBackend,
+    d_state: int,
+    mimo_rank: int,
+    readout_strategy: ReadoutStrategy,
+) -> LayoutBoundCiphertexts:
+    d_model = int(values.shape[-1])
+    if checked_visible_dim >= d_model:
+        msg = "checked_visible_dim must be smaller than d_model for remainder injection"
+        raise ValueError(msg)
+    output_slots = tuple(range(d_model))
+    layout_contract = CiphertextLayoutContract(
+        output_layout="visible-output",
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        readout_strategy=readout_strategy,
+        output_slots=output_slots,
+        required_rotations=(),
+    )
+    rows = values[0].detach().cpu().float().tolist()
+    if len(partial_ciphertexts) != len(rows):
+        msg = "partial_ciphertexts length must match seq_len"
+        raise ValueError(msg)
+    full_ciphertexts = []
+    for ciphertext, row in zip(partial_ciphertexts, rows, strict=True):
+        remainder = [0.0] * checked_visible_dim + [
+            float(value) for value in row[checked_visible_dim:]
+        ]
+        full_ciphertexts.append(backend.add(ciphertext, backend.encrypt(remainder)))
+    return LayoutBoundCiphertexts(tuple(full_ciphertexts), layout_contract=layout_contract)
 
 
 def _validate_visible_input_ciphertexts(

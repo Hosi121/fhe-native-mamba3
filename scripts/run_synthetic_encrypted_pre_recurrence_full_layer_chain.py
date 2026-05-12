@@ -71,6 +71,7 @@ def main() -> int:
         readout_strategy=args.readout_strategy,
         rms_norm_mode=args.rms_norm_mode,
         state_decay_mode=args.state_decay_mode,
+        visible_dim_limit=None,
     )
     if args.backend == "openfhe" and len(rotations) > args.max_rotation_keys:
         msg = (

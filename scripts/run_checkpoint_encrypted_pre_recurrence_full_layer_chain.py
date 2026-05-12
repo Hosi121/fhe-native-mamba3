@@ -29,6 +29,7 @@ from fhe_native_mamba3.artifact_validation import current_git_commit  # noqa: E4
 from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict  # noqa: E402
 from fhe_native_mamba3.checkpoint_correctness import (  # noqa: E402
     run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate,
+    run_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy,
 )
 from fhe_native_mamba3.checkpoint_pre_recurrence import (  # noqa: E402
     encrypted_pre_recurrence_logical_batch_size,
@@ -88,6 +89,7 @@ def main() -> int:
         d_state=d_state,
         mimo_rank=mimo_rank,
     )
+    visible_dim_limit = args.visible_dim_limit if args.partial_visible_proxy else None
     rotations = _chain_required_rotations(
         state_dict,
         n_layers=args.n_layers,
@@ -98,6 +100,7 @@ def main() -> int:
         readout_strategy=args.readout_strategy,
         rms_norm_mode=args.rms_norm_mode,
         state_decay_mode=args.state_decay_mode,
+        visible_dim_limit=visible_dim_limit,
     )
     if args.backend == "openfhe" and len(rotations) > args.max_rotation_keys:
         msg = (
@@ -118,33 +121,63 @@ def main() -> int:
         rotations=rotations,
     )
 
-    result = run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate(
-        state_dict,
-        layer_input,
-        layer_count=args.n_layers,
-        d_state=d_state,
-        mimo_rank=mimo_rank,
-        backend=backend,
-        readout_strategy=args.readout_strategy,
-        multiplicative_depth=args.multiplicative_depth,
-        norm_eps=args.norm_eps,
-        polynomial_degree=args.polynomial_degree,
-        polynomial_range=args.polynomial_range,
-        rms_norm_mode=args.rms_norm_mode,
-        newton_iterations=args.newton_iterations,
-        newton_range=args.newton_range,
-        state_decay_mode=args.state_decay_mode,
-        decay_polynomial_degree=args.decay_polynomial_degree,
-        decay_polynomial_range=args.decay_polynomial_range,
-        atol=args.atol,
-    )
+    if args.partial_visible_proxy:
+        result = run_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy(
+            state_dict,
+            layer_input,
+            layer_count=args.n_layers,
+            visible_dim_limit=args.visible_dim_limit,
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            backend=backend,
+            readout_strategy=args.readout_strategy,
+            multiplicative_depth=args.multiplicative_depth,
+            norm_eps=args.norm_eps,
+            polynomial_degree=args.polynomial_degree,
+            polynomial_range=args.polynomial_range,
+            rms_norm_mode=args.rms_norm_mode,
+            newton_iterations=args.newton_iterations,
+            newton_range=args.newton_range,
+            state_decay_mode=args.state_decay_mode,
+            decay_polynomial_degree=args.decay_polynomial_degree,
+            decay_polynomial_range=args.decay_polynomial_range,
+            atol=args.atol,
+        )
+    else:
+        if args.visible_dim_limit:
+            msg = "--visible-dim-limit requires --partial-visible-proxy"
+            raise ValueError(msg)
+        result = run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate(
+            state_dict,
+            layer_input,
+            layer_count=args.n_layers,
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            backend=backend,
+            readout_strategy=args.readout_strategy,
+            multiplicative_depth=args.multiplicative_depth,
+            norm_eps=args.norm_eps,
+            polynomial_degree=args.polynomial_degree,
+            polynomial_range=args.polynomial_range,
+            rms_norm_mode=args.rms_norm_mode,
+            newton_iterations=args.newton_iterations,
+            newton_range=args.newton_range,
+            state_decay_mode=args.state_decay_mode,
+            decay_polynomial_degree=args.decay_polynomial_degree,
+            decay_polynomial_range=args.decay_polynomial_range,
+            atol=args.atol,
+        )
     stats = result.backend_stats
     wall_seconds = time.perf_counter() - started
     backend_recorded_seconds = float(stats["setup_seconds"]) + float(stats["eval_seconds"])
     payload = {
         "version": __version__,
         "repo_commit": current_git_commit(ROOT),
-        "stage": "mamba-checkpoint-encrypted-pre-recurrence-full-layer-chain",
+        "stage": (
+            "mamba-checkpoint-encrypted-pre-recurrence-partial-visible-chain-proxy"
+            if args.partial_visible_proxy
+            else "mamba-checkpoint-encrypted-pre-recurrence-full-layer-chain"
+        ),
         "checkpoint": args.checkpoint,
         "state_dict_key": resolved_key,
         "adapter_shape": adapter_shape,
@@ -154,6 +187,8 @@ def main() -> int:
             "input_mode": "encrypted-pre-recurrence-full-layer-chain",
             "input_propagation": args.input_propagation,
             "readout_strategy": args.readout_strategy,
+            "partial_visible_proxy": args.partial_visible_proxy,
+            "visible_dim_limit": visible_dim_limit,
         },
         "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
         "model": {
@@ -164,6 +199,7 @@ def main() -> int:
             "mimo_rank": result.mimo_rank,
             "readout_strategy": args.readout_strategy,
             "input_propagation": args.input_propagation,
+            "partial_visible_proxy": args.partial_visible_proxy,
         },
         "approximation": {
             "rms_norm_mode": args.rms_norm_mode,
@@ -196,13 +232,14 @@ def main() -> int:
             "inter_layer_ciphertext_handoff": result.inter_layer_ciphertext_handoff,
             "full_visible_output_checked": result.full_visible_output_checked,
             "partial_visible_output_checked": result.partial_visible_output_checked,
+            "partial_visible_proxy": args.partial_visible_proxy,
+            "plaintext_visible_remainder_injected": (
+                "visible_plaintext_remainder" in result.plaintext_precomputed_stages
+            ),
             "official_mamba_parity": False,
             "full_model_correctness_claimed": False,
             "plaintext_precomputed_stages": list(result.plaintext_precomputed_stages),
-            "claim": (
-                "source-style multi-layer chain with visible-output ciphertexts reused as "
-                "the next layer input; final lm_head/argmax is not included"
-            ),
+            "claim": _measurement_claim(args.partial_visible_proxy),
         },
         "result": result.to_json_dict(),
         "operation_counts": {
@@ -240,6 +277,7 @@ def _chain_required_rotations(
     readout_strategy: str,
     rms_norm_mode: str,
     state_decay_mode: str,
+    visible_dim_limit: int | None,
 ) -> tuple[int, ...]:
     rotations: set[int] = set()
     for layer_index in range(n_layers):
@@ -250,13 +288,26 @@ def _chain_required_rotations(
                 mimo_rank=mimo_rank,
                 logical_batch_size=logical_batch_size,
                 readout_strategy=readout_strategy,
-                visible_dim_limit=None,
+                visible_dim_limit=visible_dim_limit,
                 rms_norm_mode=rms_norm_mode,
                 state_decay_mode=state_decay_mode,
                 dt_rank=_resolve_dt_rank(state_dict, layer_index=layer_index),
             )
         )
     return tuple(sorted(rotations))
+
+
+def _measurement_claim(partial_visible_proxy: bool) -> str:
+    if partial_visible_proxy:
+        return (
+            "source-style multi-layer partial-visible proxy: checked visible prefix "
+            "ciphertexts are reused across layers while the unchecked suffix is injected "
+            "from plaintext reference; final lm_head/argmax is not included"
+        )
+    return (
+        "source-style multi-layer chain with visible-output ciphertexts reused as "
+        "the next layer input; final lm_head/argmax is not included"
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -269,6 +320,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mimo-rank", type=int, default=4)
     parser.add_argument("--infer-shape", action="store_true")
     parser.add_argument("--n-layers", type=int, default=2)
+    parser.add_argument("--visible-dim-limit", type=int, default=0)
+    parser.add_argument("--partial-visible-proxy", action="store_true")
     parser.add_argument("--max-seq-len", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--prompt", default="1")

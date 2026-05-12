@@ -67,6 +67,60 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_chain_runs_tracking(
     assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
 
 
+def test_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy_script(
+    tmp_path,
+) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_json = tmp_path / "pre-partial-chain.json"
+    torch.save({"model": _tiny_hf_mamba_state_dict(layer_count=2)}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_checkpoint_encrypted_pre_recurrence_full_layer_chain.py",
+            str(checkpoint_path),
+            "--backend",
+            "tracking",
+            "--partial-visible-proxy",
+            "--visible-dim-limit",
+            "3",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "4",
+            "--n-layers",
+            "2",
+            "--prompt",
+            "1",
+            "--max-seq-len",
+            "8",
+            "--atol",
+            "1.2",
+            "--newton-range",
+            "0.20,0.40",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    result = payload["result"]
+    assert payload["stage"] == (
+        "mamba-checkpoint-encrypted-pre-recurrence-partial-visible-chain-proxy"
+    )
+    assert payload["passed"] is True
+    assert payload["measurement_scope"]["partial_visible_proxy"] is True
+    assert payload["measurement_scope"]["plaintext_visible_remainder_injected"] is True
+    assert payload["measurement_scope"]["full_visible_output_checked"] is False
+    assert payload["measurement_scope"]["partial_visible_output_checked"] is True
+    assert result["checked_visible_dim"] == 3
+    assert "visible_plaintext_remainder" in result["plaintext_precomputed_stages"]
+    assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
+
+
 def _tiny_hf_mamba_state_dict(layer_count: int) -> dict[str, torch.Tensor]:
     state_dict = {
         "backbone.embeddings.weight": torch.arange(88, dtype=torch.float32).view(11, 8) / 100.0,

@@ -9,6 +9,7 @@ from fhe_native_mamba3.checkpoint_correctness import (
     run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate,
     run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend,
     run_checkpoint_encrypted_pre_recurrence_full_layer_gate,
+    run_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy,
     run_checkpoint_encrypted_pre_recurrence_recurrence_gate,
     run_checkpoint_full_layer_ciphertext_gate,
     run_checkpoint_full_layer_ciphertexts_with_backend,
@@ -346,6 +347,55 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_chain_rejects_plaintext_
             mimo_rank=4,
             backend=TrackingBackend(batch_size=8),
             rms_norm_mode="plaintext-exact",
+        )
+
+
+def test_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy_labels_remainder() -> None:
+    state_dict = _tiny_hf_mamba_state_dict(layer_count=2)
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+    backend = TrackingBackend(batch_size=8)
+
+    gate = run_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy(
+        state_dict,
+        layer_input,
+        layer_count=2,
+        visible_dim_limit=3,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        readout_strategy="rank-local",
+        newton_range=(0.20, 0.40),
+        atol=1.2,
+    )
+    payload = gate.to_json_dict()
+
+    assert gate.inter_layer_ciphertext_handoff is True
+    assert gate.no_intermediate_decrypt is True
+    assert gate.final_decrypt_count == gate.seq_len
+    assert gate.checked_visible_dim == 3
+    assert gate.full_visible_output_checked is False
+    assert gate.partial_visible_output_checked is True
+    assert "visible_plaintext_remainder" in gate.plaintext_precomputed_stages
+    assert gate.max_abs_error < 1.2
+    assert gate.passed is True
+    assert payload["checked_visible_dim"] == 3
+
+
+def test_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy_rejects_full_limit() -> (
+    None
+):
+    state_dict = _tiny_hf_mamba_state_dict(layer_count=2)
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+
+    with pytest.raises(ValueError, match="requires visible_dim_limit smaller"):
+        run_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy(
+            state_dict,
+            layer_input,
+            layer_count=2,
+            visible_dim_limit=8,
+            d_state=2,
+            mimo_rank=4,
+            backend=TrackingBackend(batch_size=8),
         )
 
 
