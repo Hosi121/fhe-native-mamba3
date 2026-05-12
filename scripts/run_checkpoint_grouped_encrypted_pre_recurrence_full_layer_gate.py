@@ -15,20 +15,19 @@ from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.artifact_validation import current_git_commit
 from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
 from fhe_native_mamba3.checkpoint_correctness import (
-    expand_rank_to_state_bsgs_rotation_steps,
-    expand_state_vector_to_state_bsgs_rotation_steps,
     run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate,
 )
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
     encrypted_pre_recurrence_logical_batch_size,
-    slot_linear_bsgs_rotation_steps,
 )
 from fhe_native_mamba3.cli_support import emit_json_payload, parse_int_list
 from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model
-from fhe_native_mamba3.openfhe_backend import readout_output_slots, required_readout_rotations
 from fhe_native_mamba3.recurrence_scales import (
     load_recurrence_scale_plan,
     resolve_recurrence_layer_scales,
+)
+from fhe_native_mamba3.stage1_checkpoint_grouped_gate import (
+    checkpoint_grouped_gate_rotation_steps,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -291,70 +290,19 @@ def _required_grouped_rotations(
     PBI-S1-015 will replace this with a report-grade minimized inventory.
     """
 
-    if rank_pack_size <= 0:
-        msg = "rank_pack_size must be positive"
-        raise ValueError(msg)
-    checked_visible_dim = d_model if visible_dim_limit is None else min(d_model, visible_dim_limit)
-    rotations = set(
-        helpers._required_rotations(
-            d_model=d_model,
-            d_state=d_state,
-            mimo_rank=mimo_rank,
-            logical_batch_size=logical_batch_size,
-            readout_strategy=readout_strategy,
-            visible_dim_limit=visible_dim_limit,
-            rms_norm_mode=rms_norm_mode,
-            state_decay_mode=state_decay_mode,
-            dt_rank=dt_rank,
-        )
+    del helpers
+    return checkpoint_grouped_gate_rotation_steps(
+        d_model=d_model,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        rank_pack_size=rank_pack_size,
+        logical_batch_size=logical_batch_size,
+        readout_strategy=readout_strategy,
+        visible_dim_limit=visible_dim_limit,
+        rms_norm_mode=rms_norm_mode,
+        state_decay_mode=state_decay_mode,
+        dt_rank=dt_rank,
     )
-    for start_rank in range(0, mimo_rank, rank_pack_size):
-        stop_rank = min(start_rank + rank_pack_size, mimo_rank)
-        local_rank = stop_rank - start_rank
-        output_slots = readout_output_slots(
-            d_state=d_state,
-            mimo_rank=local_rank,
-            readout_strategy=readout_strategy,
-        )
-        rotations.update(
-            slot_linear_bsgs_rotation_steps(
-                source_slots=tuple(range(start_rank, stop_rank)),
-                output_dim=local_rank,
-            )
-        )
-        rotations.update(
-            slot_linear_bsgs_rotation_steps(
-                source_slots=tuple(
-                    rank_index * d_state + state_index
-                    for rank_index in range(start_rank, stop_rank)
-                    for state_index in range(d_state)
-                ),
-                output_dim=d_state * local_rank,
-            )
-        )
-        rotations.update(expand_rank_to_state_bsgs_rotation_steps(d_state=d_state, rank=local_rank))
-        rotations.update(
-            expand_state_vector_to_state_bsgs_rotation_steps(d_state=d_state, rank=local_rank)
-        )
-        rotations.update(
-            required_readout_rotations(
-                d_state=d_state,
-                mimo_rank=local_rank,
-                readout_strategy=readout_strategy,
-            )
-        )
-        rotations.update(
-            rank_index - output_slot
-            for rank_index, output_slot in enumerate(output_slots)
-            if rank_index != output_slot
-        )
-        rotations.update(
-            slot_linear_bsgs_rotation_steps(
-                source_slots=output_slots,
-                output_dim=checked_visible_dim,
-            )
-        )
-    return tuple(sorted(rotation for rotation in rotations if rotation != 0))
 
 
 def _parse_args() -> argparse.Namespace:

@@ -288,6 +288,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_grouped_chain",
         "Stage1GroupedChainInventoryRow",
     ),
+    "Stage1CheckpointGroupedGateInventoryReport": (
+        "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
+        "Stage1CheckpointGroupedGateInventoryReport",
+    ),
+    "Stage1CheckpointGroupedGateInventoryRow": (
+        "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
+        "Stage1CheckpointGroupedGateInventoryRow",
+    ),
     "Stage1GroupedFullLayerLiftSmokeResult": (
         "fhe_native_mamba3.stage1_grouped_recurrence",
         "Stage1GroupedFullLayerLiftSmokeResult",
@@ -503,6 +511,18 @@ _LAZY_IMPORTS = {
     "build_stage1_grouped_chain_inventory": (
         "fhe_native_mamba3.stage1_grouped_chain",
         "build_stage1_grouped_chain_inventory",
+    ),
+    "build_stage1_checkpoint_grouped_gate_inventory": (
+        "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
+        "build_stage1_checkpoint_grouped_gate_inventory",
+    ),
+    "checkpoint_grouped_gate_rotation_steps": (
+        "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
+        "checkpoint_grouped_gate_rotation_steps",
+    ),
+    "checkpoint_monolithic_gate_rotation_steps": (
+        "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
+        "checkpoint_monolithic_gate_rotation_steps",
     ),
     "build_stage1_plan": ("fhe_native_mamba3.stage1_plan", "build_stage1_plan"),
     "build_srht_sketch_metadata": (
@@ -852,6 +872,8 @@ __all__ = [
     "Stage0MimoConfig",
     "Stage0SweepConfig",
     "Stage1CandidatePlan",
+    "Stage1CheckpointGroupedGateInventoryReport",
+    "Stage1CheckpointGroupedGateInventoryRow",
     "Stage1ComparisonReport",
     "Stage1ComparisonRow",
     "Stage1Dependency",
@@ -901,6 +923,7 @@ __all__ = [
     "build_rotation_inventory",
     "build_srht_sketch_metadata",
     "build_stage0_status_report",
+    "build_stage1_checkpoint_grouped_gate_inventory",
     "build_stage1_comparison_report",
     "build_stage1_grouped_chain_inventory",
     "build_stage1_plan",
@@ -910,6 +933,8 @@ __all__ = [
     "calibrate_weight_tensor",
     "calibrate_weight_values",
     "causal_decay_weights",
+    "checkpoint_grouped_gate_rotation_steps",
+    "checkpoint_monolithic_gate_rotation_steps",
     "ckks_batch_size_for_slots",
     "ckks_ring_dimension_for_batch_size",
     "client_side_argmax",
