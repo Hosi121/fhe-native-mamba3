@@ -77,6 +77,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.sketch_evidence_report",
         "SketchEvidenceReportRow",
     ),
+    "SketchRecurrenceClaim": (
+        "fhe_native_mamba3.sketch_recurrence_claims",
+        "SketchRecurrenceClaim",
+    ),
     "CheckpointRecurrenceCorrectnessGate": (
         "fhe_native_mamba3.checkpoint_correctness",
         "CheckpointRecurrenceCorrectnessGate",
@@ -394,6 +398,10 @@ _LAZY_IMPORTS = {
     "build_sketch_evidence_report": (
         "fhe_native_mamba3.sketch_evidence_report",
         "build_sketch_evidence_report",
+    ),
+    "classify_sketch_recurrence_claim": (
+        "fhe_native_mamba3.sketch_recurrence_claims",
+        "classify_sketch_recurrence_claim",
     ),
     "run_checkpoint_sketch_matrix": (
         "fhe_native_mamba3.checkpoint_sketch_matrix",
@@ -922,6 +930,7 @@ __all__ = [
     "RecurrenceTraceProfile",
     "SketchEvidenceReport",
     "SketchEvidenceReportRow",
+    "SketchRecurrenceClaim",
     "SrhtButterflyStage",
     "SrhtSketchMetadata",
     "SsdPrefixScanResult",
@@ -997,6 +1006,7 @@ __all__ = [
     "checkpoint_monolithic_gate_rotation_steps",
     "ckks_batch_size_for_slots",
     "ckks_ring_dimension_for_batch_size",
+    "classify_sketch_recurrence_claim",
     "client_side_argmax",
     "client_side_decode_ciphertext",
     "client_side_decode_scores",

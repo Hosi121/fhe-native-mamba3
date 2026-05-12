@@ -14,6 +14,7 @@ from fhe_native_mamba3.mamba_reference import (
     _run_source_dynamic_formula,
     run_mamba_source_layer,
 )
+from fhe_native_mamba3.sketch_recurrence_claims import classify_sketch_recurrence_claim
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,11 @@ class CheckpointSourceSketchTrace:
             "true_outputs": self.true_outputs,
             "initial_state": self.initial_state,
             "scalar_decays": self.scalar_decays,
+            "sketch_recurrence_claim": classify_sketch_recurrence_claim(
+                recurrence_type=self.decay_kind,
+                recurrence_compat_available=self.scalar_decays is not None,
+                recurrence_compat_max_abs_error=0.0 if self.scalar_decays is not None else None,
+            ).to_json_dict(),
             "notes": list(self.notes),
         }
 

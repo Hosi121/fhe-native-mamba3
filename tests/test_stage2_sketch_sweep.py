@@ -24,6 +24,8 @@ def test_stage2_sketch_sweep_full_width_preserves_recurrence_and_readout() -> No
     assert full_row.srht_multiplicative_depth == 0
     assert full_row.srht_rotation_steps == (1, 2, 4)
     assert full_row.recurrence_compat_max_abs_error <= 1e-12
+    assert full_row.recurrence_compatibility_status == "exact"
+    assert full_row.sketch_recurrence_claim["exact_recurrence_claimed"] is True
     assert full_row.readout_relative_l2_error <= 1e-12
     assert full_row.readout_pairnorm_l2_error <= 1e-12
     assert result.recommended_sketch_size == 8

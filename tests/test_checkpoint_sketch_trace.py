@@ -26,6 +26,8 @@ def test_checkpoint_source_sketch_trace_feeds_stage2_sweep() -> None:
     assert trace.state_width == 2
     assert trace.decay_kind == "rank-state"
     assert payload["scalar_decays"] is None
+    assert payload["sketch_recurrence_claim"]["compatibility_status"] == "unavailable"
+    assert payload["sketch_recurrence_claim"]["readout_error_only"] is True
     assert len(payload["states"]) == 2
     assert len(payload["states"][0]) == 3
 
@@ -40,6 +42,8 @@ def test_checkpoint_source_sketch_trace_feeds_stage2_sweep() -> None:
     assert sweep.rows[-1].sketch_size == 2
     assert sweep.rows[-1].passed is True
     assert sweep.rows[-1].recurrence_compat_available is False
+    assert sweep.rows[-1].recurrence_compatibility_status == "unavailable"
+    assert sweep.rows[-1].sketch_recurrence_claim["readout_error_only"] is True
     assert sweep.rows[-1].readout_pairnorm_l2_error <= 1e-6
 
 
@@ -94,6 +98,7 @@ def test_checkpoint_source_sketch_trace_script_and_stage2_script_chain(tmp_path)
     assert sweep_payload["trajectory_json"] == str(trace_json)
     assert sweep_payload["measurement_scope"]["checkpoint_source_trace"] is True
     assert sweep_payload["rows"][-1]["recurrence_compat_available"] is False
+    assert sweep_payload["rows"][-1]["recurrence_compatibility_status"] == "unavailable"
     assert json.loads(sweep_json.read_text(encoding="utf-8"))["passed"] is True
 
 

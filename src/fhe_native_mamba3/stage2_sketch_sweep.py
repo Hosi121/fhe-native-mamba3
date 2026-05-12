@@ -10,6 +10,7 @@ from typing import Any
 
 import torch
 
+from fhe_native_mamba3.sketch_recurrence_claims import classify_sketch_recurrence_claim
 from fhe_native_mamba3.srht_sketch import (
     SrhtSketchMetadata,
     apply_srht_sketch,
@@ -35,6 +36,8 @@ class Stage2SketchSweepRow:
     readout_pairnorm_p95_abs_error: float
     max_inner_product_relative_error: float
     recurrence_compat_available: bool
+    recurrence_compatibility_status: str
+    sketch_recurrence_claim: dict[str, Any]
     srht_rotation_steps: tuple[int, ...]
     srht_rotation_key_count: int
     srht_multiplicative_depth: int
@@ -241,6 +244,12 @@ def _run_sketch_row(
         else float((direct_state_sketch - recurrence_state_sketch).abs().max())
     )
     recurrence_compat_available = recurrence_state_sketch is not None
+    recurrence_type = str(trajectories.get("decay_kind", "scalar"))
+    recurrence_claim = classify_sketch_recurrence_claim(
+        recurrence_type=recurrence_type,
+        recurrence_compat_available=recurrence_compat_available,
+        recurrence_compat_max_abs_error=recurrence_compat_error,
+    )
     stages = tuple(stage.stride for stage in metadata.butterfly_stages)
     return Stage2SketchSweepRow(
         sketch_size=sketch_size,
@@ -260,6 +269,8 @@ def _run_sketch_row(
         readout_pairnorm_p95_abs_error=float(torch.quantile(pointwise_pairnorm_error, 0.95)),
         max_inner_product_relative_error=max_inner_relative,
         recurrence_compat_available=recurrence_compat_available,
+        recurrence_compatibility_status=recurrence_claim.compatibility_status,
+        sketch_recurrence_claim=recurrence_claim.to_json_dict(),
         srht_rotation_steps=stages,
         srht_rotation_key_count=len(stages),
         srht_multiplicative_depth=0,
@@ -317,6 +328,7 @@ def _trajectories_from_payload(
         "states": states,
         "readouts": readouts,
         "true_outputs": true_outputs,
+        "decay_kind": str(source.get("decay_kind", "unknown")),
     }
     initial_state = source.get("initial_state")
     updates = source.get("updates")
@@ -395,6 +407,7 @@ def _make_trajectories(
         "decays": decays,
         "states": state_tensor,
         "true_outputs": true_outputs,
+        "decay_kind": "scalar",
     }
 
 
