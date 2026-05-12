@@ -1046,7 +1046,7 @@ def run_checkpoint_encrypted_pre_recurrence_full_layer_gate(
     )
 
 
-def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
+def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
     state_dict: dict[str, Tensor],
     layer_input: Tensor,
     *,
@@ -1066,25 +1066,22 @@ def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
     state_decay_mode: StateDecayMode = "poly-composed",
     decay_polynomial_degree: int = 5,
     decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
-    atol: float = 5e-2,
     visible_dim_limit: int | None = None,
     visible_output_scale: float = 1.0,
     input_ciphertexts: tuple[Any, ...] | None = None,
-) -> CheckpointFullLayerCiphertextGate:
-    """Check full-layer output with grouped encrypted recurrence/lift.
+    allow_partial_input_ciphertext_handoff: bool = False,
+) -> CheckpointFullLayerCiphertextTrace:
+    """Return grouped encrypted pre-recurrence full-layer outputs as ciphertexts.
 
     Pre-recurrence is still full-rank. The Stage 1 boundary tested here is the
     expensive recurrence/readout/lift segment: full-rank ciphertexts are compacted
     into rank packs, recurrence is evaluated per pack, gate and out-projection
     column slices are applied per pack, visible contributions are summed, and the
-    residual is added without intermediate decrypts.
+    residual is added without intermediate decrypts or final decrypt.
     """
 
     if rank_pack_size <= 0:
         msg = "rank_pack_size must be positive"
-        raise ValueError(msg)
-    if atol < 0:
-        msg = "atol must be non-negative"
         raise ValueError(msg)
     if visible_output_scale <= 0:
         msg = "visible_output_scale must be positive"
@@ -1112,7 +1109,7 @@ def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
     )
     batch_size = max(
         visible.d_model,
-        problem.d_state * min(rank_pack_size, problem.mimo_rank),
+        problem.d_state * problem.mimo_rank,
         checked_visible_dim,
     )
     resolved_backend = backend or TrackingBackend(batch_size=batch_size)
@@ -1128,6 +1125,9 @@ def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
             d_model=visible.d_model,
             seq_len=visible.seq_len,
         )
+        if checked_visible_dim != visible.d_model and not allow_partial_input_ciphertext_handoff:
+            msg = "input ciphertext handoff requires full visible output, not visible_dim_limit"
+            raise ValueError(msg)
 
     started_decrypts = resolved_backend.stats().decrypt_count
     pre_trace = run_checkpoint_pre_recurrence_ciphertexts_with_backend(
@@ -1233,23 +1233,21 @@ def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
         )
         for token_index in range(visible.seq_len)
     )
-    final_started_decrypts = resolved_backend.stats().decrypt_count
-    actual_rows = tuple(
-        resolved_backend.decrypt(output_ct, length=checked_visible_dim)
-        for output_ct in output_ciphertexts
+    output_slots = tuple(range(checked_visible_dim))
+    required_rotations = required_full_layer_visible_rotations(
+        d_model=visible.d_model,
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        readout_strategy=readout_strategy,
+        visible_dim_limit=visible_dim_limit,
     )
-    max_abs_error = max(
-        (
-            abs(actual - expected)
-            for actual_row, expected_row in zip(actual_rows, expected_rows, strict=True)
-            for actual, expected in zip(actual_row, expected_row, strict=True)
-        ),
-        default=0.0,
-    )
-    final_decrypts = resolved_backend.stats().decrypt_count - final_started_decrypts
-    no_intermediate_decrypt = (
-        resolved_backend.stats().decrypt_count - started_decrypts == final_decrypts
-        and final_decrypts == visible.seq_len
+    layout_contract = CiphertextLayoutContract(
+        output_layout="visible-output",
+        d_state=problem.d_state,
+        mimo_rank=problem.mimo_rank,
+        readout_strategy=readout_strategy,
+        output_slots=output_slots,
+        required_rotations=required_rotations,
     )
     plaintext_precomputed = []
     if input_ciphertexts is None:
@@ -1258,7 +1256,17 @@ def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
         plaintext_precomputed.append("rms_norm_output")
     if state_decay_mode == "plaintext-exact":
         plaintext_precomputed.append("state_rank_decay")
-    return CheckpointFullLayerCiphertextGate(
+    notes = [
+        "pre-recurrence tensors are full-rank ciphertexts",
+        "recurrence, gate, out-projection, and visible summation are grouped by rank pack",
+    ]
+    if input_ciphertexts is None:
+        notes.append("residual input is encrypted per token by this trace constructor")
+    else:
+        notes.append("residual input is reused from caller-provided visible input ciphertexts")
+    if visible_output_scale != 1.0:
+        notes.append("visible output ciphertext and expected output are scaled before decoding")
+    return CheckpointFullLayerCiphertextTrace(
         layer_index=layer_index,
         d_model=visible.d_model,
         checked_visible_dim=checked_visible_dim,
@@ -1272,24 +1280,315 @@ def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
         input_mode="encrypted-dynamic-bc",
         readout_strategy=readout_strategy,
         visible_output_scale=visible_output_scale,
+        output_layout="visible-output",
+        output_slots=output_slots,
+        layout_contract=layout_contract,
+        required_rotations=required_rotations,
+        output_ciphertexts=LayoutBoundCiphertexts(
+            output_ciphertexts,
+            layout_contract=layout_contract,
+        ),
+        expected_outputs=expected_rows,
+        backend_handle=resolved_backend,
+        recurrence_ciphertext=True,
+        visible_handoff_ciphertext=True,
+        decrypt_count_delta=resolved_backend.stats().decrypt_count - started_decrypts,
+        plaintext_precomputed_stages=tuple(plaintext_precomputed),
+        backend_stats=resolved_backend.stats().to_json_dict(),
+        notes=tuple(notes),
+        pre_recurrence_depth_estimate=pre_trace.depth_estimate,
+    )
+
+
+def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_index: int = 0,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    rank_pack_size: int = 32,
+    backend: FHEBackend | None = None,
+    readout_strategy: ReadoutStrategy = "rank-local",
+    multiplicative_depth: int = 28,
+    norm_eps: float = 1e-5,
+    polynomial_degree: int = 13,
+    polynomial_range: float = 6.0,
+    rms_norm_mode: RmsNormMode = "newton-invsqrt",
+    newton_iterations: int = 2,
+    newton_range: tuple[float, float] = (0.25, 0.5),
+    state_decay_mode: StateDecayMode = "poly-composed",
+    decay_polynomial_degree: int = 5,
+    decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
+    atol: float = 5e-2,
+    visible_dim_limit: int | None = None,
+    visible_output_scale: float = 1.0,
+    input_ciphertexts: tuple[Any, ...] | None = None,
+) -> CheckpointFullLayerCiphertextGate:
+    """Check grouped encrypted pre-recurrence full-layer output."""
+
+    if atol < 0:
+        msg = "atol must be non-negative"
+        raise ValueError(msg)
+    trace = run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        layer_index=layer_index,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        rank_pack_size=rank_pack_size,
+        backend=backend,
+        readout_strategy=readout_strategy,
+        multiplicative_depth=multiplicative_depth,
+        norm_eps=norm_eps,
+        polynomial_degree=polynomial_degree,
+        polynomial_range=polynomial_range,
+        rms_norm_mode=rms_norm_mode,
+        newton_iterations=newton_iterations,
+        newton_range=newton_range,
+        state_decay_mode=state_decay_mode,
+        decay_polynomial_degree=decay_polynomial_degree,
+        decay_polynomial_range=decay_polynomial_range,
+        visible_dim_limit=visible_dim_limit,
+        visible_output_scale=visible_output_scale,
+        input_ciphertexts=input_ciphertexts,
+    )
+    resolved_backend = trace.backend_handle
+    started_decrypts = resolved_backend.stats().decrypt_count
+    actual_rows = tuple(
+        resolved_backend.decrypt(output_ct, length=trace.checked_visible_dim)
+        for output_ct in trace.output_ciphertexts
+    )
+    max_abs_error = max(
+        (
+            abs(actual - expected)
+            for actual_row, expected_row in zip(actual_rows, trace.expected_outputs, strict=True)
+            for actual, expected in zip(actual_row, expected_row, strict=True)
+        ),
+        default=0.0,
+    )
+    final_decrypts = resolved_backend.stats().decrypt_count - started_decrypts
+    no_intermediate_decrypt = trace.decrypt_count_delta == 0 and final_decrypts == trace.seq_len
+    return CheckpointFullLayerCiphertextGate(
+        layer_index=layer_index,
+        d_model=trace.d_model,
+        checked_visible_dim=trace.checked_visible_dim,
+        full_visible_output_checked=trace.full_visible_output_checked,
+        partial_visible_output_checked=trace.partial_visible_output_checked,
+        d_state=trace.d_state,
+        mimo_rank=trace.mimo_rank,
+        seq_len=trace.seq_len,
+        backend=resolved_backend.stats().backend,
+        encrypted=bool(resolved_backend.stats().encrypted),
+        input_mode="encrypted-dynamic-bc",
+        readout_strategy=readout_strategy,
+        visible_output_scale=trace.visible_output_scale,
         max_abs_error=max_abs_error,
         atol=atol,
         passed=max_abs_error <= atol and no_intermediate_decrypt,
         recurrence_ciphertext=True,
         visible_handoff_ciphertext=True,
         no_intermediate_decrypt=no_intermediate_decrypt,
-        full_layer_formula_checked=checked_visible_dim == visible.d_model,
+        full_layer_formula_checked=trace.full_visible_output_checked,
         official_mamba_parity=False,
         full_model_correctness_claimed=False,
-        plaintext_precomputed_stages=tuple(plaintext_precomputed),
+        plaintext_precomputed_stages=trace.plaintext_precomputed_stages,
+        backend_stats=resolved_backend.stats().to_json_dict(),
+        notes=(*trace.notes, "final lm_head/client decoding is not included"),
+        pre_recurrence_ciphertext=True,
+        pre_recurrence_depth_estimate=trace.pre_recurrence_depth_estimate,
+    )
+
+
+def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_chain_proxy(
+    state_dict: dict[str, Tensor],
+    layer_input: Tensor,
+    *,
+    layer_count: int,
+    visible_dim_limit: int,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    rank_pack_size: int = 32,
+    backend: FHEBackend | None = None,
+    readout_strategy: ReadoutStrategy = "rank-local",
+    multiplicative_depth: int = 28,
+    norm_eps: float = 1e-5,
+    polynomial_degree: int = 13,
+    polynomial_range: float = 6.0,
+    rms_norm_mode: RmsNormMode = "newton-invsqrt",
+    newton_iterations: int = 2,
+    newton_range: tuple[float, float] = (0.25, 0.5),
+    state_decay_mode: StateDecayMode = "poly-composed",
+    decay_polynomial_degree: int = 5,
+    decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
+    atol: float = 5e-2,
+) -> CheckpointFullLayerCiphertextChainGate:
+    """Chain grouped full-layer outputs for a checked visible prefix.
+
+    This Stage 1 proxy keeps the grouped recurrence/lift path on ciphertexts
+    across layers, while unchecked visible dimensions are injected from the
+    plaintext source reference after each layer. It is intentionally not a full
+    visible-output or full-model correctness claim.
+    """
+
+    if layer_count <= 0:
+        msg = "layer_count must be positive"
+        raise ValueError(msg)
+    if layer_input.ndim != 3 or layer_input.shape[0] != 1:
+        msg = "layer_input must have shape [1, seq_len, d_model]"
+        raise ValueError(msg)
+    if rank_pack_size <= 0:
+        msg = "rank_pack_size must be positive"
+        raise ValueError(msg)
+    if atol < 0:
+        msg = "atol must be non-negative"
+        raise ValueError(msg)
+    if rms_norm_mode == "plaintext-exact":
+        msg = (
+            "grouped encrypted partial-visible chain proxy cannot use plaintext-exact "
+            "RMSNorm because each layer consumes visible-output ciphertexts"
+        )
+        raise ValueError(msg)
+    d_model = int(layer_input.shape[-1])
+    checked_visible_dim = _resolve_visible_dim_limit(
+        d_model=d_model,
+        visible_dim_limit=visible_dim_limit,
+    )
+    if checked_visible_dim == d_model:
+        msg = "grouped partial-visible chain proxy requires visible_dim_limit smaller than d_model"
+        raise ValueError(msg)
+
+    first_problem = build_mamba_source_recurrence_problem(
+        state_dict,
+        layer_input,
+        layer_index=0,
+        d_state=d_state,
+        mimo_rank=mimo_rank,
+        norm_eps=norm_eps,
+    )
+    batch_size = max(d_model, first_problem.d_state * first_problem.mimo_rank)
+    resolved_backend = backend or TrackingBackend(batch_size=batch_size)
+    if resolved_backend.batch_size < batch_size:
+        msg = (
+            "grouped encrypted partial-visible chain backend batch_size is too small; "
+            f"need at least {batch_size}, got {resolved_backend.batch_size}"
+        )
+        raise ValueError(msg)
+
+    started_decrypts = resolved_backend.stats().decrypt_count
+    hidden = layer_input
+    input_ciphertexts = _visible_tensor_ciphertexts(
+        hidden,
+        backend=resolved_backend,
+        d_state=first_problem.d_state,
+        mimo_rank=first_problem.mimo_rank,
+        readout_strategy=readout_strategy,
+    )
+    layer_depths: list[int | None] = []
+    traces: list[CheckpointFullLayerCiphertextTrace] = []
+    for layer_index in range(layer_count):
+        trace = run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend(
+            state_dict,
+            hidden,
+            layer_index=layer_index,
+            d_state=first_problem.d_state,
+            mimo_rank=first_problem.mimo_rank,
+            rank_pack_size=rank_pack_size,
+            backend=resolved_backend,
+            readout_strategy=readout_strategy,
+            multiplicative_depth=multiplicative_depth,
+            norm_eps=norm_eps,
+            polynomial_degree=polynomial_degree,
+            polynomial_range=polynomial_range,
+            rms_norm_mode=rms_norm_mode,
+            newton_iterations=newton_iterations,
+            newton_range=newton_range,
+            state_decay_mode=state_decay_mode,
+            decay_polynomial_degree=decay_polynomial_degree,
+            decay_polynomial_range=decay_polynomial_range,
+            visible_dim_limit=checked_visible_dim,
+            input_ciphertexts=input_ciphertexts,
+            allow_partial_input_ciphertext_handoff=True,
+        )
+        traces.append(trace)
+        layer_depths.append(trace.pre_recurrence_depth_estimate)
+        hidden = run_mamba_source_layer(
+            state_dict,
+            hidden,
+            layer_index=layer_index,
+            d_state=first_problem.d_state,
+            mimo_rank=first_problem.mimo_rank,
+            norm_eps=norm_eps,
+        )
+        input_ciphertexts = _inject_plaintext_visible_remainder(
+            trace.output_ciphertexts,
+            hidden,
+            checked_visible_dim=checked_visible_dim,
+            backend=resolved_backend,
+            d_state=first_problem.d_state,
+            mimo_rank=first_problem.mimo_rank,
+            readout_strategy=readout_strategy,
+        )
+
+    final_started_decrypts = resolved_backend.stats().decrypt_count
+    actual_rows = tuple(
+        resolved_backend.decrypt(output_ct, length=checked_visible_dim)
+        for output_ct in traces[-1].output_ciphertexts
+    )
+    expected_rows = tuple(
+        tuple(float(value) for value in row[:checked_visible_dim])
+        for row in hidden[0].detach().cpu().float().tolist()
+    )
+    max_abs_error = max(
+        (
+            abs(actual - expected)
+            for actual_row, expected_row in zip(actual_rows, expected_rows, strict=True)
+            for actual, expected in zip(actual_row, expected_row, strict=True)
+        ),
+        default=0.0,
+    )
+    final_decrypt_count = resolved_backend.stats().decrypt_count - final_started_decrypts
+    no_intermediate_decrypt = (
+        all(trace.decrypt_count_delta == 0 for trace in traces)
+        and final_decrypt_count == int(layer_input.shape[1])
+        and final_started_decrypts == started_decrypts
+    )
+    plaintext_precomputed = tuple(
+        sorted(
+            {
+                "visible_plaintext_remainder",
+                *(stage for trace in traces for stage in trace.plaintext_precomputed_stages),
+            }
+        )
+    )
+    return CheckpointFullLayerCiphertextChainGate(
+        layer_count=layer_count,
+        d_model=d_model,
+        checked_visible_dim=checked_visible_dim,
+        full_visible_output_checked=False,
+        partial_visible_output_checked=True,
+        d_state=first_problem.d_state,
+        mimo_rank=first_problem.mimo_rank,
+        seq_len=int(layer_input.shape[1]),
+        backend=resolved_backend.stats().backend,
+        encrypted=bool(resolved_backend.stats().encrypted),
+        readout_strategy=readout_strategy,
+        max_abs_error=max_abs_error,
+        atol=atol,
+        passed=max_abs_error <= atol and no_intermediate_decrypt,
+        inter_layer_ciphertext_handoff=True,
+        no_intermediate_decrypt=no_intermediate_decrypt,
+        final_decrypt_count=final_decrypt_count,
+        plaintext_precomputed_stages=plaintext_precomputed,
+        layer_depth_estimates=tuple(layer_depths),
         backend_stats=resolved_backend.stats().to_json_dict(),
         notes=(
-            "pre-recurrence tensors are full-rank ciphertexts",
-            "recurrence, gate, out-projection, and visible summation are grouped by rank pack",
+            "grouped partial-visible proxy chains only the checked visible prefix as ciphertext",
+            "rank-pack grouped recurrence/gate/out-projection runs without intermediate decrypts",
+            "the unchecked visible suffix is injected from plaintext reference after each layer",
+            "full inferred 24-layer success is not claimed",
             "final lm_head/client decoding is not included",
         ),
-        pre_recurrence_ciphertext=True,
-        pre_recurrence_depth_estimate=pre_trace.depth_estimate,
     )
 
 

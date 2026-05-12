@@ -122,6 +122,66 @@ def test_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy_script(
     assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
 
 
+def test_checkpoint_grouped_encrypted_pre_recurrence_chain_proxy_script(
+    tmp_path,
+) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_json = tmp_path / "grouped-pre-partial-chain.json"
+    torch.save({"model": _tiny_hf_mamba_state_dict(layer_count=2)}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_checkpoint_encrypted_pre_recurrence_full_layer_chain.py",
+            str(checkpoint_path),
+            "--backend",
+            "tracking",
+            "--partial-visible-proxy",
+            "--grouped-rank-pack-size",
+            "2",
+            "--visible-dim-limit",
+            "3",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "4",
+            "--n-layers",
+            "2",
+            "--prompt",
+            "1",
+            "--max-seq-len",
+            "8",
+            "--atol",
+            "1.2",
+            "--newton-range",
+            "0.20,0.40",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    result = payload["result"]
+    assert payload["stage"] == (
+        "mamba-checkpoint-grouped-encrypted-pre-recurrence-partial-visible-chain-proxy"
+    )
+    assert payload["passed"] is True
+    assert payload["measurement_scope"]["grouped_rank_pack"] is True
+    assert payload["measurement_scope"]["rank_pack_size"] == 2
+    assert payload["measurement_scope"]["full_rank_pre_recurrence"] is True
+    assert payload["measurement_scope"]["pre_recurrence_rank_grouped"] is False
+    assert payload["measurement_scope"]["full_inferred_24_layer_success_claimed"] is False
+    assert payload["measurement_scope"]["partial_visible_output_checked"] is True
+    assert payload["operation_counts"]["decrypt"] == result["seq_len"]
+    assert result["checked_visible_dim"] == 3
+    assert result["layer_depth_estimates"] == [17, 17]
+    assert "visible_plaintext_remainder" in result["plaintext_precomputed_stages"]
+    assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
+
+
 def test_checkpoint_encrypted_pre_recurrence_chain_openfhe_rotation_guard_artifact(
     tmp_path,
 ) -> None:

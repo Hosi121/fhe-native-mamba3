@@ -30,12 +30,16 @@ from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict  # noqa: E40
 from fhe_native_mamba3.checkpoint_correctness import (  # noqa: E402
     run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate,
     run_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy,
+    run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_chain_proxy,
 )
 from fhe_native_mamba3.checkpoint_pre_recurrence import (  # noqa: E402
     encrypted_pre_recurrence_logical_batch_size,
 )
 from fhe_native_mamba3.cli_support import emit_json_payload, parse_int_list  # noqa: E402
 from fhe_native_mamba3.mamba_checkpoint import adapt_mamba_state_dict_to_model  # noqa: E402
+from fhe_native_mamba3.stage1_checkpoint_grouped_gate import (  # noqa: E402
+    checkpoint_grouped_gate_rotation_steps,
+)
 
 
 def main() -> int:
@@ -89,19 +93,38 @@ def main() -> int:
         d_state=d_state,
         mimo_rank=mimo_rank,
     )
+    grouped_chain_proxy = args.grouped_rank_pack_size > 0
+    if grouped_chain_proxy and not args.partial_visible_proxy:
+        msg = "--grouped-rank-pack-size currently requires --partial-visible-proxy"
+        raise ValueError(msg)
     visible_dim_limit = args.visible_dim_limit if args.partial_visible_proxy else None
-    rotations = _chain_required_rotations(
-        state_dict,
-        n_layers=args.n_layers,
-        d_model=int(layer_input.shape[-1]),
-        d_state=d_state,
-        mimo_rank=mimo_rank,
-        logical_batch_size=logical_batch_size,
-        readout_strategy=args.readout_strategy,
-        rms_norm_mode=args.rms_norm_mode,
-        state_decay_mode=args.state_decay_mode,
-        visible_dim_limit=visible_dim_limit,
-    )
+    if grouped_chain_proxy:
+        rotations = _chain_required_grouped_rotations(
+            state_dict,
+            n_layers=args.n_layers,
+            d_model=int(layer_input.shape[-1]),
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            rank_pack_size=args.grouped_rank_pack_size,
+            logical_batch_size=logical_batch_size,
+            readout_strategy=args.readout_strategy,
+            rms_norm_mode=args.rms_norm_mode,
+            state_decay_mode=args.state_decay_mode,
+            visible_dim_limit=visible_dim_limit,
+        )
+    else:
+        rotations = _chain_required_rotations(
+            state_dict,
+            n_layers=args.n_layers,
+            d_model=int(layer_input.shape[-1]),
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            logical_batch_size=logical_batch_size,
+            readout_strategy=args.readout_strategy,
+            rms_norm_mode=args.rms_norm_mode,
+            state_decay_mode=args.state_decay_mode,
+            visible_dim_limit=visible_dim_limit,
+        )
     if args.backend == "openfhe" and len(rotations) > args.max_rotation_keys:
         payload = _rotation_guard_payload(
             args=args,
@@ -158,7 +181,30 @@ def main() -> int:
         rotations=rotations,
     )
 
-    if args.partial_visible_proxy:
+    if grouped_chain_proxy:
+        result = run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_chain_proxy(
+            state_dict,
+            layer_input,
+            layer_count=args.n_layers,
+            visible_dim_limit=args.visible_dim_limit,
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            rank_pack_size=args.grouped_rank_pack_size,
+            backend=backend,
+            readout_strategy=args.readout_strategy,
+            multiplicative_depth=args.multiplicative_depth,
+            norm_eps=args.norm_eps,
+            polynomial_degree=args.polynomial_degree,
+            polynomial_range=args.polynomial_range,
+            rms_norm_mode=args.rms_norm_mode,
+            newton_iterations=args.newton_iterations,
+            newton_range=args.newton_range,
+            state_decay_mode=args.state_decay_mode,
+            decay_polynomial_degree=args.decay_polynomial_degree,
+            decay_polynomial_range=args.decay_polynomial_range,
+            atol=args.atol,
+        )
+    elif args.partial_visible_proxy:
         result = run_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy(
             state_dict,
             layer_input,
@@ -211,7 +257,9 @@ def main() -> int:
         "version": __version__,
         "repo_commit": current_git_commit(ROOT),
         "stage": (
-            "mamba-checkpoint-encrypted-pre-recurrence-partial-visible-chain-proxy"
+            "mamba-checkpoint-grouped-encrypted-pre-recurrence-partial-visible-chain-proxy"
+            if grouped_chain_proxy
+            else "mamba-checkpoint-encrypted-pre-recurrence-partial-visible-chain-proxy"
             if args.partial_visible_proxy
             else "mamba-checkpoint-encrypted-pre-recurrence-full-layer-chain"
         ),
@@ -225,6 +273,8 @@ def main() -> int:
             "input_propagation": args.input_propagation,
             "readout_strategy": args.readout_strategy,
             "partial_visible_proxy": args.partial_visible_proxy,
+            "grouped_chain_proxy": grouped_chain_proxy,
+            "grouped_rank_pack_size": args.grouped_rank_pack_size if grouped_chain_proxy else None,
             "visible_dim_limit": visible_dim_limit,
         },
         "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
@@ -237,6 +287,8 @@ def main() -> int:
             "readout_strategy": args.readout_strategy,
             "input_propagation": args.input_propagation,
             "partial_visible_proxy": args.partial_visible_proxy,
+            "grouped_chain_proxy": grouped_chain_proxy,
+            "rank_pack_size": args.grouped_rank_pack_size if grouped_chain_proxy else None,
         },
         "approximation": {
             "rms_norm_mode": args.rms_norm_mode,
@@ -267,6 +319,10 @@ def main() -> int:
             "encrypted_recurrence": True,
             "visible_handoff_ciphertext": True,
             "inter_layer_ciphertext_handoff": result.inter_layer_ciphertext_handoff,
+            "grouped_rank_pack": grouped_chain_proxy,
+            "rank_pack_size": args.grouped_rank_pack_size if grouped_chain_proxy else None,
+            "full_rank_pre_recurrence": True if grouped_chain_proxy else None,
+            "pre_recurrence_rank_grouped": False if grouped_chain_proxy else None,
             "full_visible_output_checked": result.full_visible_output_checked,
             "partial_visible_output_checked": result.partial_visible_output_checked,
             "partial_visible_proxy": args.partial_visible_proxy,
@@ -275,8 +331,12 @@ def main() -> int:
             ),
             "official_mamba_parity": False,
             "full_model_correctness_claimed": False,
+            "full_inferred_24_layer_success_claimed": False,
             "plaintext_precomputed_stages": list(result.plaintext_precomputed_stages),
-            "claim": _measurement_claim(args.partial_visible_proxy),
+            "claim": _measurement_claim(
+                partial_visible_proxy=args.partial_visible_proxy,
+                grouped_chain_proxy=grouped_chain_proxy,
+            ),
         },
         "result": result.to_json_dict(),
         "operation_counts": {
@@ -322,7 +382,9 @@ def _rotation_guard_payload(
 ) -> dict[str, object]:
     estimated_rotation_key_memory_gib = len(rotations) * args.estimated_rotation_key_mib / 1024.0
     stage = (
-        "mamba-checkpoint-encrypted-pre-recurrence-partial-visible-chain-proxy"
+        "mamba-checkpoint-grouped-encrypted-pre-recurrence-partial-visible-chain-proxy"
+        if args.grouped_rank_pack_size > 0
+        else "mamba-checkpoint-encrypted-pre-recurrence-partial-visible-chain-proxy"
         if args.partial_visible_proxy
         else "mamba-checkpoint-encrypted-pre-recurrence-full-layer-chain"
     )
@@ -341,6 +403,10 @@ def _rotation_guard_payload(
             "input_propagation": args.input_propagation,
             "readout_strategy": args.readout_strategy,
             "partial_visible_proxy": args.partial_visible_proxy,
+            "grouped_chain_proxy": args.grouped_rank_pack_size > 0,
+            "grouped_rank_pack_size": (
+                args.grouped_rank_pack_size if args.grouped_rank_pack_size > 0 else None
+            ),
             "visible_dim_limit": visible_dim_limit,
         },
         "adapter_report": report,
@@ -353,6 +419,10 @@ def _rotation_guard_payload(
             "readout_strategy": args.readout_strategy,
             "input_propagation": args.input_propagation,
             "partial_visible_proxy": args.partial_visible_proxy,
+            "grouped_chain_proxy": args.grouped_rank_pack_size > 0,
+            "rank_pack_size": (
+                args.grouped_rank_pack_size if args.grouped_rank_pack_size > 0 else None
+            ),
         },
         "approximation": {
             "rms_norm_mode": args.rms_norm_mode,
@@ -382,12 +452,19 @@ def _rotation_guard_payload(
             "encrypted_recurrence": True,
             "visible_handoff_ciphertext": True,
             "inter_layer_ciphertext_handoff": False,
+            "grouped_rank_pack": args.grouped_rank_pack_size > 0,
+            "rank_pack_size": (
+                args.grouped_rank_pack_size if args.grouped_rank_pack_size > 0 else None
+            ),
+            "full_rank_pre_recurrence": True if args.grouped_rank_pack_size > 0 else None,
+            "pre_recurrence_rank_grouped": False if args.grouped_rank_pack_size > 0 else None,
             "full_visible_output_checked": False,
             "partial_visible_output_checked": False,
             "partial_visible_proxy": args.partial_visible_proxy,
             "plaintext_visible_remainder_injected": False,
             "official_mamba_parity": False,
             "full_model_correctness_claimed": False,
+            "full_inferred_24_layer_success_claimed": False,
             "non_success_probe": True,
             "plaintext_precomputed_stages": [],
             "claim": (
@@ -469,13 +546,54 @@ def _chain_required_rotations(
                 visible_dim_limit=visible_dim_limit,
                 rms_norm_mode=rms_norm_mode,
                 state_decay_mode=state_decay_mode,
-                dt_rank=_resolve_dt_rank(state_dict, layer_index=layer_index),
+                dt_rank=_resolve_dt_rank(state_dict, layer_index=layer_index) or mimo_rank,
             )
         )
     return tuple(sorted(rotations))
 
 
-def _measurement_claim(partial_visible_proxy: bool) -> str:
+def _chain_required_grouped_rotations(
+    state_dict: dict[str, torch.Tensor],
+    *,
+    n_layers: int,
+    d_model: int,
+    d_state: int,
+    mimo_rank: int,
+    rank_pack_size: int,
+    logical_batch_size: int,
+    readout_strategy: str,
+    rms_norm_mode: str,
+    state_decay_mode: str,
+    visible_dim_limit: int | None,
+) -> tuple[int, ...]:
+    rotations: set[int] = set()
+    for layer_index in range(n_layers):
+        rotations.update(
+            checkpoint_grouped_gate_rotation_steps(
+                d_model=d_model,
+                d_state=d_state,
+                mimo_rank=mimo_rank,
+                rank_pack_size=rank_pack_size,
+                logical_batch_size=logical_batch_size,
+                readout_strategy=readout_strategy,
+                visible_dim_limit=visible_dim_limit,
+                rms_norm_mode=rms_norm_mode,
+                state_decay_mode=state_decay_mode,
+                dt_rank=_resolve_dt_rank(state_dict, layer_index=layer_index) or mimo_rank,
+            )
+        )
+    return tuple(sorted(rotations))
+
+
+def _measurement_claim(*, partial_visible_proxy: bool, grouped_chain_proxy: bool) -> str:
+    if grouped_chain_proxy:
+        return (
+            "source-style multi-layer grouped partial-visible proxy: rank-pack grouped "
+            "recurrence/lift ciphertexts are used per layer, checked visible prefix "
+            "ciphertexts are reused across layers, and the unchecked suffix is injected "
+            "from plaintext reference; final lm_head/argmax and full inferred 24-layer "
+            "success are not claimed"
+        )
     if partial_visible_proxy:
         return (
             "source-style multi-layer partial-visible proxy: checked visible prefix "
@@ -500,6 +618,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--n-layers", type=int, default=2)
     parser.add_argument("--visible-dim-limit", type=int, default=0)
     parser.add_argument("--partial-visible-proxy", action="store_true")
+    parser.add_argument(
+        "--grouped-rank-pack-size",
+        type=int,
+        default=0,
+        help=(
+            "enable grouped Stage 1 partial-visible chain proxy with this rank pack size; "
+            "requires --partial-visible-proxy"
+        ),
+    )
     parser.add_argument("--max-seq-len", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--prompt", default="1")
