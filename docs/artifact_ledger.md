@@ -8,6 +8,11 @@ Status reflects the job/artifact payload, not automatic backlog closure. For
 example, PBI-S1-007 remains open until the missing GPU/FIDESlib bootstrap-cost
 evidence and ledger update workflow are complete.
 
+Use `scripts/update_artifact_ledger.py --from-json <collection.json> --write`
+to append validated `ledger_rows` emitted by safe-campaign collection artifacts.
+The updater dry-runs by default and rejects same-job/artifact conflicts so richer
+curated rows are not overwritten accidentally.
+
 ## Known high/SLURM Artifacts
 
 | PBI ID | Job ID | Artifact Path | Commit/Tag | Status | Result Memo |

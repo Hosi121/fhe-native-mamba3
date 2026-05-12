@@ -67,7 +67,7 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 | PBI-S2-012 | Stage 2 | Done | PBI-S2-001 | Add a reusable checkpoint sketch matrix runner that sweeps layers, prompt sets, rank-selection strategies, sketch sizes, and SRHT seeds without claiming encrypted correctness. Evidence: `src/fhe_native_mamba3/checkpoint_sketch_matrix.py`, `scripts/run_checkpoint_sketch_matrix.py`, `slurm/checkpoint_sketch_matrix.sbatch`, and `tests/test_checkpoint_sketch_matrix.py`. |
 | PBI-S2-013 | Stage 2 | Done | PBI-S2-004 | Produce a compact sketch evidence report from accepted matrix artifacts. Acceptance requires a JSON/Markdown report with pass-rate by layer/prompt/rank strategy, recommended sketch size, worst product-norm error, and explicit recurrence-type caveats. Evidence: `src/fhe_native_mamba3/sketch_evidence_report.py`, `scripts/build_stage2_sketch_evidence_report.py`, tests in `tests/test_sketch_evidence_report.py` / `tests/test_sketch_evidence_report_script.py`, and artifact `runs/stage2-s013-sketch-evidence-report.json`. Result: checkpoint sketch matrix `10135` condenses to 12 rows over layers 0/12/23, prompts short/repeat, rank strategies first/stride; recommended sketch size is `16` for 11/12 rows and `8` for 1/12, worst product-norm error `0.2472`, with rank-state recurrence caveats preserved. |
 | PBI-OPS-001 | DevEx | Done | none | Add fast/slow test profiles so low-risk edits run a short local/remote gate while OpenFHE, SLURM, and full pre-commit checks remain available as explicit slow gates. Evidence: `scripts/run_fast_checks.sh`, `scripts/run_checks.sh`, `scripts/remote_checks.sh`, and `docs/testing.md`; full checks avoid duplicate pre-commit execution unless `RUN_PRECOMMIT=1` is requested. |
-| PBI-OPS-002 | DevEx | Open | none | Maintain an artifact ledger that maps high/SLURM job IDs to PBI IDs, JSON paths, git commits, and pass/fail status. Seed ledger: `docs/artifact_ledger.md`; acceptance remains open until a script or release-note update workflow keeps it current. |
+| PBI-OPS-002 | DevEx | Done | none | Maintain an artifact ledger that maps high/SLURM job IDs to PBI IDs, JSON paths, git commits, and pass/fail status. Evidence: `docs/artifact_ledger.md`, `scripts/update_artifact_ledger.py`, and tests in `tests/test_artifact_ledger_update_script.py`. The updater consumes `ledger_rows` emitted by safe-campaign collection artifacts, dry-runs by default, appends with `--write`, dedupes exact rows, and fails on same-job/artifact conflicts instead of silently overwriting richer curated ledger entries. |
 | PBI-OPS-003 | DevEx | Open | PBI-OPS-002 | Export backlog PBIs to GitHub issues/project items when repository permissions are available. Acceptance requires issue titles, dependencies, and status labels generated from `docs/backlog.md` without hand-copying. |
 | PBI-OPS-004 | DevEx | Open | PBI-OPS-002 | Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection. First slice: `scripts/submit_safe_slurm_campaign.py` submits/dry-runs only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, and emits manifest/ledger-row templates; `scripts/collect_safe_slurm_campaign.py` validates completed artifacts and emits ledger-row candidates. Covered by `tests/test_safe_slurm_campaign_script.py` and `tests/test_safe_slurm_campaign_collect_script.py`, exercised by high jobs `10157`-`10163`. Remaining acceptance: automated remote artifact pull plus optional docs ledger update without touching high-memory OpenFHE full-chain jobs. |
 
@@ -81,7 +81,7 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 - Sketch/range evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-013 is complete; PBI-S2-004 continues to feed PBI-S2-005/PBI-S2-008/PBI-S2-009, and PBI-S0-010 feeds PBI-S2-009.
 - Encrypted sketch execution: PBI-S2-001 + PBI-S1-005 -> PBI-S2-006 -> PBI-S2-007.
 - Decoding branch: PBI-S2-003 -> PBI-S2-010 -> PBI-S2-011.
-- Development operations: PBI-OPS-001 is done; PBI-OPS-002 -> PBI-OPS-003, and PBI-OPS-002 -> PBI-OPS-004.
+- Development operations: PBI-OPS-001 and PBI-OPS-002 are done; PBI-OPS-002 now feeds PBI-OPS-003 and the remaining remote-artifact-pull slice of PBI-OPS-004.
 
 ## Near-Term Parallel Slices
 
@@ -89,9 +89,9 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   bootstrap evidence from PBI-S1-007.
 - Measurement B: PBI-S1-007 bootstrap cost evidence can run on high independently
   once a safe FIDESlib/OpenFHE probe is selected.
-- Low-risk reporting C: PBI-S2-013 sketch evidence report is complete; the next
-  independent reporting slice is either PBI-OPS-002 ledger automation or
-  PBI-S2-008 rerun once Stage 1 target bootstrap evidence exists.
+- Low-risk reporting C: PBI-S2-013 and PBI-OPS-002 are complete; the next
+  independent reporting slice is PBI-S2-008 rerun once Stage 1 target bootstrap
+  evidence exists, or PBI-OPS-004 remote artifact pull automation.
 
 ## Stale Or Obsolete Notes
 
