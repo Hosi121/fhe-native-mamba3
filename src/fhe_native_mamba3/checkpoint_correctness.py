@@ -12,6 +12,7 @@ from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
     RmsNormMode,
     StateDecayMode,
+    group_checkpoint_pre_recurrence_trace_by_rank,
     run_checkpoint_pre_recurrence_ciphertexts_with_backend,
     slot_linear_bsgs_baby_step,
     slot_linear_bsgs_rotation_steps,
@@ -1151,60 +1152,24 @@ def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
         resolved_backend.encrypt([0.0] * resolved_backend.batch_size)
         for _ in range(visible.seq_len)
     )
-    for start_rank in range(0, problem.mimo_rank, rank_pack_size):
-        stop_rank = min(start_rank + rank_pack_size, problem.mimo_rank)
-        local_rank = stop_rank - start_rank
+    grouped_pre_trace = group_checkpoint_pre_recurrence_trace_by_rank(
+        pre_trace,
+        rank_pack_size=rank_pack_size,
+    )
+    for pack in grouped_pre_trace.packs:
+        start_rank = pack.start_rank
+        stop_rank = pack.stop_rank
+        local_rank = pack.local_rank
         sliced_problem = slice_recurrence_problem_by_rank(
             problem,
             start_rank=start_rank,
             stop_rank=stop_rank,
         )
         local_rank_input_cts = _bind_expanded_rank_input_ciphertexts(
-            tuple(
-                _expand_rank_ciphertext_to_state_slots(
-                    _compact_rank_ciphertext_to_local_slots(
-                        ciphertext,
-                        start_rank=start_rank,
-                        stop_rank=stop_rank,
-                        backend=resolved_backend,
-                    ),
-                    d_state=problem.d_state,
-                    rank=local_rank,
-                    backend=resolved_backend,
-                )
-                for ciphertext in pre_trace.causal_conv_post_silu_ciphertexts
-            ),
+            pack.expanded_rank_input_ciphertexts,
             d_state=problem.d_state,
             rank=local_rank,
             readout_strategy=readout_strategy,
-        )
-        b_ciphertexts = tuple(
-            _expand_state_vector_ciphertext_to_state_slots(
-                ciphertext,
-                d_state=problem.d_state,
-                rank=local_rank,
-                backend=resolved_backend,
-            )
-            for ciphertext in pre_trace.dynamic_b_ciphertexts
-        )
-        c_ciphertexts = tuple(
-            _expand_state_vector_ciphertext_to_state_slots(
-                ciphertext,
-                d_state=problem.d_state,
-                rank=local_rank,
-                backend=resolved_backend,
-            )
-            for ciphertext in pre_trace.dynamic_c_ciphertexts
-        )
-        decay_ciphertexts = tuple(
-            _compact_state_rank_ciphertext_to_local_slots(
-                ciphertext,
-                d_state=problem.d_state,
-                start_rank=start_rank,
-                stop_rank=stop_rank,
-                backend=resolved_backend,
-            )
-            for ciphertext in pre_trace.state_rank_decay_ciphertexts
         )
         recurrence_trace = run_static_mimo_recurrence_ciphertexts_with_backend(
             sliced_problem,
@@ -1213,27 +1178,21 @@ def run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
             readout_strategy=readout_strategy,
             input_mode="encrypted-dynamic-bc",
             rank_input_ciphertexts=local_rank_input_cts,
-            b_ciphertexts=b_ciphertexts,
-            c_ciphertexts=c_ciphertexts,
-            decay_state_ciphertexts=decay_ciphertexts,
+            b_ciphertexts=pack.dynamic_b_state_ciphertexts,
+            c_ciphertexts=pack.dynamic_c_state_ciphertexts,
+            decay_state_ciphertexts=pack.state_rank_decay_ciphertexts,
         )
         out_proj_weight = visible.out_proj_weight[:, start_rank:stop_rank]
         for token_index, (recurrence_ct, gate_ct) in enumerate(
             zip(
                 recurrence_trace.output_ciphertexts,
-                pre_trace.gate_post_silu_ciphertexts,
+                pack.gate_post_silu_ciphertexts,
                 strict=True,
             )
         ):
-            local_gate_ct = _compact_rank_ciphertext_to_local_slots(
-                gate_ct,
-                start_rank=start_rank,
-                stop_rank=stop_rank,
-                backend=resolved_backend,
-            )
             aligned_gate_ct = _rank_ciphertext_to_output_slots(
                 backend=resolved_backend,
-                rank_ct=local_gate_ct,
+                rank_ct=gate_ct,
                 output_slots=recurrence_trace.output_slots,
                 weights=tuple(1.0 for _ in range(local_rank)),
             )

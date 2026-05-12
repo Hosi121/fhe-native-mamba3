@@ -233,6 +233,125 @@ class CheckpointPreRecurrenceCiphertextTrace:
         }
 
 
+@dataclass(frozen=True)
+class CheckpointPreRecurrenceRankPackTrace:
+    """One rank-pack slice of encrypted pre-recurrence tensors."""
+
+    start_rank: int
+    stop_rank: int
+    local_rank: int
+    causal_conv_post_silu_ciphertexts: tuple[Any, ...]
+    expanded_rank_input_ciphertexts: tuple[Any, ...]
+    dynamic_b_state_ciphertexts: tuple[Any, ...]
+    dynamic_c_state_ciphertexts: tuple[Any, ...]
+    state_rank_decay_ciphertexts: tuple[Any, ...]
+    gate_post_silu_ciphertexts: tuple[Any, ...]
+    expected_stage_outputs: dict[str, tuple[tuple[float, ...], ...]]
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "start_rank": self.start_rank,
+            "stop_rank": self.stop_rank,
+            "local_rank": self.local_rank,
+            "ciphertext_counts": {
+                "causal_conv_post_silu": len(self.causal_conv_post_silu_ciphertexts),
+                "expanded_rank_input": len(self.expanded_rank_input_ciphertexts),
+                "dynamic_b_state": len(self.dynamic_b_state_ciphertexts),
+                "dynamic_c_state": len(self.dynamic_c_state_ciphertexts),
+                "state_rank_decay": len(self.state_rank_decay_ciphertexts),
+                "gate_post_silu": len(self.gate_post_silu_ciphertexts),
+            },
+            "expected_stage_outputs": {
+                stage: [list(row) for row in rows]
+                for stage, rows in self.expected_stage_outputs.items()
+            },
+        }
+
+
+@dataclass(frozen=True)
+class CheckpointPreRecurrenceGroupedCiphertextTrace:
+    """Rank-pack grouping of encrypted pre-recurrence tensors."""
+
+    layer_index: int
+    d_model: int
+    d_state: int
+    mimo_rank: int
+    rank_pack_size: int
+    seq_len: int
+    backend: str
+    encrypted: bool
+    pack_count: int
+    decrypt_count_delta: int
+    packs: tuple[CheckpointPreRecurrenceRankPackTrace, ...]
+    backend_handle: FHEBackend
+    backend_stats: dict[str, Any]
+    notes: tuple[str, ...] = ()
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "layer_index": self.layer_index,
+            "d_model": self.d_model,
+            "d_state": self.d_state,
+            "mimo_rank": self.mimo_rank,
+            "rank_pack_size": self.rank_pack_size,
+            "seq_len": self.seq_len,
+            "backend": self.backend,
+            "encrypted": self.encrypted,
+            "pack_count": self.pack_count,
+            "decrypt_count_delta": self.decrypt_count_delta,
+            "packs": [pack.to_json_dict() for pack in self.packs],
+            "backend_stats": self.backend_stats,
+            "notes": list(self.notes),
+        }
+
+
+def group_checkpoint_pre_recurrence_trace_by_rank(
+    trace: CheckpointPreRecurrenceCiphertextTrace,
+    *,
+    rank_pack_size: int,
+) -> CheckpointPreRecurrenceGroupedCiphertextTrace:
+    """Slice full-rank pre-recurrence ciphertext tensors into rank packs.
+
+    This is the first PBI-S1-016 boundary: it does not rerun pre-recurrence
+    projections per pack yet, but it gives downstream recurrence/lift code
+    rank-local ciphertexts without decrypting intermediate tensors.
+    """
+
+    if rank_pack_size <= 0:
+        msg = "rank_pack_size must be positive"
+        raise ValueError(msg)
+    backend = trace.backend_handle
+    started_decrypts = backend.stats().decrypt_count
+    packs = tuple(
+        _pre_recurrence_rank_pack(
+            trace,
+            start_rank=start_rank,
+            stop_rank=min(start_rank + rank_pack_size, trace.mimo_rank),
+        )
+        for start_rank in range(0, trace.mimo_rank, rank_pack_size)
+    )
+    return CheckpointPreRecurrenceGroupedCiphertextTrace(
+        layer_index=trace.layer_index,
+        d_model=trace.d_model,
+        d_state=trace.d_state,
+        mimo_rank=trace.mimo_rank,
+        rank_pack_size=rank_pack_size,
+        seq_len=trace.seq_len,
+        backend=trace.backend,
+        encrypted=trace.encrypted,
+        pack_count=len(packs),
+        decrypt_count_delta=backend.stats().decrypt_count - started_decrypts,
+        packs=packs,
+        backend_handle=backend,
+        backend_stats=backend.stats().to_json_dict(),
+        notes=(
+            "full-rank pre-recurrence ciphertext tensors are sliced into rank packs",
+            "dynamic B/C vectors are expanded into local state-rank slots per pack",
+            "no intermediate decrypt is performed by grouping",
+        ),
+    )
+
+
 def run_checkpoint_pre_recurrence_stage_gate(
     state_dict: dict[str, Tensor],
     layer_input: Tensor,
@@ -890,6 +1009,293 @@ def _pre_recurrence_stage_errors(
             trace.expected_stage_outputs["gate_post_silu"],
         ),
     }
+
+
+def _pre_recurrence_rank_pack(
+    trace: CheckpointPreRecurrenceCiphertextTrace,
+    *,
+    start_rank: int,
+    stop_rank: int,
+) -> CheckpointPreRecurrenceRankPackTrace:
+    if start_rank < 0 or stop_rank <= start_rank or stop_rank > trace.mimo_rank:
+        msg = "invalid rank pack bounds"
+        raise ValueError(msg)
+    backend = trace.backend_handle
+    local_rank = stop_rank - start_rank
+    conv_cts = tuple(
+        _compact_rank_ciphertext_to_local_slots(
+            ciphertext,
+            start_rank=start_rank,
+            stop_rank=stop_rank,
+            backend=backend,
+        )
+        for ciphertext in trace.causal_conv_post_silu_ciphertexts
+    )
+    gate_cts = tuple(
+        _compact_rank_ciphertext_to_local_slots(
+            ciphertext,
+            start_rank=start_rank,
+            stop_rank=stop_rank,
+            backend=backend,
+        )
+        for ciphertext in trace.gate_post_silu_ciphertexts
+    )
+    rank_input_cts = tuple(
+        _expand_rank_ciphertext_to_state_slots(
+            ciphertext,
+            d_state=trace.d_state,
+            rank=local_rank,
+            backend=backend,
+        )
+        for ciphertext in conv_cts
+    )
+    b_cts = tuple(
+        _expand_state_vector_ciphertext_to_state_slots(
+            ciphertext,
+            d_state=trace.d_state,
+            rank=local_rank,
+            backend=backend,
+        )
+        for ciphertext in trace.dynamic_b_ciphertexts
+    )
+    c_cts = tuple(
+        _expand_state_vector_ciphertext_to_state_slots(
+            ciphertext,
+            d_state=trace.d_state,
+            rank=local_rank,
+            backend=backend,
+        )
+        for ciphertext in trace.dynamic_c_ciphertexts
+    )
+    decay_cts = tuple(
+        _compact_state_rank_ciphertext_to_local_slots(
+            ciphertext,
+            d_state=trace.d_state,
+            start_rank=start_rank,
+            stop_rank=stop_rank,
+            backend=backend,
+        )
+        for ciphertext in trace.state_rank_decay_ciphertexts
+    )
+    return CheckpointPreRecurrenceRankPackTrace(
+        start_rank=start_rank,
+        stop_rank=stop_rank,
+        local_rank=local_rank,
+        causal_conv_post_silu_ciphertexts=conv_cts,
+        expanded_rank_input_ciphertexts=rank_input_cts,
+        dynamic_b_state_ciphertexts=b_cts,
+        dynamic_c_state_ciphertexts=c_cts,
+        state_rank_decay_ciphertexts=decay_cts,
+        gate_post_silu_ciphertexts=gate_cts,
+        expected_stage_outputs={
+            "causal_conv_post_silu": _slice_rank_rows(
+                trace.expected_stage_outputs["causal_conv_post_silu"],
+                start_rank=start_rank,
+                stop_rank=stop_rank,
+            ),
+            "expanded_rank_input": _expand_rank_rows_to_state_slots(
+                _slice_rank_rows(
+                    trace.expected_stage_outputs["causal_conv_post_silu"],
+                    start_rank=start_rank,
+                    stop_rank=stop_rank,
+                ),
+                d_state=trace.d_state,
+            ),
+            "dynamic_b_state": _expand_state_rows_to_rank_slots(
+                trace.expected_stage_outputs["dynamic_b"],
+                d_state=trace.d_state,
+                rank=local_rank,
+            ),
+            "dynamic_c_state": _expand_state_rows_to_rank_slots(
+                trace.expected_stage_outputs["dynamic_c"],
+                d_state=trace.d_state,
+                rank=local_rank,
+            ),
+            "state_rank_decay": _slice_state_rank_rows(
+                trace.expected_stage_outputs["state_rank_decay"],
+                d_state=trace.d_state,
+                start_rank=start_rank,
+                stop_rank=stop_rank,
+            ),
+            "gate_post_silu": _slice_rank_rows(
+                trace.expected_stage_outputs["gate_post_silu"],
+                start_rank=start_rank,
+                stop_rank=stop_rank,
+            ),
+        },
+    )
+
+
+def _compact_rank_ciphertext_to_local_slots(
+    ciphertext: Any,
+    *,
+    start_rank: int,
+    stop_rank: int,
+    backend: FHEBackend,
+) -> Any:
+    local_rank = stop_rank - start_rank
+    return _sparse_slot_linear_ciphertext(
+        ciphertext,
+        source_slots=tuple(range(start_rank, stop_rank)),
+        output_dim=local_rank,
+        mappings=(
+            (local_rank_index, start_rank + local_rank_index, 1.0)
+            for local_rank_index in range(local_rank)
+        ),
+        backend=backend,
+    )
+
+
+def _compact_state_rank_ciphertext_to_local_slots(
+    ciphertext: Any,
+    *,
+    d_state: int,
+    start_rank: int,
+    stop_rank: int,
+    backend: FHEBackend,
+) -> Any:
+    local_rank = stop_rank - start_rank
+    return _sparse_slot_linear_ciphertext(
+        ciphertext,
+        source_slots=tuple(
+            rank_index * d_state + state_index
+            for rank_index in range(start_rank, stop_rank)
+            for state_index in range(d_state)
+        ),
+        output_dim=d_state * local_rank,
+        mappings=(
+            (
+                local_rank_index * d_state + state_index,
+                (start_rank + local_rank_index) * d_state + state_index,
+                1.0,
+            )
+            for local_rank_index in range(local_rank)
+            for state_index in range(d_state)
+        ),
+        backend=backend,
+    )
+
+
+def _expand_rank_ciphertext_to_state_slots(
+    ciphertext: Any,
+    *,
+    d_state: int,
+    rank: int,
+    backend: FHEBackend,
+) -> Any:
+    return _sparse_slot_linear_ciphertext(
+        ciphertext,
+        source_slots=tuple(range(rank)),
+        output_dim=d_state * rank,
+        mappings=(
+            (rank_index * d_state + state_index, rank_index, 1.0)
+            for rank_index in range(rank)
+            for state_index in range(d_state)
+        ),
+        backend=backend,
+    )
+
+
+def _expand_state_vector_ciphertext_to_state_slots(
+    ciphertext: Any,
+    *,
+    d_state: int,
+    rank: int,
+    backend: FHEBackend,
+) -> Any:
+    return _sparse_slot_linear_ciphertext(
+        ciphertext,
+        source_slots=tuple(range(d_state)),
+        output_dim=d_state * rank,
+        mappings=(
+            (rank_index * d_state + state_index, state_index, 1.0)
+            for rank_index in range(rank)
+            for state_index in range(d_state)
+        ),
+        backend=backend,
+    )
+
+
+def _sparse_slot_linear_ciphertext(
+    input_ct: Any,
+    *,
+    source_slots: tuple[int, ...],
+    output_dim: int,
+    mappings: Any,
+    backend: FHEBackend,
+) -> Any:
+    output_ct = backend.encrypt([0.0] * backend.batch_size)
+    baby_step = slot_linear_bsgs_baby_step(source_slots=source_slots, output_dim=output_dim)
+    baby_cts: dict[int, Any] = {}
+    grouped_masks: dict[tuple[int, int], list[float]] = {}
+    for output_index, source_slot, coefficient in mappings:
+        if coefficient == 0.0:
+            continue
+        giant_index, baby_index = divmod(source_slot - output_index, baby_step)
+        key = (giant_index, baby_index)
+        mask = grouped_masks.setdefault(key, [0.0] * backend.batch_size)
+        mask[(source_slot - baby_index) % backend.batch_size] += float(coefficient)
+
+    for giant_index, baby_index in sorted(grouped_masks):
+        if baby_index not in baby_cts:
+            baby_cts[baby_index] = (
+                input_ct if baby_index == 0 else backend.rotate(input_ct, baby_index)
+            )
+        term = backend.mul_plain(
+            baby_cts[baby_index],
+            backend.encode(grouped_masks[(giant_index, baby_index)]),
+        )
+        giant_shift = giant_index * baby_step
+        if giant_shift:
+            term = backend.rotate(term, giant_shift)
+        output_ct = backend.add(output_ct, term)
+    return output_ct
+
+
+def _slice_rank_rows(
+    rows: tuple[tuple[float, ...], ...],
+    *,
+    start_rank: int,
+    stop_rank: int,
+) -> tuple[tuple[float, ...], ...]:
+    return tuple(row[start_rank:stop_rank] for row in rows)
+
+
+def _slice_state_rank_rows(
+    rows: tuple[tuple[float, ...], ...],
+    *,
+    d_state: int,
+    start_rank: int,
+    stop_rank: int,
+) -> tuple[tuple[float, ...], ...]:
+    return tuple(
+        tuple(
+            row[rank_index * d_state + state_index]
+            for rank_index in range(start_rank, stop_rank)
+            for state_index in range(d_state)
+        )
+        for row in rows
+    )
+
+
+def _expand_rank_rows_to_state_slots(
+    rows: tuple[tuple[float, ...], ...],
+    *,
+    d_state: int,
+) -> tuple[tuple[float, ...], ...]:
+    return tuple(tuple(value for value in row for _state_index in range(d_state)) for row in rows)
+
+
+def _expand_state_rows_to_rank_slots(
+    rows: tuple[tuple[float, ...], ...],
+    *,
+    d_state: int,
+    rank: int,
+) -> tuple[tuple[float, ...], ...]:
+    return tuple(
+        tuple(row[state_index] for _rank_index in range(rank) for state_index in range(d_state))
+        for row in rows
+    )
 
 
 def _validate_common_inputs(

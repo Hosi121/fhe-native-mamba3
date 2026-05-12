@@ -15,6 +15,7 @@ from fhe_native_mamba3.checkpoint_pre_recurrence import (
     _evaluate_vector_power_polynomial_ciphertext,
     _mean_square_ciphertext,
     encrypted_pre_recurrence_logical_batch_size,
+    group_checkpoint_pre_recurrence_trace_by_rank,
     linear_bsgs_rotation_steps,
     resolve_pre_recurrence_shape,
     rms_norm_rotation_steps,
@@ -341,6 +342,122 @@ def test_pre_recurrence_ciphertext_trace_does_not_decrypt_stage_outputs() -> Non
     assert payload["ciphertext_counts"]["causal_conv_post_silu"] == 3
     assert payload["ciphertext_counts"]["state_rank_decay"] == 3
     assert "causal_conv_post_silu_ciphertexts" not in payload
+
+
+def test_pre_recurrence_rank_pack_grouping_does_not_decrypt() -> None:
+    class NoDecryptTrackingBackend(TrackingBackend):
+        def decrypt(self, value: object, *, length: int) -> tuple[float, ...]:
+            raise AssertionError("rank-pack grouping must not decrypt")
+
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+    backend = NoDecryptTrackingBackend(batch_size=8)
+    trace = run_checkpoint_pre_recurrence_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        rms_norm_mode="plaintext-exact",
+        state_decay_mode="plaintext-exact",
+    )
+
+    grouped = group_checkpoint_pre_recurrence_trace_by_rank(trace, rank_pack_size=2)
+    payload = grouped.to_json_dict()
+
+    assert grouped.decrypt_count_delta == 0
+    assert grouped.pack_count == 2
+    assert grouped.packs[0].start_rank == 0
+    assert grouped.packs[1].start_rank == 2
+    assert payload["packs"][0]["ciphertext_counts"]["expanded_rank_input"] == 3
+    assert backend.stats().decrypt_count == 0
+
+
+def test_pre_recurrence_rank_pack_grouping_matches_full_rank_expected_rows() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.arange(24, dtype=torch.float32).view(1, 3, 8) / 20.0
+    backend = TrackingBackend(batch_size=8)
+    trace = run_checkpoint_pre_recurrence_ciphertexts_with_backend(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        backend=backend,
+        rms_norm_mode="plaintext-exact",
+        state_decay_mode="plaintext-exact",
+    )
+    grouped = group_checkpoint_pre_recurrence_trace_by_rank(trace, rank_pack_size=2)
+    full_rows = {
+        "causal_conv_post_silu": tuple(
+            backend.decrypt(ciphertext, length=trace.mimo_rank)
+            for ciphertext in trace.causal_conv_post_silu_ciphertexts
+        ),
+        "dynamic_b": tuple(
+            backend.decrypt(ciphertext, length=trace.d_state)
+            for ciphertext in trace.dynamic_b_ciphertexts
+        ),
+        "dynamic_c": tuple(
+            backend.decrypt(ciphertext, length=trace.d_state)
+            for ciphertext in trace.dynamic_c_ciphertexts
+        ),
+        "state_rank_decay": tuple(
+            backend.decrypt(ciphertext, length=trace.d_state * trace.mimo_rank)
+            for ciphertext in trace.state_rank_decay_ciphertexts
+        ),
+        "gate_post_silu": tuple(
+            backend.decrypt(ciphertext, length=trace.mimo_rank)
+            for ciphertext in trace.gate_post_silu_ciphertexts
+        ),
+    }
+
+    for pack in grouped.packs:
+        assert pack.local_rank == 2
+        expected_by_field = {
+            "causal_conv_post_silu": tuple(
+                row[pack.start_rank : pack.stop_rank] for row in full_rows["causal_conv_post_silu"]
+            ),
+            "expanded_rank_input": tuple(
+                tuple(value for value in row[pack.start_rank : pack.stop_rank] for _ in range(2))
+                for row in full_rows["causal_conv_post_silu"]
+            ),
+            "dynamic_b_state": tuple(
+                tuple(row[state] for _rank in range(pack.local_rank) for state in range(2))
+                for row in full_rows["dynamic_b"]
+            ),
+            "dynamic_c_state": tuple(
+                tuple(row[state] for _rank in range(pack.local_rank) for state in range(2))
+                for row in full_rows["dynamic_c"]
+            ),
+            "state_rank_decay": tuple(
+                tuple(
+                    row[rank * trace.d_state + state]
+                    for rank in range(pack.start_rank, pack.stop_rank)
+                    for state in range(trace.d_state)
+                )
+                for row in full_rows["state_rank_decay"]
+            ),
+            "gate_post_silu": tuple(
+                row[pack.start_rank : pack.stop_rank] for row in full_rows["gate_post_silu"]
+            ),
+        }
+        ciphertexts_by_field = {
+            "causal_conv_post_silu": (pack.causal_conv_post_silu_ciphertexts, pack.local_rank),
+            "expanded_rank_input": (pack.expanded_rank_input_ciphertexts, 4),
+            "dynamic_b_state": (pack.dynamic_b_state_ciphertexts, 4),
+            "dynamic_c_state": (pack.dynamic_c_state_ciphertexts, 4),
+            "state_rank_decay": (pack.state_rank_decay_ciphertexts, 4),
+            "gate_post_silu": (pack.gate_post_silu_ciphertexts, pack.local_rank),
+        }
+        for field, (ciphertexts, length) in ciphertexts_by_field.items():
+            actual_rows = tuple(
+                backend.decrypt(ciphertext, length=length) for ciphertext in ciphertexts
+            )
+            for actual_row, expected_row in zip(
+                actual_rows,
+                expected_by_field[field],
+                strict=True,
+            ):
+                assert actual_row == pytest.approx(expected_row)
 
 
 @pytest.mark.parametrize("stage", ["dynamic_b", "dynamic_c"])

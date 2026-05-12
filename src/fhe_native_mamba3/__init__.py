@@ -85,6 +85,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_pre_recurrence",
         "CheckpointPreRecurrenceCiphertextTrace",
     ),
+    "CheckpointPreRecurrenceGroupedCiphertextTrace": (
+        "fhe_native_mamba3.checkpoint_pre_recurrence",
+        "CheckpointPreRecurrenceGroupedCiphertextTrace",
+    ),
+    "CheckpointPreRecurrenceRankPackTrace": (
+        "fhe_native_mamba3.checkpoint_pre_recurrence",
+        "CheckpointPreRecurrenceRankPackTrace",
+    ),
     "PRE_RECURRENCE_STAGES": (
         "fhe_native_mamba3.checkpoint_pre_recurrence",
         "PRE_RECURRENCE_STAGES",
@@ -600,6 +608,10 @@ _LAZY_IMPORTS = {
         "resolve_pre_recurrence_shape",
     ),
     "fhe_aware_loss": ("fhe_native_mamba3.range_finetune", "fhe_aware_loss"),
+    "group_checkpoint_pre_recurrence_trace_by_rank": (
+        "fhe_native_mamba3.checkpoint_pre_recurrence",
+        "group_checkpoint_pre_recurrence_trace_by_rank",
+    ),
     "mark_only_lora_trainable": (
         "fhe_native_mamba3.range_finetune",
         "mark_only_lora_trainable",
@@ -817,6 +829,8 @@ __all__ = [
     "CheckpointInspection",
     "CheckpointPreRecurrenceChainGate",
     "CheckpointPreRecurrenceCiphertextTrace",
+    "CheckpointPreRecurrenceGroupedCiphertextTrace",
+    "CheckpointPreRecurrenceRankPackTrace",
     "CheckpointPreRecurrenceStageGate",
     "CheckpointRecurrenceCorrectnessGate",
     "CheckpointSketchMatrixResult",
@@ -958,6 +972,7 @@ __all__ = [
     "extract_stage1_profile_hints",
     "fhe_aware_loss",
     "greedy_bootstrap_schedule",
+    "group_checkpoint_pre_recurrence_trace_by_rank",
     "grouped_full_layer_lift_plaintext",
     "inspect_checkpoint",
     "lazy_bootstrap_markdown",
