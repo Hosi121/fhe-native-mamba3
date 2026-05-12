@@ -280,6 +280,14 @@ _LAZY_IMPORTS = {
     ),
     "Stage1ComparisonRow": ("fhe_native_mamba3.stage1_report", "Stage1ComparisonRow"),
     "Stage1Dependency": ("fhe_native_mamba3.stage1_plan", "Stage1Dependency"),
+    "Stage1GroupedChainInventoryReport": (
+        "fhe_native_mamba3.stage1_grouped_chain",
+        "Stage1GroupedChainInventoryReport",
+    ),
+    "Stage1GroupedChainInventoryRow": (
+        "fhe_native_mamba3.stage1_grouped_chain",
+        "Stage1GroupedChainInventoryRow",
+    ),
     "Stage1Plan": ("fhe_native_mamba3.stage1_plan", "Stage1Plan"),
     "Stage1PackSweepResult": (
         "fhe_native_mamba3.stage1_pack_sweep",
@@ -476,11 +484,15 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage0_status",
         "build_stage0_status_report",
     ),
-    "build_stage1_plan": ("fhe_native_mamba3.stage1_plan", "build_stage1_plan"),
     "build_stage1_comparison_report": (
         "fhe_native_mamba3.stage1_report",
         "build_stage1_comparison_report",
     ),
+    "build_stage1_grouped_chain_inventory": (
+        "fhe_native_mamba3.stage1_grouped_chain",
+        "build_stage1_grouped_chain_inventory",
+    ),
+    "build_stage1_plan": ("fhe_native_mamba3.stage1_plan", "build_stage1_plan"),
     "build_srht_sketch_metadata": (
         "fhe_native_mamba3.srht_sketch",
         "build_srht_sketch_metadata",
@@ -803,6 +815,8 @@ __all__ = [
     "Stage1ComparisonReport",
     "Stage1ComparisonRow",
     "Stage1Dependency",
+    "Stage1GroupedChainInventoryReport",
+    "Stage1GroupedChainInventoryRow",
     "Stage1PackSweepResult",
     "Stage1PackSweepRow",
     "Stage1Plan",
@@ -845,6 +859,7 @@ __all__ = [
     "build_srht_sketch_metadata",
     "build_stage0_status_report",
     "build_stage1_comparison_report",
+    "build_stage1_grouped_chain_inventory",
     "build_stage1_plan",
     "build_tiny_mimo_block_problem",
     "build_weight_bundle_manifest",
