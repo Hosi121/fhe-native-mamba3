@@ -349,6 +349,100 @@ def test_stage0_status_report_handles_missing_artifacts() -> None:
     assert any("client-side decoding smoke" in item for item in report["remaining_items"])
 
 
+def test_stage0_status_report_surfaces_partial_chain_rotation_guard() -> None:
+    report = build_stage0_status_report(
+        version=__version__,
+        checkpoint_full_layer_chain={
+            "stage": "mamba-checkpoint-encrypted-pre-recurrence-partial-visible-chain-proxy",
+            "status": "blocked",
+            "backend": "openfhe",
+            "encrypted": True,
+            "passed": False,
+            "model": {
+                "seq_len": 1,
+                "n_layers": 2,
+                "d_model": 768,
+                "d_state": 16,
+                "mimo_rank": 1536,
+                "partial_visible_proxy": True,
+            },
+            "ckks": {
+                "batch_size": 24576,
+                "rotation_count": 23498,
+                "max_rotation_keys": 2048,
+                "estimated_rotation_key_memory_gib": 11749.0,
+            },
+            "measurement_scope": {
+                "partial_visible_proxy": True,
+                "full_visible_output_checked": False,
+                "partial_visible_output_checked": False,
+                "plaintext_visible_remainder_injected": False,
+                "visible_handoff_ciphertext": True,
+                "full_model_correctness_claimed": False,
+                "non_success_probe": True,
+            },
+            "result": {
+                "status": "blocked",
+                "reason": "max_rotation_keys",
+                "message": "requires 23498 rotation keys",
+            },
+        },
+    )
+
+    chain = report["measurements"]["checkpoint_full_layer_chain"]
+    assert chain["status"] == "blocked"
+    assert chain["partial_visible_proxy"] is True
+    assert chain["batch_size"] == 24576
+    assert chain["rotation_count"] == 23498
+    assert chain["estimated_rotation_key_memory_gib"] == 11749.0
+    assert report["bottlenecks"][0]["name"] == "rotation_key_inventory"
+    assert report["bottlenecks"][0]["value"] == 23498
+
+
+def test_stage0_status_report_records_partial_visible_chain_proxy_completion() -> None:
+    report = build_stage0_status_report(
+        version=__version__,
+        checkpoint_full_layer_chain={
+            "backend": "tracking",
+            "encrypted": False,
+            "passed": True,
+            "max_abs_error": 6.5e-4,
+            "model": {
+                "seq_len": 1,
+                "n_layers": 2,
+                "d_model": 768,
+                "d_state": 2,
+                "mimo_rank": 4,
+                "partial_visible_proxy": True,
+            },
+            "ckks": {"rotation_count": 72},
+            "measurement_scope": {
+                "partial_visible_proxy": True,
+                "partial_visible_output_checked": True,
+                "plaintext_visible_remainder_injected": True,
+                "inter_layer_ciphertext_handoff": True,
+                "visible_handoff_ciphertext": True,
+                "full_model_correctness_claimed": False,
+            },
+            "result": {
+                "layer_count": 2,
+                "checked_visible_dim": 8,
+                "no_intermediate_decrypt": True,
+                "final_decrypt_count": 1,
+            },
+        },
+    )
+
+    chain = report["measurements"]["checkpoint_full_layer_chain"]
+    assert chain["partial_visible_proxy"] is True
+    assert chain["partial_visible_output_checked"] is True
+    assert chain["plaintext_visible_remainder_injected"] is True
+    assert chain["checked_visible_dim"] == 8
+    assert any(
+        "partial-visible ciphertext handoff proxy" in item for item in report["completed_items"]
+    )
+
+
 def test_stage0_status_report_treats_scaled_full_gate_as_range_mitigation() -> None:
     report = build_stage0_status_report(
         version=__version__,

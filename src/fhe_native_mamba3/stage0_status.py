@@ -301,15 +301,26 @@ def _checkpoint_full_layer_chain_summary(payload: dict[str, Any] | None) -> dict
     timing = payload.get("timing", {})
     return {
         "available": True,
+        "status": payload.get("status", result.get("status")),
         "backend": payload.get("backend"),
         "encrypted": payload.get("encrypted"),
         "passed": payload.get("passed"),
         "max_abs_error": payload.get("max_abs_error", result.get("max_abs_error")),
         "layer_count": model.get("n_layers", result.get("layer_count")),
         "d_model": model.get("d_model", result.get("d_model")),
+        "checked_visible_dim": model.get(
+            "checked_visible_dim",
+            result.get("checked_visible_dim"),
+        ),
         "d_state": model.get("d_state", result.get("d_state")),
         "mimo_rank": model.get("mimo_rank", result.get("mimo_rank")),
         "seq_len": model.get("seq_len", result.get("seq_len")),
+        "partial_visible_proxy": bool(scope.get("partial_visible_proxy")),
+        "full_visible_output_checked": bool(scope.get("full_visible_output_checked")),
+        "partial_visible_output_checked": bool(scope.get("partial_visible_output_checked")),
+        "plaintext_visible_remainder_injected": bool(
+            scope.get("plaintext_visible_remainder_injected")
+        ),
         "inter_layer_ciphertext_handoff": bool(
             scope.get("inter_layer_ciphertext_handoff")
             or result.get("inter_layer_ciphertext_handoff")
@@ -319,7 +330,12 @@ def _checkpoint_full_layer_chain_summary(payload: dict[str, Any] | None) -> dict
         "final_decrypt_count": result.get("final_decrypt_count"),
         "full_model_correctness_claimed": bool(scope.get("full_model_correctness_claimed")),
         "plaintext_precomputed_stages": scope.get("plaintext_precomputed_stages", []),
+        "blocked_reason": result.get("reason"),
+        "blocked_message": result.get("message"),
+        "batch_size": ckks.get("batch_size"),
         "rotation_count": ckks.get("rotation_count"),
+        "max_rotation_keys": ckks.get("max_rotation_keys"),
+        "estimated_rotation_key_memory_gib": ckks.get("estimated_rotation_key_memory_gib"),
         "ct_ct_mul_count": operation_counts.get("ct_ct_mul"),
         "decrypt_count": operation_counts.get("decrypt"),
         "setup_seconds": timing.get("setup_seconds"),
@@ -539,9 +555,15 @@ def _completed_items(measurements: dict[str, dict[str, Any]]) -> list[str]:
         and full_chain.get("inter_layer_ciphertext_handoff")
         and full_chain.get("no_intermediate_decrypt")
     ):
-        items.append(
-            "run measured full-layer ciphertext handoff chain without intermediate decrypts"
-        )
+        if full_chain.get("partial_visible_proxy"):
+            items.append(
+                "run measured partial-visible ciphertext handoff proxy without intermediate "
+                "decrypts"
+            )
+        else:
+            items.append(
+                "run measured full-layer ciphertext handoff chain without intermediate decrypts"
+            )
     synthetic_chain = measurements["synthetic_full_layer_chain_proxy"]
     if (
         synthetic_chain.get("passed")
@@ -715,6 +737,28 @@ def _bottleneck_assessment(measurements: dict[str, dict[str, Any]]) -> list[dict
                 ),
                 "next_action": (
                     "connect scheduled bootstrap probe to true inter-layer ciphertext chain"
+                ),
+            }
+        )
+    full_chain = measurements["checkpoint_full_layer_chain"]
+    rotation_count = full_chain.get("rotation_count")
+    max_rotation_keys = full_chain.get("max_rotation_keys")
+    if full_chain.get("status") == "blocked" and full_chain.get("blocked_reason") in {
+        "max_rotation_keys",
+        "estimated_rotation_key_memory",
+    }:
+        bottlenecks.append(
+            {
+                "name": "rotation_key_inventory",
+                "severity": "high",
+                "value": rotation_count,
+                "threshold": max_rotation_keys,
+                "estimated_memory_gib": full_chain.get("estimated_rotation_key_memory_gib"),
+                "reason": full_chain.get("blocked_message")
+                or "OpenFHE rotation-key inventory exceeds configured guardrails",
+                "next_action": (
+                    "reduce the real-checkpoint chain layout with packing/sketching or BSGS "
+                    "before retrying full inferred shape"
                 ),
             }
         )
