@@ -96,6 +96,11 @@ Current partial implementation:
   multiple SRHT seeds and reports pass rate, median error, and worst error per
   sketch size. Use this for checkpoint-derived sketch recommendations; the
   single-seed sweep is mainly an inner-loop diagnostic.
+- The first checkpoint-derived seed sweep uses Mamba-130M layer 0 selected ranks:
+  `sketch_size=8` gives 2x compression with pass rate `0.8`, while full-width
+  `sketch_size=16` passes all five seeds. This is a useful negative/neutral
+  result: small SRHT sketches are not yet robust enough to claim breakthrough
+  compression without learned/range-aware sketching.
 
 ## Version Boundary
 
