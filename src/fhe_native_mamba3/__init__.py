@@ -287,6 +287,14 @@ _LAZY_IMPORTS = {
         "Stage1ComparisonReport",
     ),
     "Stage1ComparisonRow": ("fhe_native_mamba3.stage1_report", "Stage1ComparisonRow"),
+    "Stage1CheckpointCostReport": (
+        "fhe_native_mamba3.stage1_checkpoint_cost_report",
+        "Stage1CheckpointCostReport",
+    ),
+    "Stage1CheckpointCostRow": (
+        "fhe_native_mamba3.stage1_checkpoint_cost_report",
+        "Stage1CheckpointCostRow",
+    ),
     "Stage1Dependency": ("fhe_native_mamba3.stage1_plan", "Stage1Dependency"),
     "Stage1GroupedChainInventoryReport": (
         "fhe_native_mamba3.stage1_grouped_chain",
@@ -515,6 +523,10 @@ _LAZY_IMPORTS = {
     "build_stage1_comparison_report": (
         "fhe_native_mamba3.stage1_report",
         "build_stage1_comparison_report",
+    ),
+    "build_stage1_checkpoint_cost_report": (
+        "fhe_native_mamba3.stage1_checkpoint_cost_report",
+        "build_stage1_checkpoint_cost_report",
     ),
     "build_stage1_grouped_chain_inventory": (
         "fhe_native_mamba3.stage1_grouped_chain",
@@ -758,6 +770,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_report",
         "stage1_comparison_markdown",
     ),
+    "stage1_checkpoint_cost_markdown": (
+        "fhe_native_mamba3.stage1_checkpoint_cost_report",
+        "stage1_checkpoint_cost_markdown",
+    ),
     "srht_sample_indices": ("fhe_native_mamba3.srht_sketch", "srht_sample_indices"),
     "srht_sampling_mask": ("fhe_native_mamba3.srht_sketch", "srht_sampling_mask"),
     "srht_sketch_matrix": ("fhe_native_mamba3.srht_sketch", "srht_sketch_matrix"),
@@ -894,6 +910,8 @@ __all__ = [
     "Stage0MimoConfig",
     "Stage0SweepConfig",
     "Stage1CandidatePlan",
+    "Stage1CheckpointCostReport",
+    "Stage1CheckpointCostRow",
     "Stage1CheckpointGroupedGateInventoryReport",
     "Stage1CheckpointGroupedGateInventoryRow",
     "Stage1ComparisonReport",
@@ -945,6 +963,7 @@ __all__ = [
     "build_rotation_inventory",
     "build_srht_sketch_metadata",
     "build_stage0_status_report",
+    "build_stage1_checkpoint_cost_report",
     "build_stage1_checkpoint_grouped_gate_inventory",
     "build_stage1_comparison_report",
     "build_stage1_grouped_chain_inventory",
@@ -1052,6 +1071,7 @@ __all__ = [
     "srht_sketch_matrix",
     "ssd_prefix_scan",
     "ssd_prefix_scan_prefill",
+    "stage1_checkpoint_cost_markdown",
     "stage1_comparison_markdown",
     "sweep_head_pack_candidates",
     "validate_artifact_file",
