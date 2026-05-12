@@ -140,9 +140,15 @@ Next executable PBIs:
   remains open.
 - PBI-S2-006 lowers SRHT sketch primitives to backend smokes so the sketch path
   has encrypted operation counts, not only plaintext trajectory evidence.
-- PBI-S2-008 uses the Stage 1 comparison report format as the input side for
-  joining pack/bootstrap costs with Stage 2 sketch tradeoffs into
-  lazy-bootstrap schedules.
+- PBI-S2-008 now has a report-only simulator in
+  `scripts/build_lazy_bootstrap_report.py`. Using the Stage 1 comparison report
+  and checkpoint sketch matrix, the current OpenFHE/accounting artifact
+  `runs/safe-v0315-20260512-063744-lazy-bootstrap-report.json` recommends
+  pack/sketch `16/16` under the robust sketch gate, with `11` scheduled
+  bootstraps/token and `7.25s/token` amortized bootstrap time. Rows with smaller
+  sketches reduce bootstrap seconds but are correctly bottlenecked by
+  `sketch_accuracy`. Re-running this with FIDESlib/GPU bootstrap costs remains
+  under PBI-S1-007.
 - PBI-S2-009 is the range-aware LoRA/calibration branch, triggered only by
   measured profile or sketch failures.
 

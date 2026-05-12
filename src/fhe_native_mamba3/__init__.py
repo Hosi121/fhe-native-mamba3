@@ -204,6 +204,11 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.range_calibration",
         "LayerRangeScalePlan",
     ),
+    "LazyBootstrapReport": ("fhe_native_mamba3.lazy_bootstrap", "LazyBootstrapReport"),
+    "LazyBootstrapScheduleRow": (
+        "fhe_native_mamba3.lazy_bootstrap",
+        "LazyBootstrapScheduleRow",
+    ),
     "RangeScalePlan": (
         "fhe_native_mamba3.range_calibration",
         "RangeScalePlan",
@@ -345,6 +350,10 @@ _LAZY_IMPORTS = {
     "build_bootstrap_execution_schedule": (
         "fhe_native_mamba3.bootstrap_schedule",
         "build_bootstrap_execution_schedule",
+    ),
+    "build_lazy_bootstrap_report": (
+        "fhe_native_mamba3.lazy_bootstrap",
+        "build_lazy_bootstrap_report",
     ),
     "build_packed_prefix_scan_plan": (
         "fhe_native_mamba3.ssd_prefix_scan",
@@ -495,6 +504,10 @@ _LAZY_IMPORTS = {
     "inspect_checkpoint": ("fhe_native_mamba3.checkpoint", "inspect_checkpoint"),
     "load_mapping_rules": ("fhe_native_mamba3.state_dict_mapping", "load_mapping_rules"),
     "make_demo_problem": ("fhe_native_mamba3.openfhe_backend", "make_demo_problem"),
+    "lazy_bootstrap_markdown": (
+        "fhe_native_mamba3.lazy_bootstrap",
+        "lazy_bootstrap_markdown",
+    ),
     "map_state_dict": ("fhe_native_mamba3.state_dict_mapping", "map_state_dict"),
     "packed_prefix_scan_rotation_steps": (
         "fhe_native_mamba3.ssd_prefix_scan",
@@ -744,6 +757,8 @@ __all__ = [
     "HeadPackCandidate",
     "HeadPackSweep",
     "IntegratedCostEstimate",
+    "LazyBootstrapReport",
+    "LazyBootstrapScheduleRow",
     "LoRAConfig",
     "LoRALinear",
     "MambaCheckpointAdapterReport",
@@ -808,6 +823,7 @@ __all__ = [
     "backend_segmented_hillis_steele_prefix_products",
     "build_bootstrap_execution_schedule",
     "build_checkpoint_source_sketch_trace",
+    "build_lazy_bootstrap_report",
     "build_mamba_source_recurrence_problem",
     "build_mamba_source_visible_handoff_tensors",
     "build_packed_prefix_scan_plan",
@@ -846,6 +862,7 @@ __all__ = [
     "fhe_aware_loss",
     "greedy_bootstrap_schedule",
     "inspect_checkpoint",
+    "lazy_bootstrap_markdown",
     "load_mapping_rules",
     "load_weight_bundle_model",
     "lora_parameter_count",
