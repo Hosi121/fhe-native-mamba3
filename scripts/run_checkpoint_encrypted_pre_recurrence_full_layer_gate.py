@@ -14,6 +14,8 @@ from fhe_native_mamba3.backends.openfhe import ckks_batch_size_for_slots
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
 from fhe_native_mamba3.checkpoint_correctness import (
+    expand_rank_to_state_bsgs_rotation_steps,
+    expand_state_vector_to_state_bsgs_rotation_steps,
     required_full_layer_visible_rotations,
     run_checkpoint_encrypted_pre_recurrence_full_layer_gate,
 )
@@ -302,8 +304,10 @@ def _required_rotations(
     )
     rotations.update(linear_bsgs_rotation_steps(input_dim=d_model, output_dim=mimo_rank))
     rotations.update(linear_bsgs_rotation_steps(input_dim=mimo_rank, output_dim=d_state))
-    rotations.update(_expand_rank_rotations(d_state=d_state, rank=mimo_rank))
-    rotations.update(_expand_state_rotations(d_state=d_state, rank=mimo_rank))
+    rotations.update(expand_rank_to_state_bsgs_rotation_steps(d_state=d_state, rank=mimo_rank))
+    rotations.update(
+        expand_state_vector_to_state_bsgs_rotation_steps(d_state=d_state, rank=mimo_rank)
+    )
     if rms_norm_mode != "plaintext-exact":
         rotations.update(
             rms_norm_rotation_steps(
@@ -365,24 +369,6 @@ def _enforce_openfhe_rotation_memory_guard(
         )
         raise ValueError(msg)
     return estimated_memory_gib
-
-
-def _expand_rank_rotations(*, d_state: int, rank: int) -> set[int]:
-    return {
-        rank_index - (rank_index * d_state + state_index)
-        for rank_index in range(rank)
-        for state_index in range(d_state)
-        if rank_index != rank_index * d_state + state_index
-    }
-
-
-def _expand_state_rotations(*, d_state: int, rank: int) -> set[int]:
-    return {
-        state_index - (rank_index * d_state + state_index)
-        for state_index in range(d_state)
-        for rank_index in range(rank)
-        if state_index != rank_index * d_state + state_index
-    }
 
 
 def _resolve_dt_rank(state_dict: dict[str, torch.Tensor], *, layer_index: int) -> int | None:

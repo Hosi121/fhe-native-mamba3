@@ -633,6 +633,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_correctness",
         "required_full_layer_visible_rotations",
     ),
+    "expand_rank_to_state_bsgs_rotation_steps": (
+        "fhe_native_mamba3.checkpoint_correctness",
+        "expand_rank_to_state_bsgs_rotation_steps",
+    ),
+    "expand_state_vector_to_state_bsgs_rotation_steps": (
+        "fhe_native_mamba3.checkpoint_correctness",
+        "expand_state_vector_to_state_bsgs_rotation_steps",
+    ),
     "run_static_mimo_recurrence_ciphertexts_with_backend": (
         "fhe_native_mamba3.openfhe_backend",
         "run_static_mimo_recurrence_ciphertexts_with_backend",
@@ -862,6 +870,8 @@ __all__ = [
     "estimate_recurrence_depth",
     "estimate_recurrence_stack_latency",
     "evaluate_head_pack_candidate",
+    "expand_rank_to_state_bsgs_rotation_steps",
+    "expand_state_vector_to_state_bsgs_rotation_steps",
     "extract_stage1_profile_hints",
     "fhe_aware_loss",
     "greedy_bootstrap_schedule",

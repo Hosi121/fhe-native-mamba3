@@ -179,6 +179,24 @@ def test_encrypted_pre_full_layer_rotation_inventory_uses_logical_batch_size() -
     assert 8 in encrypted_rms_rotations
 
 
+def test_encrypted_pre_full_layer_rotation_inventory_uses_bsgs_expansion() -> None:
+    module = _load_gate_script_module()
+
+    rotations = module._required_rotations(
+        d_model=768,
+        d_state=16,
+        mimo_rank=1536,
+        logical_batch_size=24576,
+        readout_strategy="rank-local",
+        visible_dim_limit=8,
+        rms_norm_mode="newton-invsqrt",
+        state_decay_mode="poly-composed",
+        dt_rank=48,
+    )
+
+    assert len(rotations) < 800
+
+
 def test_encrypted_pre_full_layer_openfhe_memory_guard_rejects_large_estimate() -> None:
     module = _load_gate_script_module()
 

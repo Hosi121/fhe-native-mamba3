@@ -5,6 +5,10 @@ import torch
 
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.checkpoint_correctness import (
+    _expand_rank_ciphertext_to_state_slots,
+    _expand_state_vector_ciphertext_to_state_slots,
+    expand_rank_to_state_bsgs_rotation_steps,
+    expand_state_vector_to_state_bsgs_rotation_steps,
     required_full_layer_visible_rotations,
     run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate,
     run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend,
@@ -649,6 +653,72 @@ def test_full_layer_visible_rotation_inventory_covers_rank_projection() -> None:
         readout_strategy="rank-local",
     )
     assert len(full_model_rotations) < 70
+
+
+def test_bsgs_rank_and_state_expansion_match_plaintext_layout() -> None:
+    backend = TrackingBackend(batch_size=16)
+
+    rank_ct = backend.encrypt([1.0, 2.0, 3.0, 4.0])
+    expanded_rank = _expand_rank_ciphertext_to_state_slots(
+        rank_ct,
+        d_state=3,
+        rank=4,
+        backend=backend,
+    )
+    assert backend.decrypt(expanded_rank, length=12) == (
+        1.0,
+        1.0,
+        1.0,
+        2.0,
+        2.0,
+        2.0,
+        3.0,
+        3.0,
+        3.0,
+        4.0,
+        4.0,
+        4.0,
+    )
+
+    state_ct = backend.encrypt([10.0, 20.0, 30.0])
+    expanded_state = _expand_state_vector_ciphertext_to_state_slots(
+        state_ct,
+        d_state=3,
+        rank=4,
+        backend=backend,
+    )
+    assert backend.decrypt(expanded_state, length=12) == (
+        10.0,
+        20.0,
+        30.0,
+        10.0,
+        20.0,
+        30.0,
+        10.0,
+        20.0,
+        30.0,
+        10.0,
+        20.0,
+        30.0,
+    )
+
+
+def test_bsgs_expansion_rotation_inventory_replaces_per_slot_rotations() -> None:
+    d_state = 16
+    rank = 1536
+    naive_rank_keys = d_state * rank - 1
+    naive_state_keys = rank - 1
+
+    rank_steps = expand_rank_to_state_bsgs_rotation_steps(d_state=d_state, rank=rank)
+    state_steps = expand_state_vector_to_state_bsgs_rotation_steps(
+        d_state=d_state,
+        rank=rank,
+    )
+
+    assert len(rank_steps) < 400
+    assert len(state_steps) < 400
+    assert len(rank_steps) < naive_rank_keys // 50
+    assert len(state_steps) < naive_state_keys
 
 
 def _tiny_hf_mamba_state_dict(layer_count: int = 1) -> dict[str, torch.Tensor]:

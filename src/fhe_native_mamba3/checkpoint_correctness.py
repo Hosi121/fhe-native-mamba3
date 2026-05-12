@@ -13,6 +13,7 @@ from fhe_native_mamba3.checkpoint_pre_recurrence import (
     RmsNormMode,
     StateDecayMode,
     run_checkpoint_pre_recurrence_ciphertexts_with_backend,
+    slot_linear_bsgs_baby_step,
     slot_linear_bsgs_rotation_steps,
     slot_linear_ciphertext,
 )
@@ -1686,17 +1687,17 @@ def _expand_rank_ciphertext_to_state_slots(
     rank: int,
     backend: FHEBackend,
 ) -> Any:
-    output_ct = backend.encrypt([0.0] * backend.batch_size)
-    for rank_index in range(rank):
-        mask = [0.0] * backend.batch_size
-        mask[rank_index] = 1.0
-        selected = backend.mul_plain(ciphertext, backend.encode(mask))
-        for state_index in range(d_state):
-            output_slot = rank_index * d_state + state_index
-            shift = rank_index - output_slot
-            term = selected if shift == 0 else backend.rotate(selected, shift)
-            output_ct = backend.add(output_ct, term)
-    return output_ct
+    return _sparse_bsgs_slot_linear_ciphertext(
+        ciphertext,
+        source_slots=tuple(range(rank)),
+        output_dim=d_state * rank,
+        mappings=(
+            (rank_index * d_state + state_index, rank_index, 1.0)
+            for rank_index in range(rank)
+            for state_index in range(d_state)
+        ),
+        backend=backend,
+    )
 
 
 def _expand_state_vector_ciphertext_to_state_slots(
@@ -1706,17 +1707,105 @@ def _expand_state_vector_ciphertext_to_state_slots(
     rank: int,
     backend: FHEBackend,
 ) -> Any:
+    return _sparse_bsgs_slot_linear_ciphertext(
+        ciphertext,
+        source_slots=tuple(range(d_state)),
+        output_dim=d_state * rank,
+        mappings=(
+            (rank_index * d_state + state_index, state_index, 1.0)
+            for rank_index in range(rank)
+            for state_index in range(d_state)
+        ),
+        backend=backend,
+    )
+
+
+def expand_rank_to_state_bsgs_rotation_steps(*, d_state: int, rank: int) -> tuple[int, ...]:
+    """Rotation-key inventory for exact rank-vector expansion into state slots."""
+
+    return _sparse_bsgs_slot_linear_rotation_steps(
+        source_slots=tuple(range(rank)),
+        output_dim=d_state * rank,
+        mappings=(
+            (rank_index * d_state + state_index, rank_index)
+            for rank_index in range(rank)
+            for state_index in range(d_state)
+        ),
+    )
+
+
+def expand_state_vector_to_state_bsgs_rotation_steps(
+    *,
+    d_state: int,
+    rank: int,
+) -> tuple[int, ...]:
+    """Rotation-key inventory for exact state-vector expansion into state slots."""
+
+    return _sparse_bsgs_slot_linear_rotation_steps(
+        source_slots=tuple(range(d_state)),
+        output_dim=d_state * rank,
+        mappings=(
+            (rank_index * d_state + state_index, state_index)
+            for rank_index in range(rank)
+            for state_index in range(d_state)
+        ),
+    )
+
+
+def _sparse_bsgs_slot_linear_ciphertext(
+    input_ct: Any,
+    *,
+    source_slots: tuple[int, ...],
+    output_dim: int,
+    mappings: Any,
+    backend: FHEBackend,
+) -> Any:
+    """Evaluate a sparse slot-linear map using the same BSGS schedule as dense matmul."""
+
+    baby_step = slot_linear_bsgs_baby_step(source_slots=source_slots, output_dim=output_dim)
     output_ct = backend.encrypt([0.0] * backend.batch_size)
-    for state_index in range(d_state):
-        mask = [0.0] * backend.batch_size
-        mask[state_index] = 1.0
-        selected = backend.mul_plain(ciphertext, backend.encode(mask))
-        for rank_index in range(rank):
-            output_slot = rank_index * d_state + state_index
-            shift = state_index - output_slot
-            term = selected if shift == 0 else backend.rotate(selected, shift)
-            output_ct = backend.add(output_ct, term)
+    baby_cts: dict[int, Any] = {}
+    grouped_masks: dict[tuple[int, int], list[float]] = {}
+    for output_index, source_slot, coefficient in mappings:
+        if coefficient == 0.0:
+            continue
+        giant_index, baby_index = divmod(source_slot - output_index, baby_step)
+        key = (giant_index, baby_index)
+        mask = grouped_masks.setdefault(key, [0.0] * backend.batch_size)
+        mask[(source_slot - baby_index) % backend.batch_size] += float(coefficient)
+
+    for giant_index, baby_index in sorted(grouped_masks):
+        if baby_index not in baby_cts:
+            baby_cts[baby_index] = (
+                input_ct if baby_index == 0 else backend.rotate(input_ct, baby_index)
+            )
+        term = backend.mul_plain(
+            baby_cts[baby_index],
+            backend.encode(grouped_masks[(giant_index, baby_index)]),
+        )
+        giant_shift = giant_index * baby_step
+        if giant_shift:
+            term = backend.rotate(term, giant_shift)
+        output_ct = backend.add(output_ct, term)
     return output_ct
+
+
+def _sparse_bsgs_slot_linear_rotation_steps(
+    *,
+    source_slots: tuple[int, ...],
+    output_dim: int,
+    mappings: Any,
+) -> tuple[int, ...]:
+    baby_step = slot_linear_bsgs_baby_step(source_slots=source_slots, output_dim=output_dim)
+    rotations: set[int] = set()
+    for output_index, source_slot in mappings:
+        giant_index, baby_index = divmod(source_slot - output_index, baby_step)
+        if baby_index:
+            rotations.add(baby_index)
+        giant_shift = giant_index * baby_step
+        if giant_shift:
+            rotations.add(giant_shift)
+    return tuple(sorted(rotations))
 
 
 def _rank_slot_vector(
