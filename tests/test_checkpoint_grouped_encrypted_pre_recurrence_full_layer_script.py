@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -106,6 +107,41 @@ def test_checkpoint_grouped_encrypted_pre_recurrence_script_rejects_excessive_op
 
     assert completed.returncode != 0
     assert "above --max-rotation-keys=1" in completed.stderr
+
+
+def test_checkpoint_grouped_rotation_inventory_includes_local_pack_alignment() -> None:
+    module = _load_grouped_script_module()
+    helpers = module._load_full_gate_script_helpers()
+
+    rotations = module._required_grouped_rotations(
+        helpers=helpers,
+        d_model=8,
+        d_state=2,
+        mimo_rank=4,
+        rank_pack_size=2,
+        logical_batch_size=8,
+        readout_strategy="rank-local",
+        visible_dim_limit=3,
+        rms_norm_mode="plaintext-exact",
+        state_decay_mode="plaintext-exact",
+        dt_rank=2,
+    )
+
+    assert -1 in rotations
+    assert -2 in rotations
+    assert 2 in rotations
+
+
+def _load_grouped_script_module():
+    spec = importlib.util.spec_from_file_location(
+        "run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate",
+        ROOT / "scripts" / "run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:
