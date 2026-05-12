@@ -113,8 +113,9 @@ Next executable PBIs:
   selections before any compression claim.
 - PBI-S2-013 turns accepted sketch matrix artifacts into a compact report for
   papers/proposals.
-- PBI-OPS-001 adds fast/slow check profiles so development does not pay the full
-  OpenFHE/pre-commit cost on every small edit.
+- PBI-OPS-001 is already satisfied by `docs/testing.md`, `run_fast_checks.sh`,
+  `run_checks.sh`, and `remote_checks.sh`; the next DevEx gap is PBI-OPS-002
+  artifact-ledger hygiene.
 - PBI-S2-006 lowers SRHT sketch primitives to backend smokes so the sketch path
   has encrypted operation counts, not only plaintext trajectory evidence.
 - PBI-S2-008 joins Stage 1 pack/bootstrap costs with Stage 2 sketch tradeoffs

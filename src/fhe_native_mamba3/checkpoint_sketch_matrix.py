@@ -42,6 +42,8 @@ class CheckpointSketchMatrixRow:
         payload = asdict(self)
         payload["token_ids"] = list(self.token_ids)
         payload["rank_indices"] = list(self.rank_indices)
+        payload["recommended_sketch_size"] = self.recommended_sketch_size
+        payload["passed"] = self.passed
         return payload
 
 

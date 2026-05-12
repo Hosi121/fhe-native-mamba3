@@ -38,7 +38,10 @@ def test_checkpoint_sketch_matrix_runs_layers_prompts_and_rank_strategies() -> N
     assert result.rows[0].seed_sweep["trajectory_source"] == "mamba-checkpoint-source-sketch-trace"
     assert result.rows[0].seed_sweep["passed"] is True
     assert result.passed is True
-    assert result.to_json_dict()["rows"][0]["rank_indices"] == [0, 1]
+    row_payload = result.to_json_dict()["rows"][0]
+    assert row_payload["rank_indices"] == [0, 1]
+    assert row_payload["passed"] is True
+    assert row_payload["recommended_sketch_size"] == 2
 
 
 def test_checkpoint_sketch_matrix_script(tmp_path) -> None:
