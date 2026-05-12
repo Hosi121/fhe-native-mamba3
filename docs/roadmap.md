@@ -106,11 +106,15 @@ Current partial implementation:
   (PBI-S2-012); PBI-S2-004 still requires an accepted real-checkpoint artifact
   spanning early/middle/late layers, at least two prompt types, and at least two
   rank-selection strategies.
+- The accepted Mamba-130M matrix artifact is
+  `runs/checkpoint-sketch-matrix-mamba130m-20260512-130750.json` from high job
+  `10135`. It is broad enough for PBI-S2-004 and shows that full-width
+  `sketch_size=16` is the only robust default across layers/prompts/rank
+  strategies; smaller SRHT sketches are still experimental, with `sketch_size=8`
+  only winning in one repeat-prompt layer-0 row.
 
 Next executable PBIs:
 
-- PBI-S2-004 broadens sketch evidence across layers, prompt types, and rank
-  selections before any compression claim.
 - PBI-S2-013 turns accepted sketch matrix artifacts into a compact report for
   papers/proposals.
 - PBI-OPS-001 is already satisfied by `docs/testing.md`, `run_fast_checks.sh`,
