@@ -102,6 +102,17 @@ Current partial implementation:
   result: small SRHT sketches are not yet robust enough to claim breakthrough
   compression without learned/range-aware sketching.
 
+Next executable PBIs:
+
+- PBI-S2-004 broadens sketch evidence across layers, prompt types, and rank
+  selections before any compression claim.
+- PBI-S2-006 lowers SRHT sketch primitives to backend smokes so the sketch path
+  has encrypted operation counts, not only plaintext trajectory evidence.
+- PBI-S2-008 joins Stage 1 pack/bootstrap costs with Stage 2 sketch tradeoffs
+  into lazy-bootstrap schedules.
+- PBI-S2-009 is the range-aware LoRA/calibration branch, triggered only by
+  measured profile or sketch failures.
+
 ## Version Boundary
 
 - `0.1.x`: encrypted kernels and correctness checks.
