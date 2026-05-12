@@ -138,6 +138,18 @@ Next executable PBIs:
 - PBI-S2-009 is the range-aware LoRA/calibration branch, triggered only by
   measured profile or sketch failures.
 
+Stage 0 blocker update:
+
+- Jobs `10164`-`10169` show that a two-layer real-checkpoint OpenFHE
+  full-visible chain is still blocked by depth/runtime, not memory, even with
+  lighter approximations.
+- Job `10170` shows one real-checkpoint OpenFHE full-visible layer can pass
+  (`432.44s` wall clock, `max_abs_error=2.14e-02`), but it is not an
+  inter-layer handoff artifact.
+- The next Stage 0/1 executable step should avoid another unoptimized full
+  `d_model=768` two-layer run and instead build an explicit partial-visible
+  real-checkpoint proxy or Stage 1 packed visible projection.
+
 ## Version Boundary
 
 - `0.1.x`: encrypted kernels and correctness checks.

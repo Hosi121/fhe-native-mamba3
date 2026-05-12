@@ -150,6 +150,11 @@ def main() -> int:
         "adapter_shape": adapter_shape,
         "backend": stats["backend"],
         "encrypted": stats["encrypted"],
+        "config": {
+            "input_mode": "encrypted-pre-recurrence-full-layer-chain",
+            "input_propagation": args.input_propagation,
+            "readout_strategy": args.readout_strategy,
+        },
         "adapter_report": report.to_json_dict(max_statuses=args.max_statuses),
         "model": {
             "seq_len": result.seq_len,
