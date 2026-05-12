@@ -153,6 +153,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.ssd_prefix_scan",
         "BackendPrefixScanResult",
     ),
+    "BackendSrhtSmokeResult": (
+        "fhe_native_mamba3.backend_srht",
+        "BackendSrhtSmokeResult",
+    ),
     "BackendSegmentedPrefixScanResult": (
         "fhe_native_mamba3.ssd_prefix_scan",
         "BackendSegmentedPrefixScanResult",
@@ -463,6 +467,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.ssd_prefix_scan",
         "backend_packed_static_mimo_readout",
     ),
+    "backend_apply_srht_masked": (
+        "fhe_native_mamba3.backend_srht",
+        "backend_apply_srht_masked",
+    ),
     "build_tiny_mimo_block_problem": (
         "fhe_native_mamba3.stage1_tiny_mimo",
         "build_tiny_mimo_block_problem",
@@ -741,6 +749,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_visible_projection_sweep",
         "run_checkpoint_visible_projection_sweep",
     ),
+    "run_backend_srht_smoke": (
+        "fhe_native_mamba3.backend_srht",
+        "run_backend_srht_smoke",
+    ),
     "required_full_layer_visible_rotations": (
         "fhe_native_mamba3.checkpoint_correctness",
         "required_full_layer_visible_rotations",
@@ -748,6 +760,10 @@ _LAZY_IMPORTS = {
     "required_grouped_full_layer_lift_rotations": (
         "fhe_native_mamba3.stage1_grouped_recurrence",
         "required_grouped_full_layer_lift_rotations",
+    ),
+    "required_backend_srht_rotations": (
+        "fhe_native_mamba3.backend_srht",
+        "required_backend_srht_rotations",
     ),
     "expand_rank_to_state_bsgs_rotation_steps": (
         "fhe_native_mamba3.checkpoint_correctness",
@@ -861,6 +877,7 @@ __all__ = [
     "BackendPackedMimoReadoutResult",
     "BackendPrefixScanResult",
     "BackendSegmentedPrefixScanResult",
+    "BackendSrhtSmokeResult",
     "BackendStats",
     "BootstrapExecutionBlockCost",
     "BootstrapExecutionPolicy",
@@ -973,6 +990,7 @@ __all__ = [
     "apply_handoff_bootstrap_schedule",
     "apply_lora_to_linear_modules",
     "apply_srht_sketch",
+    "backend_apply_srht_masked",
     "backend_capability_matrix",
     "backend_hillis_steele_affine_scan",
     "backend_hillis_steele_prefix_products",
@@ -1053,11 +1071,13 @@ __all__ = [
     "profile_model_batch",
     "profile_recurrence_traces",
     "range_loss",
+    "required_backend_srht_rotations",
     "required_full_layer_visible_rotations",
     "required_grouped_full_layer_lift_rotations",
     "required_tiny_mimo_block_rotations",
     "resolve_pre_recurrence_shape",
     "resolve_rank_strategy",
+    "run_backend_srht_smoke",
     "run_checkpoint_client_decode_smoke",
     "run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate",
     "run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend",
