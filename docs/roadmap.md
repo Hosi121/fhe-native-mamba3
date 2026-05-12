@@ -125,8 +125,9 @@ Next executable PBIs:
   `scripts/submit_safe_slurm_campaign.py`: it dry-runs or submits source
   profile, client decode, recurrence-only chain, ciphertext handoff, Stage 1
   tiny MIMO, Stage 1 pack sweep, and bootstrap latency jobs, then emits a
-  manifest with ledger-row templates. Artifact pull/update automation remains
-  open; 512G OpenFHE full-chain jobs stay out of this campaign.
+  manifest with ledger-row templates. The first live run is high jobs
+  `10157`-`10163`; artifact pull/update automation remains open, and 512G
+  OpenFHE full-chain jobs stay out of this campaign.
 - PBI-S2-006 lowers SRHT sketch primitives to backend smokes so the sketch path
   has encrypted operation counts, not only plaintext trajectory evidence.
 - PBI-S2-008 joins Stage 1 pack/bootstrap costs with Stage 2 sketch tradeoffs

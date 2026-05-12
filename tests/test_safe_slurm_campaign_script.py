@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from fhe_native_mamba3 import __version__
+from fhe_native_mamba3.artifact_validation import validate_benchmark_artifact
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,6 +35,10 @@ def test_safe_slurm_campaign_dry_run_emits_manifest(tmp_path) -> None:
     assert completed.stdout
     assert payload["version"] == __version__
     assert payload["stage"] == "safe-slurm-campaign"
+    assert payload["repo_commit"]
+    assert payload["measurement_scope"]["full_model_correctness_claimed"] is False
+    assert payload["measurement_scope"]["submission_manifest_only"] is True
+    assert payload["measurements"]["submitted_or_dry_run_jobs"] == 2
     assert payload["passed"] is True
     assert payload["dry_run"] is True
     assert payload["job_count"] == 2
@@ -49,6 +54,7 @@ def test_safe_slurm_campaign_dry_run_emits_manifest(tmp_path) -> None:
     assert all("sbatch" in job["command"] for job in payload["jobs"])
     assert "real-checkpoint-openfhe-full-chain" in payload["excluded_jobs"]
     assert len(payload["ledger_rows"]) == 2
+    assert validate_benchmark_artifact(payload).valid is True
 
 
 def test_safe_slurm_campaign_rejects_unknown_job(tmp_path) -> None:

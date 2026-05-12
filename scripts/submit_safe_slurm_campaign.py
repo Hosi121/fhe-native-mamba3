@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from fhe_native_mamba3 import __version__
+from fhe_native_mamba3.artifact_validation import current_git_commit
 from fhe_native_mamba3.cli_support import emit_json_payload
 
 
@@ -174,10 +175,25 @@ def main() -> int:
     payload = {
         "version": __version__,
         "stage": "safe-slurm-campaign",
+        "repo_commit": current_git_commit(Path.cwd()),
         "passed": all(row["status"] in {"dry_run", "submitted"} for row in entries),
         "dry_run": args.dry_run,
         "run_prefix": run_prefix,
         "job_count": len(entries),
+        "measurement_scope": {
+            "claim": (
+                "safe SLURM submission manifest for low/medium-risk evidence jobs; "
+                "job artifacts must be validated separately after completion"
+            ),
+            "full_model_correctness_claimed": False,
+            "full_openfhe_chain_claimed": False,
+            "submits_high_memory_full_chain": False,
+            "submission_manifest_only": True,
+        },
+        "measurements": {
+            "submitted_or_dry_run_jobs": len(entries),
+            "actual_submission": not args.dry_run,
+        },
         "excluded_jobs": [
             "real-checkpoint-openfhe-full-chain",
             "high-memory-visible-projection-sweep",

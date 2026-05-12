@@ -58,7 +58,7 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 | PBI-OPS-001 | DevEx | Done | none | Add fast/slow test profiles so low-risk edits run a short local/remote gate while OpenFHE, SLURM, and full pre-commit checks remain available as explicit slow gates. Evidence: `scripts/run_fast_checks.sh`, `scripts/run_checks.sh`, `scripts/remote_checks.sh`, and `docs/testing.md`; full checks avoid duplicate pre-commit execution unless `RUN_PRECOMMIT=1` is requested. |
 | PBI-OPS-002 | DevEx | Open | none | Maintain an artifact ledger that maps high/SLURM job IDs to PBI IDs, JSON paths, git commits, and pass/fail status. Seed ledger: `docs/artifact_ledger.md`; acceptance remains open until a script or release-note update workflow keeps it current. |
 | PBI-OPS-003 | DevEx | Open | PBI-OPS-002 | Export backlog PBIs to GitHub issues/project items when repository permissions are available. Acceptance requires issue titles, dependencies, and status labels generated from `docs/backlog.md` without hand-copying. |
-| PBI-OPS-004 | DevEx | Open | PBI-OPS-002 | Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection. First slice: `scripts/submit_safe_slurm_campaign.py` submits/dry-runs only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, and emits manifest/ledger-row templates; covered by `tests/test_safe_slurm_campaign_script.py`. Remaining acceptance: artifact pull/update workflow after submitted jobs complete, without touching high-memory OpenFHE full-chain jobs. |
+| PBI-OPS-004 | DevEx | Open | PBI-OPS-002 | Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection. First slice: `scripts/submit_safe_slurm_campaign.py` submits/dry-runs only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, and emits manifest/ledger-row templates; covered by `tests/test_safe_slurm_campaign_script.py` and exercised by high jobs `10157`-`10163`. Remaining acceptance: automated artifact pull/update workflow after submitted jobs complete, without touching high-memory OpenFHE full-chain jobs. |
 
 ## Dependency Map
 
@@ -71,7 +71,7 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 
 ## Stale Or Obsolete Notes
 
-- README version `0.2.100` was stale and has been updated through `0.3.12`.
+- README version `0.2.100` was stale and has been updated through `0.3.13`.
 - Any backlog item phrased as "full OpenFHE chain success" is stale unless it
   points to a validated integrated artifact with no intermediate decrypts. The
   current evidence supports recurrence smokes, bootstrap probes, pre-recurrence
