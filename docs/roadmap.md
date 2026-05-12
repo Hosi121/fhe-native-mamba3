@@ -70,6 +70,13 @@ Current implementation status:
 - When passed a bootstrap-latency JSON, the pack sweep emits per-row amortized
   bootstrap latency estimates. This is an accounting attachment, not a measured
   FIDESlib/GPU bootstrap claim.
+- `scripts/build_stage1_comparison_report.py` joins a pack sweep, bootstrap
+  latency probe, tiny MIMO smoke, and safe-campaign manifest into one
+  JSON/Markdown report. The first recorded report is
+  `runs/safe-v0315-20260512-063744-stage1-comparison-report.json`: it attaches
+  OpenFHE Python bootstrap latency `10.54s` to pack sizes 4/8/16/32, yielding
+  amortized bootstrap estimates of `2.63s`, `1.32s`, `0.66s`, and `0.33s`
+  respectively, while keeping the Stage 1 speedup claim explicitly disabled.
 
 ## Stage 2
 
@@ -133,8 +140,9 @@ Next executable PBIs:
   remains open.
 - PBI-S2-006 lowers SRHT sketch primitives to backend smokes so the sketch path
   has encrypted operation counts, not only plaintext trajectory evidence.
-- PBI-S2-008 joins Stage 1 pack/bootstrap costs with Stage 2 sketch tradeoffs
-  into lazy-bootstrap schedules.
+- PBI-S2-008 uses the Stage 1 comparison report format as the input side for
+  joining pack/bootstrap costs with Stage 2 sketch tradeoffs into
+  lazy-bootstrap schedules.
 - PBI-S2-009 is the range-aware LoRA/calibration branch, triggered only by
   measured profile or sketch failures.
 

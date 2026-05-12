@@ -269,6 +269,11 @@ _LAZY_IMPORTS = {
     "Stage0MimoConfig": ("fhe_native_mamba3.benchmarks.stage0_mimo", "Stage0MimoConfig"),
     "Stage0SweepConfig": ("fhe_native_mamba3.benchmarks.stage0_sweep", "Stage0SweepConfig"),
     "Stage1CandidatePlan": ("fhe_native_mamba3.stage1_plan", "Stage1CandidatePlan"),
+    "Stage1ComparisonReport": (
+        "fhe_native_mamba3.stage1_report",
+        "Stage1ComparisonReport",
+    ),
+    "Stage1ComparisonRow": ("fhe_native_mamba3.stage1_report", "Stage1ComparisonRow"),
     "Stage1Dependency": ("fhe_native_mamba3.stage1_plan", "Stage1Dependency"),
     "Stage1Plan": ("fhe_native_mamba3.stage1_plan", "Stage1Plan"),
     "Stage1PackSweepResult": (
@@ -463,6 +468,10 @@ _LAZY_IMPORTS = {
         "build_stage0_status_report",
     ),
     "build_stage1_plan": ("fhe_native_mamba3.stage1_plan", "build_stage1_plan"),
+    "build_stage1_comparison_report": (
+        "fhe_native_mamba3.stage1_report",
+        "build_stage1_comparison_report",
+    ),
     "build_srht_sketch_metadata": (
         "fhe_native_mamba3.srht_sketch",
         "build_srht_sketch_metadata",
@@ -628,6 +637,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.ssd_prefix_scan",
         "ssd_prefix_scan_prefill",
     ),
+    "stage1_comparison_markdown": (
+        "fhe_native_mamba3.stage1_report",
+        "stage1_comparison_markdown",
+    ),
     "srht_sample_indices": ("fhe_native_mamba3.srht_sketch", "srht_sample_indices"),
     "srht_sampling_mask": ("fhe_native_mamba3.srht_sketch", "srht_sampling_mask"),
     "srht_sketch_matrix": ("fhe_native_mamba3.srht_sketch", "srht_sketch_matrix"),
@@ -760,6 +773,8 @@ __all__ = [
     "Stage0MimoConfig",
     "Stage0SweepConfig",
     "Stage1CandidatePlan",
+    "Stage1ComparisonReport",
+    "Stage1ComparisonRow",
     "Stage1Dependency",
     "Stage1PackSweepResult",
     "Stage1PackSweepRow",
@@ -801,6 +816,7 @@ __all__ = [
     "build_rotation_inventory",
     "build_srht_sketch_metadata",
     "build_stage0_status_report",
+    "build_stage1_comparison_report",
     "build_stage1_plan",
     "build_tiny_mimo_block_problem",
     "build_weight_bundle_manifest",
@@ -889,6 +905,7 @@ __all__ = [
     "srht_sketch_matrix",
     "ssd_prefix_scan",
     "ssd_prefix_scan_prefill",
+    "stage1_comparison_markdown",
     "sweep_head_pack_candidates",
     "validate_artifact_file",
     "validate_benchmark_artifact",
