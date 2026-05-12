@@ -92,6 +92,10 @@ Current partial implementation:
   that artifact. Rank/state selective decay is marked as non-commuting with the
   scalar SRHT recurrence claim, so these rows measure direct-state readout error
   rather than encrypted/sketched recurrence correctness.
+- `scripts/run_stage2_sketch_seed_sweep.py` repeats the same sketch sweep over
+  multiple SRHT seeds and reports pass rate, median error, and worst error per
+  sketch size. Use this for checkpoint-derived sketch recommendations; the
+  single-seed sweep is mainly an inner-loop diagnostic.
 
 ## Version Boundary
 
