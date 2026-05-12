@@ -49,6 +49,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_decode",
         "CheckpointClientDecodeSmoke",
     ),
+    "ClientDecodeReport": (
+        "fhe_native_mamba3.client_decode_report",
+        "ClientDecodeReport",
+    ),
+    "ClientDecodeReportRow": (
+        "fhe_native_mamba3.client_decode_report",
+        "ClientDecodeReportRow",
+    ),
     "CheckpointSourceProfile": (
         "fhe_native_mamba3.checkpoint_profile",
         "CheckpointSourceProfile",
@@ -399,6 +407,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_sketch_trace",
         "build_checkpoint_source_sketch_trace",
     ),
+    "build_client_decode_report": (
+        "fhe_native_mamba3.client_decode_report",
+        "build_client_decode_report",
+    ),
     "build_sketch_evidence_report": (
         "fhe_native_mamba3.sketch_evidence_report",
         "build_sketch_evidence_report",
@@ -406,6 +418,10 @@ _LAZY_IMPORTS = {
     "classify_sketch_recurrence_claim": (
         "fhe_native_mamba3.sketch_recurrence_claims",
         "classify_sketch_recurrence_claim",
+    ),
+    "client_decode_report_markdown": (
+        "fhe_native_mamba3.client_decode_report",
+        "client_decode_report_markdown",
     ),
     "run_checkpoint_sketch_matrix": (
         "fhe_native_mamba3.checkpoint_sketch_matrix",
@@ -911,6 +927,8 @@ __all__ = [
     "CiphertextLayoutContract",
     "CkksConfig",
     "CkksTrace",
+    "ClientDecodeReport",
+    "ClientDecodeReportRow",
     "FHEBackend",
     "FheCostEstimate",
     "FheMamba3Block",
@@ -999,6 +1017,7 @@ __all__ = [
     "backend_segmented_hillis_steele_prefix_products",
     "build_bootstrap_execution_schedule",
     "build_checkpoint_source_sketch_trace",
+    "build_client_decode_report",
     "build_lazy_bootstrap_report",
     "build_mamba_source_recurrence_problem",
     "build_mamba_source_visible_handoff_tensors",
@@ -1025,6 +1044,7 @@ __all__ = [
     "ckks_batch_size_for_slots",
     "ckks_ring_dimension_for_batch_size",
     "classify_sketch_recurrence_claim",
+    "client_decode_report_markdown",
     "client_side_argmax",
     "client_side_decode_ciphertext",
     "client_side_decode_scores",
