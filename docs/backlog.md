@@ -47,6 +47,12 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 | PBI-S1-011 | Stage 1 | Done | PBI-S1-010 | Add an executable grouped static MIMO recurrence smoke that slices rank work into packs, evaluates each pack, and reassembles final rank outputs against the monolithic plaintext recurrence. Acceptance: supports static and dynamic B/C/decay slices, emits artifact JSON with explicit no-full-layer claim, and is covered by unit/script tests. Evidence: `src/fhe_native_mamba3/stage1_grouped_recurrence.py`, `scripts/run_stage1_grouped_recurrence_smoke.py`, tests in `tests/test_stage1_grouped_recurrence.py` / `tests/test_stage1_grouped_recurrence_script.py`, tracking artifact `runs/stage1-s025-grouped-recurrence-smoke.json` (`pack_size=3`, `group_count=3`, `max_abs_error=2.78e-17`), and high/OpenFHE artifact `runs/stage1-s026-grouped-recurrence-openfhe-smoke.json` (`encrypted=true`, `max_abs_error=2.40e-10`). |
 | PBI-S1-012 | Stage 1 | Done | PBI-S1-011 | Add grouped full-layer lift smoke: rank-pack recurrence outputs are gated, projected by matching out-projection columns, summed in visible slots, and residual is added. Acceptance: exact synthetic plaintext match, rotation inventory for recurrence plus visible projection, script artifact, and explicit no-checkpoint/full-model claim. Evidence: `run_stage1_grouped_full_layer_lift_smoke`, `scripts/run_stage1_grouped_full_layer_lift_smoke.py`, tests in `tests/test_stage1_grouped_recurrence.py` / `tests/test_stage1_grouped_full_layer_lift_script.py`, tracking artifact `runs/stage1-s028-grouped-full-layer-lift-tracking.json` (`pack_size=3`, `group_count=3`, `visible_dim=5`, `max_abs_error=2.78e-17`), and high/OpenFHE artifact `runs/stage1-s029-grouped-full-layer-lift-openfhe.json` (`encrypted=true`, `max_abs_error=8.57e-11`, `ct_ct_mul=4`). |
 | PBI-S1-013 | Stage 1 | Done | PBI-S1-012 | Connect grouped full-layer lift to checkpoint pre-recurrence ciphertexts. Acceptance: full-rank encrypted pre-recurrence tensors can be compacted into rank packs, grouped recurrence/gate/out-projection/residual evaluates without intermediate decrypts, and a tiny checkpoint-shaped test matches visible output. Evidence: `run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate` and `tests/test_checkpoint_correctness.py`; this still leaves full inferred-shape OpenFHE execution and pre-recurrence rank grouping as future work. |
+| PBI-S1-014 | Stage 1 | Open | PBI-S1-013 | Script and artifact the checkpoint grouped full-layer gate. Acceptance: add a `scripts/run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate.py` entrypoint, tests for JSON/schema/success semantics, one tracking artifact, and one small high/OpenFHE artifact with explicit no-full-model claim. |
+| PBI-S1-015 | Stage 1 | Open | PBI-S1-014, PBI-S1-010 | Add grouped checkpoint full-layer inventory and guard. Acceptance: report pack-size rows for checkpoint grouped gate at real Mamba-130M inferred shape, including pre-recurrence full-rank cost, grouped recurrence/lift cost, shared rotation keys, estimated key memory, and guard result before any heavy OpenFHE run. |
+| PBI-S1-016 | Stage 1 | Open | PBI-S1-013 | Start pre-recurrence rank grouping. Acceptance: implement and test rank-pack slicing/compaction for checkpoint pre-recurrence ciphertext stages (`causal_conv_post_silu`, `gate_post_silu`, `dynamic_b/c`, `state_rank_decay`) without changing outputs; tracking tests must compare grouped vs full-rank pre-recurrence tensors. |
+| PBI-S1-017 | Stage 1 | Open | PBI-S1-014, PBI-S1-016 | Add grouped checkpoint full-layer chain proxy. Acceptance: two-layer partial-visible or small-shape chain uses grouped gate per layer, no intermediate decrypts, JSON artifact includes layer depth estimates, operation counts, and clear statement that full inferred 24-layer success is not claimed. |
+| PBI-S1-018 | Stage 1 | Open | PBI-S1-015, PBI-S1-017 | Run grouped full-shape guard/probe on high. Acceptance: full inferred Mamba-130M grouped gate/chain emits either a validated guard artifact under memory budget or a bounded OpenFHE artifact; no unguarded high-memory submission is allowed. |
+| PBI-S1-019 | Stage 1 | Open | PBI-S1-007, PBI-S1-015 | Rebuild Stage 1 cost report with grouped checkpoint costs and measured bootstrap costs. Acceptance: JSON/Markdown report combines grouped pack inventory, OpenFHE/FIDESlib bootstrap availability, and expected amortized latency; report must separate measured values from estimates. |
 | PBI-S2-001 | Stage 2 | Done | PBI-S1-005 | Empirically test sketch dimensions for MIMO SSM trajectories before claiming theory-driven dimension choices. Evidence: synthetic SRHT sweep, checkpoint-source trace ingestion, and multi-seed sketch aggregation are implemented in `scripts/run_stage2_sketch_sweep.py`, `scripts/run_stage2_sketch_seed_sweep.py`, `scripts/run_checkpoint_source_sketch_trace.py`, `tests/test_stage2_sketch_sweep.py`, `tests/test_stage2_sketch_seed_sweep.py`, and `tests/test_checkpoint_sketch_trace.py`; recorded high/B200 artifacts `runs/checkpoint-source-sketch-trace-mamba130m-l0-20260512-081037.json` and `runs/stage2-sketch-seed-sweep-mamba130m-l0-trace-20260512-124154.json` show layer-0 Mamba-130M selected-rank tradeoffs. |
 | PBI-S2-002 | Stage 2 | Open | PBI-S0-010, PBI-S1-005 | Prototype lazy bootstrap/range-aware training policy with measured range contraction and bootstrap schedule impact. This is an umbrella PBI; the executable slices are PBI-S2-008 and PBI-S2-009. |
 | PBI-S2-003 | Stage 2 | Open | PBI-S1-005 | Track encrypted vocab argmax/CutMax separately from the default client-side decoding path. This is an umbrella PBI; the executable slices are PBI-S2-010 and PBI-S2-011, and it is not a current `0.3.x` blocker. |
@@ -68,14 +74,27 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 ## Dependency Map
 
 - Real encrypted chain work: PBI-S0-008 -> PBI-S0-009.
-- Stage 1 cost evidence and grouped recurrence scaffolding: PBI-S1-006,
-  PBI-S1-008, PBI-S1-009, PBI-S1-010, PBI-S1-011, and PBI-S1-012 are complete;
-  PBI-S1-013 connects grouping to checkpoint pre-recurrence outputs. PBI-S1-007
-  remains open for FIDESlib/GPU bootstrap cost evidence.
+- Stage 1 grouped checkpoint path: PBI-S1-009 -> PBI-S1-010 -> PBI-S1-011 ->
+  PBI-S1-012 -> PBI-S1-013 are complete. The next implementation line is
+  PBI-S1-014 -> PBI-S1-015 -> PBI-S1-017 -> PBI-S1-018. PBI-S1-016 can run in
+  parallel with PBI-S1-014/PBI-S1-015 because it targets pre-recurrence rank
+  grouping. PBI-S1-007 remains open for FIDESlib/GPU bootstrap cost evidence and
+  feeds PBI-S1-019.
 - Sketch/range evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-005/PBI-S2-008/PBI-S2-009/PBI-S2-013; PBI-S0-010 feeds PBI-S2-009.
 - Encrypted sketch execution: PBI-S2-001 + PBI-S1-005 -> PBI-S2-006 -> PBI-S2-007.
 - Decoding branch: PBI-S2-003 -> PBI-S2-010 -> PBI-S2-011.
 - Development operations: PBI-OPS-001 is done; PBI-OPS-002 -> PBI-OPS-003, and PBI-OPS-002 -> PBI-OPS-004.
+
+## Near-Term Parallel Slices
+
+- Mainline A: PBI-S1-014 script/artifact for the checkpoint grouped gate, then
+  PBI-S1-015 inventory/guard.
+- Mainline B: PBI-S1-016 pre-recurrence rank grouping can proceed independently
+  once the rank-pack compaction contracts in PBI-S1-013 remain stable.
+- Measurement C: PBI-S1-007 bootstrap cost evidence can run on high while A/B
+  continue locally; it is needed before PBI-S1-019.
+- Low-risk reporting D: PBI-S2-013 sketch evidence report can be implemented
+  without blocking Stage 1 execution work.
 
 ## Stale Or Obsolete Notes
 
