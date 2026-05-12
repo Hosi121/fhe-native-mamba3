@@ -17,6 +17,7 @@ from fhe_native_mamba3.checkpoint_correctness import (
     run_checkpoint_encrypted_pre_recurrence_recurrence_gate,
     run_checkpoint_full_layer_ciphertext_gate,
     run_checkpoint_full_layer_ciphertexts_with_backend,
+    run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate,
     run_checkpoint_recurrence_correctness_gate,
 )
 from fhe_native_mamba3.checkpoint_full_layer_sweep import (
@@ -308,6 +309,35 @@ def test_checkpoint_encrypted_pre_recurrence_full_layer_trace_scales_visible_out
     for actual_row, expected_row in zip(actual, scaled.expected_outputs, strict=True):
         assert actual_row == pytest.approx(expected_row, abs=5e-2)
     assert any("scaled" in note for note in scaled.notes)
+
+
+def test_checkpoint_grouped_pre_recurrence_full_layer_gate_matches_visible_output() -> None:
+    state_dict = _tiny_hf_mamba_state_dict()
+    layer_input = torch.linspace(0.45, 0.6, 24, dtype=torch.float32).view(1, 3, 8)
+    backend = TrackingBackend(batch_size=8)
+
+    gate = run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate(
+        state_dict,
+        layer_input,
+        d_state=2,
+        mimo_rank=4,
+        rank_pack_size=2,
+        backend=backend,
+        readout_strategy="rank-local",
+        newton_range=(0.20, 0.40),
+        atol=5e-2,
+    )
+    payload = gate.to_json_dict()
+
+    assert gate.passed is True
+    assert gate.pre_recurrence_ciphertext is True
+    assert gate.recurrence_ciphertext is True
+    assert gate.visible_handoff_ciphertext is True
+    assert gate.no_intermediate_decrypt is True
+    assert gate.full_layer_formula_checked is True
+    assert gate.max_abs_error < 5e-2
+    assert payload["plaintext_precomputed_stages"] == ["residual_input"]
+    assert any("grouped by rank pack" in note for note in payload["notes"])
 
 
 def test_checkpoint_encrypted_pre_recurrence_full_layer_chain_uses_ciphertext_handoff() -> None:
