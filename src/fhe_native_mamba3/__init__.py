@@ -69,6 +69,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_sketch_matrix",
         "CheckpointSketchMatrixRow",
     ),
+    "SketchEvidenceReport": (
+        "fhe_native_mamba3.sketch_evidence_report",
+        "SketchEvidenceReport",
+    ),
+    "SketchEvidenceReportRow": (
+        "fhe_native_mamba3.sketch_evidence_report",
+        "SketchEvidenceReportRow",
+    ),
     "CheckpointRecurrenceCorrectnessGate": (
         "fhe_native_mamba3.checkpoint_correctness",
         "CheckpointRecurrenceCorrectnessGate",
@@ -383,6 +391,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_sketch_trace",
         "build_checkpoint_source_sketch_trace",
     ),
+    "build_sketch_evidence_report": (
+        "fhe_native_mamba3.sketch_evidence_report",
+        "build_sketch_evidence_report",
+    ),
     "run_checkpoint_sketch_matrix": (
         "fhe_native_mamba3.checkpoint_sketch_matrix",
         "run_checkpoint_sketch_matrix",
@@ -390,6 +402,10 @@ _LAZY_IMPORTS = {
     "resolve_rank_strategy": (
         "fhe_native_mamba3.checkpoint_sketch_matrix",
         "resolve_rank_strategy",
+    ),
+    "sketch_evidence_report_markdown": (
+        "fhe_native_mamba3.sketch_evidence_report",
+        "sketch_evidence_report_markdown",
     ),
     "build_bootstrap_execution_schedule": (
         "fhe_native_mamba3.bootstrap_schedule",
@@ -904,6 +920,8 @@ __all__ = [
     "RangeLossResult",
     "RangeLossTerm",
     "RecurrenceTraceProfile",
+    "SketchEvidenceReport",
+    "SketchEvidenceReportRow",
     "SrhtButterflyStage",
     "SrhtSketchMetadata",
     "SsdPrefixScanResult",
@@ -961,6 +979,7 @@ __all__ = [
     "build_prefix_scan_metadata",
     "build_recurrence_bootstrap_plan",
     "build_rotation_inventory",
+    "build_sketch_evidence_report",
     "build_srht_sketch_metadata",
     "build_stage0_status_report",
     "build_stage1_checkpoint_cost_report",
@@ -1065,6 +1084,7 @@ __all__ = [
     "save_weight_bundle_from_mapped_checkpoint",
     "scale_recurrence_state",
     "scale_recurrence_state_and_output",
+    "sketch_evidence_report_markdown",
     "slice_recurrence_problem_by_rank",
     "srht_sample_indices",
     "srht_sampling_mask",
