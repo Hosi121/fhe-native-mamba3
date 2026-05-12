@@ -56,8 +56,9 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 | PBI-S2-012 | Stage 2 | Done | PBI-S2-001 | Add a reusable checkpoint sketch matrix runner that sweeps layers, prompt sets, rank-selection strategies, sketch sizes, and SRHT seeds without claiming encrypted correctness. Evidence: `src/fhe_native_mamba3/checkpoint_sketch_matrix.py`, `scripts/run_checkpoint_sketch_matrix.py`, `slurm/checkpoint_sketch_matrix.sbatch`, and `tests/test_checkpoint_sketch_matrix.py`. |
 | PBI-S2-013 | Stage 2 | Open | PBI-S2-004 | Produce a compact sketch evidence report from accepted matrix artifacts. Acceptance requires a JSON/Markdown report with pass-rate by layer/prompt/rank strategy, recommended sketch size, worst product-norm error, and explicit recurrence-type caveats. |
 | PBI-OPS-001 | DevEx | Done | none | Add fast/slow test profiles so low-risk edits run a short local/remote gate while OpenFHE, SLURM, and full pre-commit checks remain available as explicit slow gates. Evidence: `scripts/run_fast_checks.sh`, `scripts/run_checks.sh`, `scripts/remote_checks.sh`, and `docs/testing.md`; full checks avoid duplicate pre-commit execution unless `RUN_PRECOMMIT=1` is requested. |
-| PBI-OPS-002 | DevEx | Open | none | Maintain an artifact ledger that maps high/SLURM job IDs to PBI IDs, JSON paths, git commits, and pass/fail status. Acceptance requires a script or checked-in Markdown/JSON table updated by release notes. |
+| PBI-OPS-002 | DevEx | Open | none | Maintain an artifact ledger that maps high/SLURM job IDs to PBI IDs, JSON paths, git commits, and pass/fail status. Seed ledger: `docs/artifact_ledger.md`; acceptance remains open until a script or release-note update workflow keeps it current. |
 | PBI-OPS-003 | DevEx | Open | PBI-OPS-002 | Export backlog PBIs to GitHub issues/project items when repository permissions are available. Acceptance requires issue titles, dependencies, and status labels generated from `docs/backlog.md` without hand-copying. |
+| PBI-OPS-004 | DevEx | Open | PBI-OPS-002 | Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection. Acceptance requires a script that submits only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, pulls artifacts, and updates or emits an artifact ledger entry without touching high-memory OpenFHE full-chain jobs. |
 
 ## Dependency Map
 
@@ -66,11 +67,11 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 - Sketch evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-005/PBI-S2-008/PBI-S2-009/PBI-S2-013.
 - Encrypted sketch execution: PBI-S2-001 + PBI-S1-005 -> PBI-S2-006 -> PBI-S2-007.
 - Decoding branch: PBI-S2-003 -> PBI-S2-010 -> PBI-S2-011.
-- Development operations: PBI-OPS-001 is done; PBI-OPS-002 -> PBI-OPS-003.
+- Development operations: PBI-OPS-001 is done; PBI-OPS-002 -> PBI-OPS-003, and PBI-OPS-002 -> PBI-OPS-004.
 
 ## Stale Or Obsolete Notes
 
-- README version `0.2.100` was stale and has been updated through `0.3.10`.
+- README version `0.2.100` was stale and has been updated through `0.3.11`.
 - Any backlog item phrased as "full OpenFHE chain success" is stale unless it
   points to a validated integrated artifact with no intermediate decrypts. The
   current evidence supports recurrence smokes, bootstrap probes, pre-recurrence

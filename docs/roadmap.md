@@ -118,8 +118,14 @@ Next executable PBIs:
 - PBI-S2-013 turns accepted sketch matrix artifacts into a compact report for
   papers/proposals.
 - PBI-OPS-001 is already satisfied by `docs/testing.md`, `run_fast_checks.sh`,
-  `run_checks.sh`, and `remote_checks.sh`; the next DevEx gap is PBI-OPS-002
-  artifact-ledger hygiene.
+  `run_checks.sh`, and `remote_checks.sh`; the PBI-OPS-002 seed ledger now
+  lives in [docs/artifact_ledger.md](artifact_ledger.md), while automated
+  update/release-note hygiene remains open.
+- PBI-OPS-004 should turn the manual parallel SLURM campaign used for jobs
+  `10138` through `10150` into a repeatable low/medium-risk submission script.
+  The safe set is source profile, client decode, recurrence-only chain,
+  ciphertext handoff, Stage 1 tiny MIMO, Stage 1 pack sweep, and bootstrap
+  latency; 512G OpenFHE full-chain jobs stay out of this campaign.
 - PBI-S2-006 lowers SRHT sketch primitives to backend smokes so the sketch path
   has encrypted operation counts, not only plaintext trajectory evidence.
 - PBI-S2-008 joins Stage 1 pack/bootstrap costs with Stage 2 sketch tradeoffs
