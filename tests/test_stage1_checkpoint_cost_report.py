@@ -50,6 +50,25 @@ def test_stage1_checkpoint_cost_report_markdown_renders_table() -> None:
     assert "report-only artifact" in markdown
 
 
+def test_stage1_checkpoint_cost_report_does_not_count_toy_fideslib_as_complete() -> None:
+    report = build_stage1_checkpoint_cost_report(
+        checkpoint_inventory_payload=_inventory_payload(),
+        checkpoint_inventory_source="runs/inventory.json",
+        fideslib_bootstrap_payload={
+            "stage": "fideslib-gpu-bootstrap-latency",
+            "available": True,
+            "mean_latency_sec": 0.014,
+            "measurement_scope": {"stage1_target_compatible": False},
+        },
+    )
+
+    assert report.fideslib_bootstrap_available is False
+    assert report.bootstrap_evidence_complete is False
+    assert "fideslib_bootstrap_missing" in report.blockers
+    assert report.bootstrap_measurements["fideslib"]["available"] is True
+    assert report.bootstrap_measurements["fideslib"]["stage1_target_compatible"] is False
+
+
 def test_stage1_checkpoint_cost_report_requires_rows() -> None:
     with pytest.raises(ValueError, match="must contain rows"):
         build_stage1_checkpoint_cost_report(

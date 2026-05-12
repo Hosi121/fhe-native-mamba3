@@ -95,6 +95,10 @@ def build_stage1_checkpoint_cost_report(
         raise ValueError(msg)
     openfhe_bootstrap_latency = _bootstrap_latency_seconds(openfhe_bootstrap_payload)
     fideslib_bootstrap_latency = _bootstrap_latency_seconds(fideslib_bootstrap_payload)
+    fideslib_stage1_available = (
+        fideslib_bootstrap_latency is not None
+        and _stage1_target_compatible(fideslib_bootstrap_payload) is not False
+    )
     rows = tuple(
         _build_row(row, measured_openfhe_bootstrap_latency_sec=openfhe_bootstrap_latency)
         for row in inventory_rows
@@ -104,11 +108,11 @@ def build_stage1_checkpoint_cost_report(
     blockers = _blockers(
         rows=rows,
         chain_guard=guard_summary,
-        fideslib_bootstrap_available=fideslib_bootstrap_latency is not None,
+        fideslib_bootstrap_available=fideslib_stage1_available,
     )
     recommended_pack_size = _int_or_none(checkpoint_inventory_payload.get("recommended_pack_size"))
     report_passed = bool(rows)
-    bootstrap_evidence_complete = fideslib_bootstrap_latency is not None
+    bootstrap_evidence_complete = fideslib_stage1_available
     measurements = {
         "row_count": len(rows),
         "feasible_row_count": sum(row.feasible_under_key_budget is True for row in rows),
@@ -132,7 +136,7 @@ def build_stage1_checkpoint_cost_report(
             "stage1_speedup_claimed": False,
             "real_checkpoint_full_chain_success_claimed": False,
             "bootstrap_evidence_complete": bootstrap_evidence_complete,
-            "fideslib_bootstrap_available": fideslib_bootstrap_latency is not None,
+            "fideslib_bootstrap_available": fideslib_stage1_available,
         },
         passed=report_passed,
         checkpoint_inventory_source=checkpoint_inventory_source,
@@ -142,7 +146,7 @@ def build_stage1_checkpoint_cost_report(
         fideslib_bootstrap_source=fideslib_bootstrap_source,
         bootstrap_evidence_complete=bootstrap_evidence_complete,
         openfhe_bootstrap_available=openfhe_bootstrap_latency is not None,
-        fideslib_bootstrap_available=fideslib_bootstrap_latency is not None,
+        fideslib_bootstrap_available=fideslib_stage1_available,
         recommended_pack_size=recommended_pack_size,
         recommended_reason=str(checkpoint_inventory_payload.get("recommended_reason", "")),
         blockers=blockers,
@@ -271,6 +275,7 @@ def _bootstrap_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
         "mean_latency_sec": _bootstrap_latency_seconds(payload),
         "batch_size": payload.get("batch_size"),
         "ring_dimension": payload.get("ring_dimension"),
+        "stage1_target_compatible": _stage1_target_compatible(payload),
         "source_stage": payload.get("stage"),
         "measurement_scope": dict(payload.get("measurement_scope", {}))
         if isinstance(payload.get("measurement_scope"), dict)
@@ -310,6 +315,15 @@ def _bootstrap_latency_seconds(payload: dict[str, Any] | None) -> float | None:
         value = _float_or_none(payload.get(key))
         if value is not None:
             return value
+    return None
+
+
+def _stage1_target_compatible(payload: dict[str, Any] | None) -> bool | None:
+    if not isinstance(payload, dict):
+        return None
+    scope = payload.get("measurement_scope")
+    if isinstance(scope, dict) and isinstance(scope.get("stage1_target_compatible"), bool):
+        return bool(scope["stage1_target_compatible"])
     return None
 
 
