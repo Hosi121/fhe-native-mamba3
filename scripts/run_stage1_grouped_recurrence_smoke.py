@@ -38,8 +38,8 @@ def main() -> int:
             multiplicative_depth=args.multiplicative_depth,
             scaling_mod_size=args.scaling_mod_size,
             batch_size=batch_size,
-            bootstrap=(OpenFheBootstrapConfig() if args.enable_bootstrap_context else None),
-            rotation_indices=required_readout_rotations(
+            bootstrap_config=(OpenFheBootstrapConfig() if args.enable_bootstrap_context else None),
+            rotations=required_readout_rotations(
                 d_state=args.d_state,
                 mimo_rank=min(args.pack_size, args.mimo_rank),
                 readout_strategy=args.readout_strategy,
