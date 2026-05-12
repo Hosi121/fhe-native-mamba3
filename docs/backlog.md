@@ -31,9 +31,9 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 | PBI-S0-005 | Stage 0 | Done | PBI-S0-001 | Real-checkpoint recurrence/bootstrap workflows are documented and scripted in `docs/checkpoint_workflows.md`, `scripts/run_openfhe_recurrence_chain_smoke.py`, and related script tests. |
 | PBI-S0-006 | Stage 0 | Done | PBI-S0-005 | Source-profile, range scale plan, visible projection, and encrypted pre-recurrence/full-layer gate artifacts are represented in status reporting and script tests. |
 | PBI-S0-007 | Stage 0 | Done | PBI-S0-006 | Reduced/synthetic or narrow full-layer ciphertext-chain proxies exist with explicit scope metadata and no full-model correctness claim; covered by chain script tests. |
-| PBI-S0-008 | Stage 0 | Open | PBI-S0-006, PBI-S0-007 | Run a measured real-checkpoint full-layer ciphertext handoff chain at an agreed tiny size with no intermediate decrypts, validated max-error JSON, operation counts, and artifact validation. This remains narrower than full OpenFHE 24-layer success unless scaled and scheduled. |
+| PBI-S0-008 | Stage 0 | Open | PBI-S0-006, PBI-S0-007 | Run a measured real-checkpoint full-layer ciphertext handoff chain at an agreed tiny size with no intermediate decrypts, validated max-error JSON, operation counts, and artifact validation. Attempts `10151`/`10153`/`10154` show depth-28 exhaustion, depth-48 ring-size constraints, and depth-48/ring-131072 timeout at 25 minutes with MaxRSS about 43 GiB; runtime, not memory, is the blocker. |
 | PBI-S0-009 | Stage 0 | Open | PBI-S0-008 | Scale the measured full-layer ciphertext handoff chain to the scheduled 24-layer recurrence plan or document a smaller proxy when cost is prohibitive; include encode/encrypt/eval/bootstrap/decrypt profiler breakdown. |
-| PBI-S0-010 | Stage 0 | Open | PBI-S0-006 | Apply range-aware calibration or LoRA where source-profile/range-scale artifacts show nonlinear or residual/output ranges outside polynomial targets. Acceptance requires before/after profile JSON and unchanged correctness checks. |
+| PBI-S0-010 | Stage 0 | Done | PBI-S0-006 | Apply deterministic range-aware calibration where source-profile artifacts show residual/output ranges outside encoded targets. Evidence: repeat-prompt source profile `runs/st0-par-v0310-20260512-131549-source-profile-repeat.json`, scale plan `runs/st0-par-v0310-20260512-131549-source-profile-repeat-scale-plan.json`, and full-visible tracking gate `runs/stage0-s010-tracking-gate-l16-repeat-scaled-fullvisible-20260512-134254.json` (`passed=true`, `max_abs_error=1.05e-02`, `checked_visible_dim=768`). Activation-range LoRA remains a Stage 2 optimization under PBI-S2-009, not a Stage 0 blocker. |
 | PBI-S1-001 | Stage 1 | Done | PBI-S0-003 | Stage 1 planning artifact combines SSD prefix-scan metadata, head/rank packing candidates, rotation inventory, key-memory estimates, and explicit dependencies; covered by `tests/test_stage1_plan.py` and `tests/test_stage1_plan_script.py`. |
 | PBI-S1-002 | Stage 1 | Done | PBI-S1-001 | Packed SSD prefix-scan planning and local Hillis-Steele tracking kernel account for lane stride, slot capacity, rotation steps, and invalid cross-ciphertext scans; covered by `tests/test_ssd_prefix_scan.py`. |
 | PBI-S1-003 | Stage 1 | Done | PBI-S1-002 | Segmented packed prefix-scan carry propagates across ciphertext chunks and updates rotation inventory; covered by `tests/test_ssd_prefix_scan.py`, `tests/test_rotation_inventory.py`, and `tests/test_stage1_plan.py`. |
@@ -58,20 +58,20 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 | PBI-OPS-001 | DevEx | Done | none | Add fast/slow test profiles so low-risk edits run a short local/remote gate while OpenFHE, SLURM, and full pre-commit checks remain available as explicit slow gates. Evidence: `scripts/run_fast_checks.sh`, `scripts/run_checks.sh`, `scripts/remote_checks.sh`, and `docs/testing.md`; full checks avoid duplicate pre-commit execution unless `RUN_PRECOMMIT=1` is requested. |
 | PBI-OPS-002 | DevEx | Open | none | Maintain an artifact ledger that maps high/SLURM job IDs to PBI IDs, JSON paths, git commits, and pass/fail status. Seed ledger: `docs/artifact_ledger.md`; acceptance remains open until a script or release-note update workflow keeps it current. |
 | PBI-OPS-003 | DevEx | Open | PBI-OPS-002 | Export backlog PBIs to GitHub issues/project items when repository permissions are available. Acceptance requires issue titles, dependencies, and status labels generated from `docs/backlog.md` without hand-copying. |
-| PBI-OPS-004 | DevEx | Open | PBI-OPS-002 | Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection. Acceptance requires a script that submits only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, pulls artifacts, and updates or emits an artifact ledger entry without touching high-memory OpenFHE full-chain jobs. |
+| PBI-OPS-004 | DevEx | Open | PBI-OPS-002 | Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection. First slice: `scripts/submit_safe_slurm_campaign.py` submits/dry-runs only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, and emits manifest/ledger-row templates; covered by `tests/test_safe_slurm_campaign_script.py`. Remaining acceptance: artifact pull/update workflow after submitted jobs complete, without touching high-memory OpenFHE full-chain jobs. |
 
 ## Dependency Map
 
 - Real encrypted chain work: PBI-S0-008 -> PBI-S0-009.
 - Stage 1 cost evidence: PBI-S1-006 -> PBI-S1-007 -> PBI-S1-008.
-- Sketch evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-005/PBI-S2-008/PBI-S2-009/PBI-S2-013.
+- Sketch/range evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-005/PBI-S2-008/PBI-S2-009/PBI-S2-013; PBI-S0-010 feeds PBI-S2-009.
 - Encrypted sketch execution: PBI-S2-001 + PBI-S1-005 -> PBI-S2-006 -> PBI-S2-007.
 - Decoding branch: PBI-S2-003 -> PBI-S2-010 -> PBI-S2-011.
 - Development operations: PBI-OPS-001 is done; PBI-OPS-002 -> PBI-OPS-003, and PBI-OPS-002 -> PBI-OPS-004.
 
 ## Stale Or Obsolete Notes
 
-- README version `0.2.100` was stale and has been updated through `0.3.11`.
+- README version `0.2.100` was stale and has been updated through `0.3.12`.
 - Any backlog item phrased as "full OpenFHE chain success" is stale unless it
   points to a validated integrated artifact with no intermediate decrypts. The
   current evidence supports recurrence smokes, bootstrap probes, pre-recurrence
