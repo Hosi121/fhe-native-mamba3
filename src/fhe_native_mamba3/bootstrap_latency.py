@@ -46,6 +46,16 @@ def measure_openfhe_bootstrap_latency(
         "backend": "openfhe-ckks",
         "available": False,
         "config": _config_to_json(config),
+        "measurement_scope": {
+            "claim": (
+                "OpenFHE Python CKKS bootstrap latency probe; this is a backend latency "
+                "measurement, not an end-to-end model inference claim"
+            ),
+            "full_model_correctness_claimed": False,
+            "bootstrap_latency_probe": True,
+            "encrypted": True,
+            "non_success_probe": False,
+        },
     }
     try:
         factory = _make_openfhe_backend if backend_factory is None else backend_factory
@@ -134,6 +144,7 @@ def _probe_values(batch_size: int) -> list[float]:
 
 def _config_to_json(config: OpenFheBootstrapLatencyConfig) -> dict[str, Any]:
     payload = asdict(config)
+    payload["input_mode"] = "bootstrap-probe"
     payload["bootstrap"]["level_budget"] = list(config.bootstrap.level_budget)
     payload["bootstrap"]["dim1"] = list(config.bootstrap.dim1)
     return payload

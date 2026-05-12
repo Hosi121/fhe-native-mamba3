@@ -128,6 +128,9 @@ Next executable PBIs:
   manifest with ledger-row templates. The first live run is high jobs
   `10157`-`10163`; artifact pull/update automation remains open, and 512G
   OpenFHE full-chain jobs stay out of this campaign.
+  `scripts/collect_safe_slurm_campaign.py` now validates completed artifacts
+  and emits ledger-row candidates; remote pull plus optional docs update
+  remains open.
 - PBI-S2-006 lowers SRHT sketch primitives to backend smokes so the sketch path
   has encrypted operation counts, not only plaintext trajectory evidence.
 - PBI-S2-008 joins Stage 1 pack/bootstrap costs with Stage 2 sketch tradeoffs

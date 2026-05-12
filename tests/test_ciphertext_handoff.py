@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 
 import pytest
 
+from fhe_native_mamba3.artifact_validation import validate_benchmark_artifact
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.ciphertext_handoff import (
     CiphertextHandoffLayer,
@@ -161,3 +163,8 @@ def test_smoke_script_accepts_bootstrap_before_layer_schedule() -> None:
     assert '"bootstrap_after_layers": [' in completed.stdout
     assert '"bootstrap_count": 5' in completed.stdout
     assert '"no_intermediate_decrypt": true' in completed.stdout
+    payload = json.loads(completed.stdout)
+    assert payload["measurement_scope"]["full_model_correctness_claimed"] is False
+    assert payload["operation_counts"]["bootstraps"] == 5
+    assert payload["passed"] is True
+    assert validate_benchmark_artifact(payload).valid is True

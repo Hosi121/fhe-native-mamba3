@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 def main() -> int:
     from fhe_native_mamba3 import __version__
+    from fhe_native_mamba3.artifact_validation import current_git_commit
     from fhe_native_mamba3.backends.openfhe import OpenFheBootstrapConfig
     from fhe_native_mamba3.bootstrap_latency import (
         OpenFheBootstrapLatencyConfig,
@@ -40,6 +41,7 @@ def main() -> int:
     )
     payload = {
         "version": __version__,
+        "repo_commit": current_git_commit(ROOT),
         **measure_openfhe_bootstrap_latency(config),
     }
     if args.output_json:

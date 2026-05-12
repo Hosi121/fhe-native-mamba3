@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 def main() -> int:
     from fhe_native_mamba3 import __version__
+    from fhe_native_mamba3.artifact_validation import current_git_commit
     from fhe_native_mamba3.backends.openfhe import OpenFheBootstrapConfig, OpenFheCkksBackend
     from fhe_native_mamba3.backends.tracking import TrackingBackend
     from fhe_native_mamba3.ciphertext_handoff import (
@@ -74,10 +75,12 @@ def main() -> int:
     )
     payload = {
         "version": __version__,
+        "repo_commit": current_git_commit(ROOT),
         "stage": "ciphertext-handoff-smoke",
         "backend": backend.name,
         "encrypted": backend.encrypted,
         "config": {
+            "input_mode": "cyclic-diagonal-handoff",
             "width": args.width,
             "layers": args.layers,
             "batch_size": backend.batch_size,
@@ -87,8 +90,30 @@ def main() -> int:
             "bootstrap_after_layers": sorted(bootstrap_after_layers),
             "bootstrap_before_layers": sorted(bootstrap_before_layers),
         },
+        "measurement_scope": {
+            "claim": (
+                "generic ciphertext handoff smoke with no intermediate decrypts; "
+                "not a real-checkpoint full-layer or full-model correctness claim"
+            ),
+            "full_model_correctness_claimed": False,
+            "real_checkpoint_full_layer": False,
+            "inter_layer_ciphertext_handoff": True,
+            "no_intermediate_decrypt": result.backend_stats["decrypt_count"] == 1,
+        },
         "result": result.to_json_dict(),
+        "operation_counts": {
+            "ct_ct_mul": result.backend_stats["ct_ct_mul_count"],
+            "ct_pt_mul": result.backend_stats["ct_pt_mul_count"],
+            "add": result.backend_stats["add_count"],
+            "rotations": result.backend_stats["rotation_count"],
+            "bootstraps": result.backend_stats["bootstrap_count"],
+            "encrypt": result.backend_stats["encrypt_count"],
+            "decrypt": result.backend_stats["decrypt_count"],
+            "encode": result.backend_stats["encode_count"],
+        },
         "no_intermediate_decrypt": result.backend_stats["decrypt_count"] == 1,
+        "passed": result.max_abs_error <= args.atol,
+        "max_abs_error": result.max_abs_error,
     }
     if args.output_json:
         Path(args.output_json).parent.mkdir(parents=True, exist_ok=True)
@@ -203,6 +228,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--bootstrap-dim1", type=_parse_pair, default=(0, 0))
     parser.add_argument("--bootstrap-slots", type=int, default=0)
     parser.add_argument("--bootstrap-correction-factor", type=int, default=20)
+    parser.add_argument("--atol", type=float, default=1e-8)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()
 

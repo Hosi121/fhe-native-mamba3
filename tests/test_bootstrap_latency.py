@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from fhe_native_mamba3.artifact_validation import validate_benchmark_artifact
 from fhe_native_mamba3.backends.base import BackendStats
 from fhe_native_mamba3.bootstrap_latency import (
     OpenFheBootstrapLatencyConfig,
@@ -25,10 +26,13 @@ def test_measure_openfhe_bootstrap_latency_with_injected_backend() -> None:
     )
 
     assert payload["available"] is True
+    assert payload["config"]["input_mode"] == "bootstrap-probe"
+    assert payload["measurement_scope"]["full_model_correctness_claimed"] is False
     assert payload["latencies_sec"] == pytest.approx([0.25, 0.5])
     assert payload["mean_latency_sec"] == pytest.approx(0.375)
     assert payload["decrypted_sample"] == [1.0, 2.0, 3.0, 4.0]
     assert payload["operation_counts"]["bootstrap_count"] == 3
+    assert validate_benchmark_artifact({"version": "0.0.0", **payload}).valid is True
 
 
 def test_measure_openfhe_bootstrap_latency_persists_setup_failure() -> None:
