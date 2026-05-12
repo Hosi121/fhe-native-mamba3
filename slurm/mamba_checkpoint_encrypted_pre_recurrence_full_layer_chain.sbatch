@@ -25,6 +25,7 @@ MAX_SEQ_LEN="${MAX_SEQ_LEN:-8}"
 N_LAYERS="${N_LAYERS:-2}"
 VISIBLE_DIM_LIMIT="${VISIBLE_DIM_LIMIT:-0}"
 PARTIAL_VISIBLE_PROXY="${PARTIAL_VISIBLE_PROXY:-0}"
+GROUPED_RANK_PACK_SIZE="${GROUPED_RANK_PACK_SIZE:-0}"
 D_STATE="${D_STATE:-2}"
 MIMO_RANK="${MIMO_RANK:-4}"
 INFER_SHAPE="${INFER_SHAPE:-0}"
@@ -118,6 +119,10 @@ partial_visible_args=()
 if [[ "${PARTIAL_VISIBLE_PROXY}" == "1" ]]; then
   partial_visible_args+=(--partial-visible-proxy --visible-dim-limit "${VISIBLE_DIM_LIMIT}")
 fi
+grouped_args=()
+if [[ "${GROUPED_RANK_PACK_SIZE}" != "0" ]]; then
+  grouped_args+=(--grouped-rank-pack-size "${GROUPED_RANK_PACK_SIZE}")
+fi
 
 "${PYTHON}" scripts/run_checkpoint_encrypted_pre_recurrence_full_layer_chain.py \
   "${CHECKPOINT}" \
@@ -125,6 +130,7 @@ fi
   "${shape_args[@]}" \
   --n-layers "${N_LAYERS}" \
   "${partial_visible_args[@]}" \
+  "${grouped_args[@]}" \
   --max-seq-len "${MAX_SEQ_LEN}" \
   --prompt "${PROMPT}" \
   --input-propagation "${INPUT_PROPAGATION}" \
