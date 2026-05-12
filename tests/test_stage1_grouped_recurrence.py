@@ -3,6 +3,10 @@ from __future__ import annotations
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.openfhe_backend import OpenFheRecurrenceProblem, make_demo_problem
 from fhe_native_mamba3.stage1_grouped_recurrence import (
+    grouped_full_layer_lift_plaintext,
+    make_demo_full_layer_lift_inputs,
+    required_grouped_full_layer_lift_rotations,
+    run_stage1_grouped_full_layer_lift_smoke,
     run_stage1_grouped_static_recurrence_smoke,
     slice_recurrence_problem_by_rank,
 )
@@ -74,6 +78,56 @@ def test_grouped_static_recurrence_smoke_supports_dynamic_bc_and_decay() -> None
     assert result.group_count == 2
     assert result.max_abs_error < 1e-12
     assert result.backend_stats["ct_ct_mul_count"] > 0
+
+
+def test_grouped_full_layer_lift_smoke_matches_plaintext() -> None:
+    problem = make_demo_problem(seq_len=4, d_state=3, mimo_rank=7, seed=11)
+    gate_by_token, out_proj_weight, residual_by_token = make_demo_full_layer_lift_inputs(
+        seq_len=problem.seq_len,
+        mimo_rank=problem.mimo_rank,
+        visible_dim=5,
+        seed=13,
+    )
+    backend = TrackingBackend(batch_size=12)
+
+    result = run_stage1_grouped_full_layer_lift_smoke(
+        problem,
+        gate_by_token=gate_by_token,
+        out_proj_weight=out_proj_weight,
+        residual_by_token=residual_by_token,
+        pack_size=3,
+        backend=backend,
+        readout_strategy="rank-local",
+        input_mode="server-bx",
+        atol=1e-12,
+    )
+
+    expected = grouped_full_layer_lift_plaintext(
+        problem,
+        gate_by_token=gate_by_token,
+        out_proj_weight=out_proj_weight,
+        residual_by_token=residual_by_token,
+    )
+    assert result.passed is True
+    assert result.group_count == 3
+    assert result.visible_dim == 5
+    assert result.max_abs_error < 1e-12
+    assert result.expected_outputs == expected
+    assert result.shared_rotations == (-6, -4, -3, 1, 2, 3, 4)
+    assert [group.pack_size for group in result.groups] == [3, 3, 1]
+    assert result.measurement_scope["full_model_correctness_claimed"] is False
+
+
+def test_grouped_full_layer_lift_rotation_inventory_includes_tail_group() -> None:
+    rotations = required_grouped_full_layer_lift_rotations(
+        d_state=3,
+        mimo_rank=7,
+        pack_size=3,
+        visible_dim=5,
+        readout_strategy="rank-local",
+    )
+
+    assert rotations == (-6, -4, -3, 1, 2, 3, 4)
 
 
 def _dynamic_problem() -> OpenFheRecurrenceProblem:

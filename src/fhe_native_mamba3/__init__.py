@@ -288,6 +288,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_grouped_chain",
         "Stage1GroupedChainInventoryRow",
     ),
+    "Stage1GroupedFullLayerLiftSmokeResult": (
+        "fhe_native_mamba3.stage1_grouped_recurrence",
+        "Stage1GroupedFullLayerLiftSmokeResult",
+    ),
     "Stage1GroupedRecurrenceGroup": (
         "fhe_native_mamba3.stage1_grouped_recurrence",
         "Stage1GroupedRecurrenceGroup",
@@ -521,9 +525,17 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.bootstrap_schedule",
         "greedy_bootstrap_schedule",
     ),
+    "grouped_full_layer_lift_plaintext": (
+        "fhe_native_mamba3.stage1_grouped_recurrence",
+        "grouped_full_layer_lift_plaintext",
+    ),
     "inspect_checkpoint": ("fhe_native_mamba3.checkpoint", "inspect_checkpoint"),
     "load_mapping_rules": ("fhe_native_mamba3.state_dict_mapping", "load_mapping_rules"),
     "make_demo_problem": ("fhe_native_mamba3.openfhe_backend", "make_demo_problem"),
+    "make_demo_full_layer_lift_inputs": (
+        "fhe_native_mamba3.stage1_grouped_recurrence",
+        "make_demo_full_layer_lift_inputs",
+    ),
     "lazy_bootstrap_markdown": (
         "fhe_native_mamba3.lazy_bootstrap",
         "lazy_bootstrap_markdown",
@@ -653,6 +665,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_correctness",
         "required_full_layer_visible_rotations",
     ),
+    "required_grouped_full_layer_lift_rotations": (
+        "fhe_native_mamba3.stage1_grouped_recurrence",
+        "required_grouped_full_layer_lift_rotations",
+    ),
     "expand_rank_to_state_bsgs_rotation_steps": (
         "fhe_native_mamba3.checkpoint_correctness",
         "expand_rank_to_state_bsgs_rotation_steps",
@@ -668,6 +684,10 @@ _LAZY_IMPORTS = {
     "run_static_mimo_recurrence_ciphertext_chain_with_backend": (
         "fhe_native_mamba3.openfhe_backend",
         "run_static_mimo_recurrence_ciphertext_chain_with_backend",
+    ),
+    "run_stage1_grouped_full_layer_lift_smoke": (
+        "fhe_native_mamba3.stage1_grouped_recurrence",
+        "run_stage1_grouped_full_layer_lift_smoke",
     ),
     "run_stage1_grouped_static_recurrence_smoke": (
         "fhe_native_mamba3.stage1_grouped_recurrence",
@@ -833,6 +853,7 @@ __all__ = [
     "Stage1Dependency",
     "Stage1GroupedChainInventoryReport",
     "Stage1GroupedChainInventoryRow",
+    "Stage1GroupedFullLayerLiftSmokeResult",
     "Stage1GroupedRecurrenceGroup",
     "Stage1GroupedRecurrenceSmokeResult",
     "Stage1PackSweepResult",
@@ -908,11 +929,13 @@ __all__ = [
     "extract_stage1_profile_hints",
     "fhe_aware_loss",
     "greedy_bootstrap_schedule",
+    "grouped_full_layer_lift_plaintext",
     "inspect_checkpoint",
     "lazy_bootstrap_markdown",
     "load_mapping_rules",
     "load_weight_bundle_model",
     "lora_parameter_count",
+    "make_demo_full_layer_lift_inputs",
     "make_demo_problem",
     "map_state_dict",
     "mark_only_lora_trainable",
@@ -931,6 +954,7 @@ __all__ = [
     "profile_recurrence_traces",
     "range_loss",
     "required_full_layer_visible_rotations",
+    "required_grouped_full_layer_lift_rotations",
     "required_tiny_mimo_block_rotations",
     "resolve_pre_recurrence_shape",
     "resolve_rank_strategy",
@@ -952,6 +976,7 @@ __all__ = [
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
+    "run_stage1_grouped_full_layer_lift_smoke",
     "run_stage1_grouped_static_recurrence_smoke",
     "run_stage1_pack_sweep",
     "run_stage2_sketch_seed_sweep",
