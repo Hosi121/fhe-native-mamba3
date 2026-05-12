@@ -103,18 +103,55 @@ def main() -> int:
         visible_dim_limit=visible_dim_limit,
     )
     if args.backend == "openfhe" and len(rotations) > args.max_rotation_keys:
-        msg = (
-            f"encrypted pre-recurrence full-layer chain requires {len(rotations)} rotation keys, "
-            f"above --max-rotation-keys={args.max_rotation_keys}"
+        payload = _rotation_guard_payload(
+            args=args,
+            started=started,
+            reason="max_rotation_keys",
+            message=(
+                "encrypted pre-recurrence full-layer chain requires "
+                f"{len(rotations)} rotation keys, above "
+                f"--max-rotation-keys={args.max_rotation_keys}"
+            ),
+            resolved_key=resolved_key,
+            adapter_shape=adapter_shape,
+            report=report.to_json_dict(max_statuses=args.max_statuses),
+            seq_len=len(token_ids),
+            d_model=int(layer_input.shape[-1]),
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            logical_batch_size=logical_batch_size,
+            visible_dim_limit=visible_dim_limit,
+            rotations=rotations,
         )
-        raise ValueError(msg)
-    estimated_rotation_key_memory_gib = _enforce_openfhe_rotation_memory_guard(
-        backend=args.backend,
-        rotation_count=len(rotations),
-        estimated_rotation_key_mib=args.estimated_rotation_key_mib,
-        max_estimated_rotation_key_memory_gib=args.max_estimated_rotation_key_memory_gib,
-        allow_high_memory_openfhe=args.allow_high_memory_openfhe,
-    )
+        emit_json_payload(payload, output_json=args.output_json)
+        return 0
+    try:
+        estimated_rotation_key_memory_gib = _enforce_openfhe_rotation_memory_guard(
+            backend=args.backend,
+            rotation_count=len(rotations),
+            estimated_rotation_key_mib=args.estimated_rotation_key_mib,
+            max_estimated_rotation_key_memory_gib=args.max_estimated_rotation_key_memory_gib,
+            allow_high_memory_openfhe=args.allow_high_memory_openfhe,
+        )
+    except ValueError as exc:
+        payload = _rotation_guard_payload(
+            args=args,
+            started=started,
+            reason="estimated_rotation_key_memory",
+            message=str(exc),
+            resolved_key=resolved_key,
+            adapter_shape=adapter_shape,
+            report=report.to_json_dict(max_statuses=args.max_statuses),
+            seq_len=len(token_ids),
+            d_model=int(layer_input.shape[-1]),
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            logical_batch_size=logical_batch_size,
+            visible_dim_limit=visible_dim_limit,
+            rotations=rotations,
+        )
+        emit_json_payload(payload, output_json=args.output_json)
+        return 0
     backend = _make_backend(
         args,
         batch_size=logical_batch_size,
@@ -264,6 +301,147 @@ def main() -> int:
     }
     emit_json_payload(payload, output_json=args.output_json)
     return 0
+
+
+def _rotation_guard_payload(
+    *,
+    args: argparse.Namespace,
+    started: float,
+    reason: str,
+    message: str,
+    resolved_key: str | None,
+    adapter_shape: str,
+    report: dict[str, object],
+    seq_len: int,
+    d_model: int,
+    d_state: int,
+    mimo_rank: int,
+    logical_batch_size: int,
+    visible_dim_limit: int | None,
+    rotations: tuple[int, ...],
+) -> dict[str, object]:
+    estimated_rotation_key_memory_gib = len(rotations) * args.estimated_rotation_key_mib / 1024.0
+    stage = (
+        "mamba-checkpoint-encrypted-pre-recurrence-partial-visible-chain-proxy"
+        if args.partial_visible_proxy
+        else "mamba-checkpoint-encrypted-pre-recurrence-full-layer-chain"
+    )
+    return {
+        "version": __version__,
+        "repo_commit": current_git_commit(ROOT),
+        "stage": stage,
+        "status": "blocked",
+        "checkpoint": args.checkpoint,
+        "state_dict_key": resolved_key,
+        "adapter_shape": adapter_shape,
+        "backend": args.backend,
+        "encrypted": args.backend == "openfhe",
+        "config": {
+            "input_mode": "encrypted-pre-recurrence-full-layer-chain",
+            "input_propagation": args.input_propagation,
+            "readout_strategy": args.readout_strategy,
+            "partial_visible_proxy": args.partial_visible_proxy,
+            "visible_dim_limit": visible_dim_limit,
+        },
+        "adapter_report": report,
+        "model": {
+            "seq_len": seq_len,
+            "n_layers": args.n_layers,
+            "d_model": d_model,
+            "d_state": d_state,
+            "mimo_rank": mimo_rank,
+            "readout_strategy": args.readout_strategy,
+            "input_propagation": args.input_propagation,
+            "partial_visible_proxy": args.partial_visible_proxy,
+        },
+        "approximation": {
+            "rms_norm_mode": args.rms_norm_mode,
+            "newton_iterations": args.newton_iterations,
+            "newton_range": list(args.newton_range),
+            "polynomial_degree": args.polynomial_degree,
+            "polynomial_range": args.polynomial_range,
+            "state_decay_mode": args.state_decay_mode,
+            "decay_polynomial_degree": args.decay_polynomial_degree,
+            "decay_polynomial_range": list(args.decay_polynomial_range),
+        },
+        "ckks": {
+            "multiplicative_depth": args.multiplicative_depth,
+            "scaling_mod_size": args.scaling_mod_size,
+            "ring_dimension": args.ring_dim or None,
+            "batch_size": logical_batch_size,
+            "rotation_count": len(rotations),
+            "rotation_sample": _rotation_sample(rotations),
+            "max_rotation_keys": args.max_rotation_keys,
+            "estimated_rotation_key_mib": args.estimated_rotation_key_mib,
+            "estimated_rotation_key_memory_gib": estimated_rotation_key_memory_gib,
+            "max_estimated_rotation_key_memory_gib": args.max_estimated_rotation_key_memory_gib,
+            "allow_high_memory_openfhe": args.allow_high_memory_openfhe,
+        },
+        "measurement_scope": {
+            "encrypted_pre_recurrence": True,
+            "encrypted_recurrence": True,
+            "visible_handoff_ciphertext": True,
+            "inter_layer_ciphertext_handoff": False,
+            "full_visible_output_checked": False,
+            "partial_visible_output_checked": False,
+            "partial_visible_proxy": args.partial_visible_proxy,
+            "plaintext_visible_remainder_injected": False,
+            "official_mamba_parity": False,
+            "full_model_correctness_claimed": False,
+            "non_success_probe": True,
+            "plaintext_precomputed_stages": [],
+            "claim": (
+                "Stage 0 rotation inventory guard artifact: backend execution was skipped "
+                "because the requested OpenFHE key inventory is above configured guardrails; "
+                "this is a bottleneck measurement, not a correctness success"
+            ),
+        },
+        "result": {
+            "status": "blocked",
+            "reason": reason,
+            "message": message,
+            "passed": False,
+            "row_count": 1,
+            "passed_count": 0,
+            "skipped_count": 1,
+            "error_count": 0,
+            "rows": [
+                {
+                    "status": "skipped",
+                    "reason": reason,
+                    "message": message,
+                    "rotation_count": len(rotations),
+                    "estimated_rotation_key_memory_gib": estimated_rotation_key_memory_gib,
+                }
+            ],
+        },
+        "operation_counts": {
+            "ct_ct_mul": 0,
+            "ct_pt_mul": 0,
+            "add": 0,
+            "rotations": 0,
+            "bootstraps": 0,
+            "encrypt": 0,
+            "decrypt": 0,
+            "encode": 0,
+        },
+        "timing": {
+            "setup_seconds": 0.0,
+            "eval_seconds": 0.0,
+            "backend_recorded_seconds": 0.0,
+            "script_wall_seconds": time.perf_counter() - started,
+            "untracked_seconds": time.perf_counter() - started,
+        },
+        "passed": False,
+        "max_abs_error": None,
+    }
+
+
+def _rotation_sample(rotations: tuple[int, ...], *, limit: int = 32) -> list[int]:
+    if len(rotations) <= limit:
+        return list(rotations)
+    half = limit // 2
+    return [*rotations[:half], *rotations[-half:]]
 
 
 def _chain_required_rotations(

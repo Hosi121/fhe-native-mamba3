@@ -7,6 +7,7 @@ import sys
 import torch
 
 from fhe_native_mamba3 import __version__
+from fhe_native_mamba3.artifact_validation import validate_benchmark_artifact
 
 
 def test_checkpoint_encrypted_pre_recurrence_full_layer_chain_runs_tracking(
@@ -119,6 +120,53 @@ def test_checkpoint_encrypted_pre_recurrence_partial_visible_chain_proxy_script(
     assert result["checked_visible_dim"] == 3
     assert "visible_plaintext_remainder" in result["plaintext_precomputed_stages"]
     assert json.loads(output_json.read_text(encoding="utf-8"))["passed"] is True
+
+
+def test_checkpoint_encrypted_pre_recurrence_chain_openfhe_rotation_guard_artifact(
+    tmp_path,
+) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_json = tmp_path / "pre-chain-guard.json"
+    torch.save({"model": _tiny_hf_mamba_state_dict(layer_count=2)}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_checkpoint_encrypted_pre_recurrence_full_layer_chain.py",
+            str(checkpoint_path),
+            "--backend",
+            "openfhe",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "4",
+            "--n-layers",
+            "2",
+            "--prompt",
+            "1",
+            "--max-seq-len",
+            "8",
+            "--max-rotation-keys",
+            "1",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["version"] == __version__
+    assert payload["status"] == "blocked"
+    assert payload["passed"] is False
+    assert payload["backend"] == "openfhe"
+    assert payload["measurement_scope"]["non_success_probe"] is True
+    assert payload["result"]["reason"] == "max_rotation_keys"
+    assert payload["ckks"]["rotation_count"] > payload["ckks"]["max_rotation_keys"]
+    assert payload["operation_counts"]["encrypt"] == 0
+    assert validate_benchmark_artifact(payload).valid is True
+    assert json.loads(output_json.read_text(encoding="utf-8"))["status"] == "blocked"
 
 
 def _tiny_hf_mamba_state_dict(layer_count: int) -> dict[str, torch.Tensor]:
