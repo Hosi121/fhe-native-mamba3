@@ -288,6 +288,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_grouped_chain",
         "Stage1GroupedChainInventoryRow",
     ),
+    "Stage1GroupedRecurrenceGroup": (
+        "fhe_native_mamba3.stage1_grouped_recurrence",
+        "Stage1GroupedRecurrenceGroup",
+    ),
+    "Stage1GroupedRecurrenceSmokeResult": (
+        "fhe_native_mamba3.stage1_grouped_recurrence",
+        "Stage1GroupedRecurrenceSmokeResult",
+    ),
     "Stage1Plan": ("fhe_native_mamba3.stage1_plan", "Stage1Plan"),
     "Stage1PackSweepResult": (
         "fhe_native_mamba3.stage1_pack_sweep",
@@ -661,6 +669,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "run_static_mimo_recurrence_ciphertext_chain_with_backend",
     ),
+    "run_stage1_grouped_static_recurrence_smoke": (
+        "fhe_native_mamba3.stage1_grouped_recurrence",
+        "run_stage1_grouped_static_recurrence_smoke",
+    ),
     "scale_recurrence_state": (
         "fhe_native_mamba3.openfhe_backend",
         "scale_recurrence_state",
@@ -668,6 +680,10 @@ _LAZY_IMPORTS = {
     "scale_recurrence_state_and_output": (
         "fhe_native_mamba3.openfhe_backend",
         "scale_recurrence_state_and_output",
+    ),
+    "slice_recurrence_problem_by_rank": (
+        "fhe_native_mamba3.stage1_grouped_recurrence",
+        "slice_recurrence_problem_by_rank",
     ),
     "ssd_prefix_scan": ("fhe_native_mamba3.ssd_prefix_scan", "ssd_prefix_scan"),
     "ssd_prefix_scan_prefill": (
@@ -817,6 +833,8 @@ __all__ = [
     "Stage1Dependency",
     "Stage1GroupedChainInventoryReport",
     "Stage1GroupedChainInventoryRow",
+    "Stage1GroupedRecurrenceGroup",
+    "Stage1GroupedRecurrenceSmokeResult",
     "Stage1PackSweepResult",
     "Stage1PackSweepRow",
     "Stage1Plan",
@@ -934,6 +952,7 @@ __all__ = [
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
     "run_stage0_sweep",
+    "run_stage1_grouped_static_recurrence_smoke",
     "run_stage1_pack_sweep",
     "run_stage2_sketch_seed_sweep",
     "run_stage2_sketch_sweep",
@@ -947,6 +966,7 @@ __all__ = [
     "save_weight_bundle_from_mapped_checkpoint",
     "scale_recurrence_state",
     "scale_recurrence_state_and_output",
+    "slice_recurrence_problem_by_rank",
     "srht_sample_indices",
     "srht_sampling_mask",
     "srht_sketch_matrix",
