@@ -101,11 +101,20 @@ Current partial implementation:
   `sketch_size=16` passes all five seeds. This is a useful negative/neutral
   result: small SRHT sketches are not yet robust enough to claim breakthrough
   compression without learned/range-aware sketching.
+- `scripts/run_checkpoint_sketch_matrix.py` generalizes that probe into a
+  layer/prompt/rank-strategy evidence matrix. This closes the runner slice
+  (PBI-S2-012); PBI-S2-004 still requires an accepted real-checkpoint artifact
+  spanning early/middle/late layers, at least two prompt types, and at least two
+  rank-selection strategies.
 
 Next executable PBIs:
 
 - PBI-S2-004 broadens sketch evidence across layers, prompt types, and rank
   selections before any compression claim.
+- PBI-S2-013 turns accepted sketch matrix artifacts into a compact report for
+  papers/proposals.
+- PBI-OPS-001 adds fast/slow check profiles so development does not pay the full
+  OpenFHE/pre-commit cost on every small edit.
 - PBI-S2-006 lowers SRHT sketch primitives to backend smokes so the sketch path
   has encrypted operation counts, not only plaintext trajectory evidence.
 - PBI-S2-008 joins Stage 1 pack/bootstrap costs with Stage 2 sketch tradeoffs

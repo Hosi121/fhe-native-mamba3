@@ -61,6 +61,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_sketch_trace",
         "CheckpointSourceSketchTrace",
     ),
+    "CheckpointSketchMatrixResult": (
+        "fhe_native_mamba3.checkpoint_sketch_matrix",
+        "CheckpointSketchMatrixResult",
+    ),
+    "CheckpointSketchMatrixRow": (
+        "fhe_native_mamba3.checkpoint_sketch_matrix",
+        "CheckpointSketchMatrixRow",
+    ),
     "CheckpointRecurrenceCorrectnessGate": (
         "fhe_native_mamba3.checkpoint_correctness",
         "CheckpointRecurrenceCorrectnessGate",
@@ -320,6 +328,14 @@ _LAZY_IMPORTS = {
     "build_checkpoint_source_sketch_trace": (
         "fhe_native_mamba3.checkpoint_sketch_trace",
         "build_checkpoint_source_sketch_trace",
+    ),
+    "run_checkpoint_sketch_matrix": (
+        "fhe_native_mamba3.checkpoint_sketch_matrix",
+        "run_checkpoint_sketch_matrix",
+    ),
+    "resolve_rank_strategy": (
+        "fhe_native_mamba3.checkpoint_sketch_matrix",
+        "resolve_rank_strategy",
     ),
     "build_bootstrap_execution_schedule": (
         "fhe_native_mamba3.bootstrap_schedule",
@@ -693,6 +709,8 @@ __all__ = [
     "CheckpointPreRecurrenceCiphertextTrace",
     "CheckpointPreRecurrenceStageGate",
     "CheckpointRecurrenceCorrectnessGate",
+    "CheckpointSketchMatrixResult",
+    "CheckpointSketchMatrixRow",
     "CheckpointSourceProfile",
     "CheckpointSourceProfileLayer",
     "CheckpointSourceSketchTrace",
@@ -835,6 +853,7 @@ __all__ = [
     "required_full_layer_visible_rotations",
     "required_tiny_mimo_block_rotations",
     "resolve_pre_recurrence_shape",
+    "resolve_rank_strategy",
     "run_checkpoint_client_decode_smoke",
     "run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate",
     "run_checkpoint_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend",
@@ -847,6 +866,7 @@ __all__ = [
     "run_checkpoint_pre_recurrence_ciphertexts_with_backend",
     "run_checkpoint_pre_recurrence_stage_gate",
     "run_checkpoint_recurrence_correctness_gate",
+    "run_checkpoint_sketch_matrix",
     "run_checkpoint_visible_projection_sweep",
     "run_openfhe_static_recurrence",
     "run_stage0_mimo",
