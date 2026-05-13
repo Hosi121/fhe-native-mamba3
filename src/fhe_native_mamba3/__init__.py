@@ -250,6 +250,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.lazy_bootstrap",
         "LazyBootstrapScheduleRow",
     ),
+    "LearnedSketchReport": (
+        "fhe_native_mamba3.learned_sketch_report",
+        "LearnedSketchReport",
+    ),
+    "LearnedSketchReportRow": (
+        "fhe_native_mamba3.learned_sketch_report",
+        "LearnedSketchReportRow",
+    ),
     "RangeScalePlan": (
         "fhe_native_mamba3.range_calibration",
         "RangeScalePlan",
@@ -516,6 +524,10 @@ _LAZY_IMPORTS = {
     "build_lazy_bootstrap_report": (
         "fhe_native_mamba3.lazy_bootstrap",
         "build_lazy_bootstrap_report",
+    ),
+    "build_learned_sketch_report": (
+        "fhe_native_mamba3.learned_sketch_report",
+        "build_learned_sketch_report",
     ),
     "build_packed_prefix_scan_plan": (
         "fhe_native_mamba3.ssd_prefix_scan",
@@ -1112,6 +1124,8 @@ __all__ = [
     "IntegratedCostEstimate",
     "LazyBootstrapReport",
     "LazyBootstrapScheduleRow",
+    "LearnedSketchReport",
+    "LearnedSketchReportRow",
     "LoRAConfig",
     "LoRALinear",
     "MambaCheckpointAdapterReport",
@@ -1206,6 +1220,7 @@ __all__ = [
     "build_client_decode_report",
     "build_fixed_bsgs_schedule",
     "build_lazy_bootstrap_report",
+    "build_learned_sketch_report",
     "build_mamba_source_recurrence_problem",
     "build_mamba_source_visible_handoff_tensors",
     "build_packed_prefix_scan_plan",
