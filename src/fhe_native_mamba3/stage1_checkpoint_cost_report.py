@@ -269,12 +269,22 @@ def _chain_proxy_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
 def _bootstrap_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {"available": False}
+    config = payload.get("config")
+    config_payload = config if isinstance(config, dict) else {}
     return {
         "available": _bootstrap_latency_seconds(payload) is not None,
         "backend": payload.get("backend"),
         "mean_latency_sec": _bootstrap_latency_seconds(payload),
-        "batch_size": payload.get("batch_size"),
-        "ring_dimension": payload.get("ring_dimension"),
+        "batch_size": _first_present(
+            payload.get("batch_size"),
+            payload.get("num_slots"),
+            config_payload.get("batch_size"),
+            config_payload.get("num_slots"),
+        ),
+        "ring_dimension": _first_present(
+            payload.get("ring_dimension"),
+            config_payload.get("ring_dimension"),
+        ),
         "stage1_target_compatible": _stage1_target_compatible(payload),
         "source_stage": payload.get("stage"),
         "measurement_scope": dict(payload.get("measurement_scope", {}))
@@ -324,6 +334,13 @@ def _stage1_target_compatible(payload: dict[str, Any] | None) -> bool | None:
     scope = payload.get("measurement_scope")
     if isinstance(scope, dict) and isinstance(scope.get("stage1_target_compatible"), bool):
         return bool(scope["stage1_target_compatible"])
+    return None
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
     return None
 
 

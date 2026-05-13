@@ -69,6 +69,30 @@ def test_stage1_checkpoint_cost_report_does_not_count_toy_fideslib_as_complete()
     assert report.bootstrap_measurements["fideslib"]["stage1_target_compatible"] is False
 
 
+def test_stage1_checkpoint_cost_report_counts_stage1_fideslib_probe_as_complete() -> None:
+    report = build_stage1_checkpoint_cost_report(
+        checkpoint_inventory_payload=_inventory_payload(),
+        checkpoint_inventory_source="runs/inventory.json",
+        fideslib_bootstrap_payload={
+            "stage": "fideslib-gpu-stage1-bootstrap-latency",
+            "available": True,
+            "backend": "fideslib-gpu",
+            "mean_latency_sec": 0.45,
+            "config": {
+                "ring_dimension": 65536,
+                "num_slots": 32768,
+            },
+            "measurement_scope": {"stage1_target_compatible": True},
+        },
+    )
+
+    assert report.fideslib_bootstrap_available is True
+    assert report.bootstrap_evidence_complete is True
+    assert "fideslib_bootstrap_missing" not in report.blockers
+    assert report.bootstrap_measurements["fideslib"]["batch_size"] == 32768
+    assert report.bootstrap_measurements["fideslib"]["ring_dimension"] == 65536
+
+
 def test_stage1_checkpoint_cost_report_requires_rows() -> None:
     with pytest.raises(ValueError, match="must contain rows"):
         build_stage1_checkpoint_cost_report(
