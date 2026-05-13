@@ -28,8 +28,9 @@ Required outputs:
 Current backend roles:
 
 - OpenFHE CPU: correctness baseline.
-- FIDESlib: GPU CKKS backend with native toy/stage probes; Stage 1 GPU
-  bootstrap-cost attachment remains open.
+- FIDESlib: GPU CKKS backend with native toy/stage probes; Stage 1 target
+  bootstrap-cost evidence is recorded as a cost/availability probe, not yet as
+  a full checkpoint execution backend.
 - Tracking: operation-count backend.
 - Phantom-FHE: optional non-bootstrap microbenchmark backend only.
 
@@ -77,6 +78,11 @@ Current implementation status:
   OpenFHE Python bootstrap latency `10.54s` to pack sizes 4/8/16/32, yielding
   amortized bootstrap estimates of `2.63s`, `1.32s`, `0.66s`, and `0.33s`
   respectively, while keeping the Stage 1 speedup claim explicitly disabled.
+- The current Stage 1 mainline is the state-major rank-pack-first checkpoint
+  bridge. Small and medium synthetic checkpoint OpenFHE one-layer bridges pass,
+  Mamba-130M-shape OpenFHE setup/keygen fits under the explicit memory guard,
+  and PBI-S1-041/job `10300` is collecting the bounded Mamba-130M one-layer
+  eval/no-go artifact.
 
 ## Stage 2
 
@@ -109,10 +115,9 @@ Current partial implementation:
   result: small SRHT sketches are not yet robust enough to claim breakthrough
   compression without learned/range-aware sketching.
 - `scripts/run_checkpoint_sketch_matrix.py` generalizes that probe into a
-  layer/prompt/rank-strategy evidence matrix. This closes the runner slice
-  (PBI-S2-012); PBI-S2-004 still requires an accepted real-checkpoint artifact
-  spanning early/middle/late layers, at least two prompt types, and at least two
-  rank-selection strategies.
+  layer/prompt/rank-strategy evidence matrix. PBI-S2-004, PBI-S2-013, and the
+  learned/data-dependent PBI-S2-014 report slice are complete at plaintext
+  design-evidence scope.
 - The accepted Mamba-130M matrix artifact is
   `runs/checkpoint-sketch-matrix-mamba130m-20260512-130750.json` from high job
   `10135`. It is broad enough for PBI-S2-004 and shows that full-width
@@ -122,22 +127,9 @@ Current partial implementation:
 
 Next executable PBIs:
 
-- PBI-S2-013 turns accepted sketch matrix artifacts into a compact report for
-  papers/proposals.
-- PBI-OPS-001 is already satisfied by `docs/testing.md`, `run_fast_checks.sh`,
-  `run_checks.sh`, and `remote_checks.sh`; the PBI-OPS-002 seed ledger now
-  lives in [docs/artifact_ledger.md](artifact_ledger.md), while automated
-  update/release-note hygiene remains open.
-- PBI-OPS-004 has a first submission slice in
-  `scripts/submit_safe_slurm_campaign.py`: it dry-runs or submits source
-  profile, client decode, recurrence-only chain, ciphertext handoff, Stage 1
-  tiny MIMO, Stage 1 pack sweep, and bootstrap latency jobs, then emits a
-  manifest with ledger-row templates. The first live run is high jobs
-  `10157`-`10163`; artifact pull/update automation remains open, and 512G
-  OpenFHE full-chain jobs stay out of this campaign.
-  `scripts/collect_safe_slurm_campaign.py` now validates completed artifacts
-  and emits ledger-row candidates; remote pull plus optional docs update
-  remains open.
+- PBI-OPS-001 through PBI-OPS-005 are complete at current scope: fast/slow
+  checks, artifact ledger updates, GitHub Issue sync planning, safe campaign
+  collection with remote pull, and single heavy-job collection are available.
 - PBI-S2-006 lowers SRHT sketch primitives to backend smokes so the sketch path
   has encrypted operation counts, not only plaintext trajectory evidence.
 - PBI-S2-008 now has a report-only simulator in
@@ -149,20 +141,18 @@ Next executable PBIs:
   sketches reduce bootstrap seconds but are correctly bottlenecked by
   `sketch_accuracy`. Re-running this with FIDESlib/GPU bootstrap costs remains
   under PBI-S1-007.
-- PBI-S2-009 is the range-aware LoRA/calibration branch, triggered only by
-  measured profile or sketch failures.
+- PBI-S2-015 currently gates PBI-S2-009: existing deterministic calibration and
+  learned-sketch evidence pass the configured thresholds, so LoRA is deferred
+  unless PBI-S1-041 or a later multi-layer chain exposes a new failure.
 
 Stage 0 blocker update:
 
-- Jobs `10164`-`10169` show that a two-layer real-checkpoint OpenFHE
-  full-visible chain is still blocked by depth/runtime, not memory, even with
-  lighter approximations.
-- Job `10170` shows one real-checkpoint OpenFHE full-visible layer can pass
-  (`432.44s` wall clock, `max_abs_error=2.14e-02`), but it is not an
-  inter-layer handoff artifact.
-- The next Stage 0/1 executable step should avoid another unoptimized full
-  `d_model=768` two-layer run and instead build an explicit partial-visible
-  real-checkpoint proxy or Stage 1 packed visible projection.
+- Stage 0 is closed at the current scoped objective by
+  `runs/stage0-s009-closeout-report-v0394.json`: blocker identification and
+  handoff are complete, while full 24-layer encrypted success is explicitly not
+  claimed.
+- The next executable blocker is PBI-S1-041: collect the Mamba-130M-shape
+  one-layer OpenFHE eval/no-go artifact from job `10300`.
 
 ## Version Boundary
 
