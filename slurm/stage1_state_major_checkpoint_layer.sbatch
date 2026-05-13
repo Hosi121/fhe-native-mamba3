@@ -37,6 +37,7 @@ MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-64}"
 SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-30}"
 RING_DIMENSION="${RING_DIMENSION:-131072}"
 ATOL="${ATOL:-7e-2}"
+SETUP_ONLY="${SETUP_ONLY:-0}"
 INSTALL_OPENFHE="${INSTALL_OPENFHE:-0}"
 
 mkdir -p runs slurm
@@ -90,6 +91,9 @@ fi
 EXTRA_ARGS=()
 if [[ -n "${GATE_POLYNOMIAL_DEGREE}" ]]; then
   EXTRA_ARGS+=(--gate-polynomial-degree "${GATE_POLYNOMIAL_DEGREE}")
+fi
+if [[ "${SETUP_ONLY}" == "1" ]]; then
+  EXTRA_ARGS+=(--setup-only)
 fi
 
 section "Run Stage 1 state-major checkpoint layer"

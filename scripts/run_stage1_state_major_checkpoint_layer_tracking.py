@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,7 @@ def main() -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
+    started = time.perf_counter()
     from fhe_native_mamba3 import __version__
     from fhe_native_mamba3.artifact_validation import current_git_commit
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
@@ -109,6 +111,7 @@ def _run(args: argparse.Namespace) -> int:
                 "backend_batch_size": None if backend is None else backend.batch_size,
                 "backend_ring_dimension": None if backend is None else backend.ring_dimension,
                 "setup_seconds": backend_stats.get("setup_seconds", 0.0),
+                "total_seconds": time.perf_counter() - started,
             },
             "backend_stats": backend_stats,
         }
@@ -154,6 +157,11 @@ def _run(args: argparse.Namespace) -> int:
             "rotations": result.backend_stats["rotation_count"],
             "decrypt": result.backend_stats["decrypt_count"],
             "bootstrap": result.backend_stats["bootstrap_count"],
+        },
+        "timing": {
+            "total_seconds": time.perf_counter() - started,
+            "backend_setup_seconds": result.backend_stats["setup_seconds"],
+            "backend_eval_seconds": result.backend_stats["eval_seconds"],
         },
         **result.to_json_dict(),
     }
