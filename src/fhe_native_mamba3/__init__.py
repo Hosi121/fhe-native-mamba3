@@ -370,6 +370,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_state_major_checkpoint",
         "StateMajorCheckpointLayerResult",
     ),
+    "StateMajorCheckpointChainResult": (
+        "fhe_native_mamba3.stage1_state_major_checkpoint",
+        "StateMajorCheckpointChainResult",
+    ),
     "SlotBsgsSchedule": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "SlotBsgsSchedule",
@@ -994,6 +998,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_state_major_checkpoint",
         "run_state_major_checkpoint_layer_tracking",
     ),
+    "run_state_major_checkpoint_chain_tracking": (
+        "fhe_native_mamba3.stage1_state_major_checkpoint",
+        "run_state_major_checkpoint_chain_tracking",
+    ),
     "validate_artifact_file": (
         "fhe_native_mamba3.artifact_validation",
         "validate_artifact_file",
@@ -1138,6 +1146,7 @@ __all__ = [
     "StateDictMappingDraft",
     "StateDictMappingReport",
     "StateDictMappingRule",
+    "StateMajorCheckpointChainResult",
     "StateMajorCheckpointLayerResult",
     "StateMajorFullShapeConfig",
     "StateMajorFullShapeResult",
@@ -1286,6 +1295,7 @@ __all__ = [
     "run_stage1_pack_sweep",
     "run_stage2_sketch_seed_sweep",
     "run_stage2_sketch_sweep",
+    "run_state_major_checkpoint_chain_tracking",
     "run_state_major_checkpoint_layer_tracking",
     "run_state_major_full_shape_tracking",
     "run_state_major_toy_kernel",

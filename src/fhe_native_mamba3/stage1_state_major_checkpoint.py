@@ -54,6 +54,8 @@ class StateMajorCheckpointLayerResult:
     required_application_rotations: tuple[int, ...]
     required_application_rotation_key_count: int
     backend_stats: dict[str, Any]
+    output_model_ciphertext: Any
+    reference_output_model: np.ndarray
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +73,42 @@ class StateMajorCheckpointLayerResult:
             "kernel_max_abs_error": self.kernel_max_abs_error,
             "checkpoint_adapter_errors": dict(self.checkpoint_adapter_errors),
             "kernel_boundary_errors": dict(self.kernel_boundary_errors),
+            "required_application_rotations": self.required_application_rotations,
+            "required_application_rotation_key_count": (
+                self.required_application_rotation_key_count
+            ),
+            "backend_stats": dict(self.backend_stats),
+        }
+
+
+@dataclass(frozen=True)
+class StateMajorCheckpointChainResult:
+    """Tracking result for chaining state-major checkpoint layers."""
+
+    stage: str
+    measurement_scope: dict[str, Any]
+    layer_indices: tuple[int, ...]
+    backend: str
+    encrypted: bool
+    passed: bool
+    atol: float
+    max_abs_error: float
+    layer_max_abs_errors: tuple[float, ...]
+    required_application_rotations: tuple[int, ...]
+    required_application_rotation_key_count: int
+    backend_stats: dict[str, Any]
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "stage": self.stage,
+            "measurement_scope": dict(self.measurement_scope),
+            "layer_indices": self.layer_indices,
+            "backend": self.backend,
+            "encrypted": self.encrypted,
+            "passed": self.passed,
+            "atol": self.atol,
+            "max_abs_error": self.max_abs_error,
+            "layer_max_abs_errors": self.layer_max_abs_errors,
             "required_application_rotations": self.required_application_rotations,
             "required_application_rotation_key_count": (
                 self.required_application_rotation_key_count
@@ -124,6 +162,7 @@ def run_state_major_checkpoint_layer_tracking(
     previous_state_scale: float = 0.0,
     previous_state_seed: int = 0,
     backend: FHEBackend | None = None,
+    residual_input_ciphertext: Any | None = None,
     norm_eps: float = 1e-5,
     atol: float = 1e-6,
 ) -> StateMajorCheckpointLayerResult:
@@ -209,7 +248,11 @@ def run_state_major_checkpoint_layer_tracking(
         previous_state_seed=previous_state_seed,
     )
     reference = _precomputed_tail_reference(tensors)
-    residual_ct = resolved_backend.encrypt(_pack_model_input(tensors.residual_input, config=config))
+    residual_ct = residual_input_ciphertext
+    if residual_ct is None:
+        residual_ct = resolved_backend.encrypt(
+            _pack_model_input(tensors.residual_input, config=config),
+        )
     if pre_recurrence_mode in {
         "rank-gate-bsgs-poly",
         "rank-gate-bc-bsgs-poly",
@@ -267,6 +310,9 @@ def run_state_major_checkpoint_layer_tracking(
         "readout_rank": _max_abs_error(reference["readout_rank"], tensors.source_readout_rank),
         "output_model": _max_abs_error(reference["output_model"], tensors.source_final_output),
     }
+    output_model_slots = np.asarray(
+        resolved_backend.decrypt(tail.output_model, length=config.d_model),
+    )
     kernel_boundary_errors = {
         "rank_input": _max_abs_error(
             _decrypt_rank(x_ct, resolved_backend, config),
@@ -296,7 +342,7 @@ def run_state_major_checkpoint_layer_tracking(
             reference["rank_payload"],
         ),
         "output_model": _max_abs_error(
-            np.asarray(resolved_backend.decrypt(tail.output_model, length=config.d_model)),
+            output_model_slots,
             reference["output_model"],
         ),
     }
@@ -338,6 +384,7 @@ def run_state_major_checkpoint_layer_tracking(
             "polynomial_degree": polynomial_degree,
             "polynomial_range": polynomial_range,
             "inter_layer_handoff_layout": "model",
+            "residual_input_ciphertext_supplied": residual_input_ciphertext is not None,
             "full_model_correctness_claimed": False,
             "claim": (
                 "Validates a real checkpoint layer through the state-major "
@@ -358,6 +405,133 @@ def run_state_major_checkpoint_layer_tracking(
         checkpoint_adapter_errors=checkpoint_adapter_errors,
         kernel_boundary_errors=kernel_boundary_errors,
         required_application_rotations=rotations,
+        required_application_rotation_key_count=len(rotations),
+        backend_stats=resolved_backend.stats().to_json_dict(),
+        output_model_ciphertext=tail.output_model,
+        reference_output_model=reference["output_model"],
+    )
+
+
+def run_state_major_checkpoint_chain_tracking(
+    state_dict: dict[str, torch.Tensor],
+    *,
+    prompt_token: int = 0,
+    n_layers: int = 2,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    d_model_pad: int | None = None,
+    rank_pad: int | None = None,
+    model_baby_step: int = 64,
+    rank_baby_step: int = 64,
+    pre_recurrence_mode: str = "rank-gate-bc-decay-bsgs-poly",
+    polynomial_degree: int = 15,
+    polynomial_range: float = 8.0,
+    previous_state_scale: float = 0.0,
+    previous_state_seed: int = 0,
+    backend: FHEBackend | None = None,
+    norm_eps: float = 1e-5,
+    atol: float = 1e-6,
+) -> StateMajorCheckpointChainResult:
+    """Run a small chain of checkpoint layers through the state-major bridge.
+
+    The chain keeps the model-layout output ciphertext as the residual input to
+    the next layer. Pre-recurrence source/reference tensors still use the
+    plaintext reference layer input, so this is a handoff/layout diagnostic and
+    not a full encrypted pre-recurrence chain.
+    """
+
+    if n_layers <= 0:
+        msg = "n_layers must be positive"
+        raise ValueError(msg)
+    plan = plan_mamba_checkpoint(state_dict)
+    if n_layers > len(plan.layers):
+        msg = f"n_layers {n_layers} exceeds checkpoint layer count {len(plan.layers)}"
+        raise ValueError(msg)
+    initial_input = _layer_input_from_prompt_token(state_dict, prompt_token=prompt_token)
+    first_layer = plan.layers[0]
+    resolved_d_state = d_state if d_state is not None else first_layer.source_d_state
+    resolved_rank = mimo_rank if mimo_rank is not None else first_layer.source_inner_dim
+    if resolved_d_state is None or resolved_rank is None:
+        msg = "d_state and mimo_rank must be provided when they cannot be inferred"
+        raise ValueError(msg)
+    d_model = int(initial_input.shape[-1])
+    config = StateMajorFullShapeConfig(
+        d_model=d_model,
+        d_model_pad=d_model_pad if d_model_pad is not None else _next_power_of_two(d_model),
+        mimo_rank=resolved_rank,
+        rank_pad=rank_pad if rank_pad is not None else _next_power_of_two(resolved_rank),
+        d_state=resolved_d_state,
+        model_baby_step=model_baby_step,
+        rank_baby_step=rank_baby_step,
+    )
+    _validate_config(config)
+    resolved_backend = backend or NumpyTrackingBackend(batch_size=config.rank_pad * config.d_state)
+
+    current_input = initial_input
+    current_ciphertext = None
+    layer_results: list[StateMajorCheckpointLayerResult] = []
+    rotations: set[int] = set()
+    for layer_index in range(n_layers):
+        result = run_state_major_checkpoint_layer_tracking(
+            state_dict,
+            layer_input=current_input,
+            layer_index=layer_index,
+            d_state=config.d_state,
+            mimo_rank=config.mimo_rank,
+            d_model_pad=config.d_model_pad,
+            rank_pad=config.rank_pad,
+            model_baby_step=config.model_baby_step,
+            rank_baby_step=config.rank_baby_step,
+            pre_recurrence_mode=pre_recurrence_mode,
+            polynomial_degree=polynomial_degree,
+            polynomial_range=polynomial_range,
+            previous_state_scale=previous_state_scale,
+            previous_state_seed=previous_state_seed + layer_index,
+            backend=resolved_backend,
+            residual_input_ciphertext=current_ciphertext,
+            norm_eps=norm_eps,
+            atol=atol,
+        )
+        layer_results.append(result)
+        rotations.update(result.required_application_rotations)
+        current_ciphertext = result.output_model_ciphertext
+        current_input = torch.tensor(
+            result.reference_output_model,
+            dtype=initial_input.dtype,
+        ).view(1, 1, -1)
+
+    layer_errors = tuple(result.max_abs_error for result in layer_results)
+    max_abs_error = max(layer_errors)
+    return StateMajorCheckpointChainResult(
+        stage="stage1-state-major-checkpoint-chain-tracking",
+        measurement_scope={
+            "benchmark": False,
+            "encrypted": bool(resolved_backend.encrypted),
+            "checkpoint_chain": True,
+            "single_token": True,
+            "state_major_layout": True,
+            "rank_pack_first": True,
+            "slot_semantics_bsgs": True,
+            "inter_layer_handoff_layout": "model",
+            "inter_layer_residual_ciphertext_handoff": n_layers > 1,
+            "pre_recurrence_plaintext_reference_input": True,
+            "pre_recurrence_mode": pre_recurrence_mode,
+            "boundary_decrypts_for_diagnostics": True,
+            "full_model_correctness_claimed": False,
+            "claim": (
+                "Chains checkpoint-shaped state-major layer bridges while keeping "
+                "the model-layout output ciphertext as the next residual input. "
+                "Pre-recurrence still uses plaintext reference inputs."
+            ),
+        },
+        layer_indices=tuple(range(n_layers)),
+        backend=resolved_backend.name,
+        encrypted=bool(resolved_backend.encrypted),
+        passed=max_abs_error <= atol,
+        atol=atol,
+        max_abs_error=max_abs_error,
+        layer_max_abs_errors=layer_errors,
+        required_application_rotations=tuple(sorted(rotations)),
         required_application_rotation_key_count=len(rotations),
         backend_stats=resolved_backend.stats().to_json_dict(),
     )
@@ -816,7 +990,9 @@ def _to_numpy(tensor: torch.Tensor) -> np.ndarray:
 
 
 __all__ = [
+    "StateMajorCheckpointChainResult",
     "StateMajorCheckpointLayerResult",
     "required_state_major_checkpoint_layer_rotations",
+    "run_state_major_checkpoint_chain_tracking",
     "run_state_major_checkpoint_layer_tracking",
 ]
