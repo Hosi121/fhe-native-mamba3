@@ -40,30 +40,80 @@ def _run(args: argparse.Namespace) -> int:
     )
     checkpoint_plan = plan_mamba_checkpoint(state_dict)
     inferred_dt_rank = checkpoint_plan.layers[args.layer_index].inferred_dt_rank
+    config = StateMajorFullShapeConfig(
+        d_model=args.d_model,
+        d_model_pad=args.d_model_pad,
+        mimo_rank=args.mimo_rank,
+        rank_pad=args.rank_pad,
+        d_state=args.d_state,
+        model_baby_step=args.model_baby_step,
+        rank_baby_step=args.rank_baby_step,
+    )
+    required_rotations = required_state_major_checkpoint_layer_rotations(
+        config,
+        pre_recurrence_mode=args.pre_recurrence_mode,
+        dt_rank=inferred_dt_rank,
+    )
     backend = None
     if args.backend == "openfhe":
         from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
 
-        config = StateMajorFullShapeConfig(
-            d_model=args.d_model,
-            d_model_pad=args.d_model_pad,
-            mimo_rank=args.mimo_rank,
-            rank_pad=args.rank_pad,
-            d_state=args.d_state,
-            model_baby_step=args.model_baby_step,
-            rank_baby_step=args.rank_baby_step,
-        )
         backend = OpenFheCkksBackend(
             batch_size=config.rank_pad * config.d_state,
             multiplicative_depth=args.multiplicative_depth,
             scaling_mod_size=args.scaling_mod_size,
-            rotations=required_state_major_checkpoint_layer_rotations(
-                config,
-                pre_recurrence_mode=args.pre_recurrence_mode,
-                dt_rank=inferred_dt_rank,
-            ),
+            rotations=required_rotations,
             ring_dimension=args.ring_dimension or None,
         )
+    if args.setup_only:
+        backend_stats = {} if backend is None else backend.stats().__dict__
+        payload = {
+            "version": __version__,
+            "repo_commit": current_git_commit(ROOT),
+            "stage": "stage1-state-major-checkpoint-layer-setup-probe",
+            "checkpoint": str(args.checkpoint),
+            "state_dict_key": resolved_key,
+            "layer_index": args.layer_index,
+            "backend": "tracking-dry-run" if backend is None else backend.name,
+            "encrypted": backend is not None and backend.encrypted,
+            "status": "passed",
+            "passed": True,
+            "measurement_scope": {
+                "benchmark": False,
+                "checkpoint_layer": True,
+                "state_major_layout": True,
+                "rank_pack_first": True,
+                "slot_semantics_bsgs": True,
+                "setup_keygen_only": True,
+                "full_layer_executed": False,
+                "pre_recurrence_mode": args.pre_recurrence_mode,
+                "full_model_correctness_claimed": False,
+            },
+            "parameters": {
+                "d_model": args.d_model,
+                "d_state": args.d_state,
+                "mimo_rank": args.mimo_rank,
+                "d_model_pad": args.d_model_pad,
+                "rank_pad": args.rank_pad,
+                "model_baby_step": args.model_baby_step,
+                "rank_baby_step": args.rank_baby_step,
+                "dt_rank": inferred_dt_rank,
+                "multiplicative_depth": args.multiplicative_depth,
+                "scaling_mod_size": args.scaling_mod_size,
+                "ring_dimension": args.ring_dimension,
+            },
+            "measurements": {
+                "required_application_rotation_key_count": len(required_rotations),
+                "required_application_rotations": required_rotations,
+                "logical_slot_count": config.rank_pad * config.d_state,
+                "backend_batch_size": None if backend is None else backend.batch_size,
+                "backend_ring_dimension": None if backend is None else backend.ring_dimension,
+                "setup_seconds": backend_stats.get("setup_seconds", 0.0),
+            },
+            "backend_stats": backend_stats,
+        }
+        emit_json_payload(payload, output_json=args.output_json)
+        return 0
     result = run_state_major_checkpoint_layer_tracking(
         state_dict,
         prompt_token=args.prompt_token,
@@ -191,6 +241,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--ring-dimension", type=int, default=0)
     parser.add_argument("--norm-eps", type=float, default=1e-5)
     parser.add_argument("--atol", type=float, default=1e-6)
+    parser.add_argument(
+        "--setup-only",
+        action="store_true",
+        help="Create the backend and emit keygen/setup metadata without running the layer.",
+    )
     parser.add_argument("--output-json", default="")
     return parser.parse_args()
 

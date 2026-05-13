@@ -94,6 +94,58 @@ def test_checkpoint_layer_tracking_script_runs(tmp_path) -> None:
     assert persisted["kernel_boundary_errors"] == payload["kernel_boundary_errors"]
 
 
+def test_checkpoint_layer_tracking_script_setup_only_dry_run(tmp_path) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_json = tmp_path / "state-major-checkpoint-setup.json"
+    torch.save({"model": _tiny_hf_mamba_state_dict()}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_stage1_state_major_checkpoint_layer_tracking.py",
+            str(checkpoint_path),
+            "--backend",
+            "tracking",
+            "--setup-only",
+            "--prompt-token",
+            "1",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "6",
+            "--d-model-pad",
+            "8",
+            "--rank-pad",
+            "8",
+            "--rank-baby-step",
+            "4",
+            "--pre-recurrence-mode",
+            "rank-gate-bc-decay-bsgs-poly",
+            "--output-json",
+            str(output_json),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    persisted = json.loads(output_json.read_text(encoding="utf-8"))
+
+    assert payload["version"] == __version__
+    assert payload["stage"] == "stage1-state-major-checkpoint-layer-setup-probe"
+    assert payload["passed"] is True
+    assert payload["backend"] == "tracking-dry-run"
+    assert payload["encrypted"] is False
+    assert payload["measurement_scope"]["setup_keygen_only"] is True
+    assert payload["measurement_scope"]["full_layer_executed"] is False
+    assert payload["parameters"]["dt_rank"] == 4
+    assert payload["measurements"]["required_application_rotation_key_count"] > 0
+    assert payload["measurements"]["backend_batch_size"] is None
+    assert persisted["measurements"] == payload["measurements"]
+
+
 def test_checkpoint_layer_tracking_script_emits_failure_json(tmp_path) -> None:
     checkpoint_path = tmp_path / "mamba.pt"
     output_json = tmp_path / "failed-state-major-checkpoint.json"
