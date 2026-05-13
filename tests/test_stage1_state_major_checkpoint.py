@@ -9,6 +9,8 @@ import torch
 
 from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.stage1_state_major_checkpoint import (
+    StateMajorFullShapeConfig,
+    required_state_major_checkpoint_layer_rotations,
     run_state_major_checkpoint_chain_tracking,
     run_state_major_checkpoint_layer_tracking,
 )
@@ -289,6 +291,32 @@ def test_checkpoint_chain_tracks_model_layout_ciphertext_handoff() -> None:
     assert result.max_abs_error < 1.3e-1
     assert result.layer_max_abs_errors[1] > result.layer_max_abs_errors[0]
     assert result.required_application_rotation_key_count == 10
+
+
+def test_checkpoint_required_rotations_include_dt_projection() -> None:
+    config = StateMajorFullShapeConfig(
+        d_model=64,
+        d_model_pad=64,
+        mimo_rank=96,
+        rank_pad=128,
+        d_state=4,
+        model_baby_step=16,
+        rank_baby_step=16,
+    )
+
+    without_dt = required_state_major_checkpoint_layer_rotations(
+        config,
+        pre_recurrence_mode="rank-gate-bc-decay-bsgs-poly",
+    )
+    with_dt = required_state_major_checkpoint_layer_rotations(
+        config,
+        pre_recurrence_mode="rank-gate-bc-decay-bsgs-poly",
+        dt_rank=8,
+    )
+
+    assert len(without_dt) == 37
+    assert len(with_dt) == 42
+    assert {-88, -72, -56, -40, -24}.issubset(with_dt)
 
 
 def test_checkpoint_chain_tracking_script_runs(tmp_path) -> None:

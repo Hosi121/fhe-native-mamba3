@@ -556,6 +556,7 @@ def required_state_major_checkpoint_layer_rotations(
     config: StateMajorFullShapeConfig,
     *,
     pre_recurrence_mode: str = "source-boundary",
+    dt_rank: int | None = None,
 ) -> tuple[int, ...]:
     """Return application rotations used by the checkpoint state-major kernel."""
 
@@ -596,6 +597,14 @@ def required_state_major_checkpoint_layer_rotations(
         rotations.update(bc_groups["baby"])
         rotations.update(bc_groups["giant"])
         rotations.update(_state_vector_to_state_major_rotation_steps(config))
+    if pre_recurrence_mode == "rank-gate-bc-decay-bsgs-poly" and dt_rank is not None:
+        dt_groups = slot_bsgs_rotation_groups(
+            input_dim=max(1, dt_rank),
+            output_dim=config.mimo_rank,
+            baby_step=min(config.rank_baby_step, max(1, dt_rank)),
+        )
+        rotations.update(dt_groups["baby"])
+        rotations.update(dt_groups["giant"])
     return tuple(sorted(rotations))
 
 

@@ -27,6 +27,7 @@ def _run(args: argparse.Namespace) -> int:
     from fhe_native_mamba3.artifact_validation import current_git_commit
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.cli_support import emit_json_payload
+    from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint
     from fhe_native_mamba3.stage1_state_major_checkpoint import (
         StateMajorFullShapeConfig,
         required_state_major_checkpoint_layer_rotations,
@@ -37,6 +38,8 @@ def _run(args: argparse.Namespace) -> int:
         args.checkpoint,
         state_dict_key=args.state_dict_key,
     )
+    checkpoint_plan = plan_mamba_checkpoint(state_dict)
+    inferred_dt_rank = checkpoint_plan.layers[0].inferred_dt_rank
     backend = None
     if args.backend == "openfhe":
         from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
@@ -60,6 +63,7 @@ def _run(args: argparse.Namespace) -> int:
             rotations=required_state_major_checkpoint_layer_rotations(
                 config,
                 pre_recurrence_mode=args.pre_recurrence_mode,
+                dt_rank=inferred_dt_rank,
             ),
             ring_dimension=args.ring_dimension or None,
         )

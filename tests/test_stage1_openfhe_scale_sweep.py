@@ -26,15 +26,15 @@ def test_scale_sweep_uses_checkpoint_rotation_guard() -> None:
     assert report.passed is True
     assert rows["tiny"].layout_application_rotation_key_count == 7
     assert rows["tiny"].checkpoint_application_rotation_key_count == 10
-    assert rows["mamba130m"].checkpoint_application_rotation_key_count == 139
+    assert rows["mamba130m"].checkpoint_application_rotation_key_count == 163
     assert rows["mamba130m"].estimated_total_key_memory_gib == pytest.approx(
-        (139 + 59) * 200.0 / 1024.0,
+        (163 + 59) * 200.0 / 1024.0,
     )
     assert rows["mamba130m"].submit_recommendation == "submit_allowed"
 
 
 def test_scale_sweep_fails_closed_when_checkpoint_keys_exceed_guard() -> None:
-    shape = Stage1ScaleShape("bad", 768, 1024, 1536, 2048, 16, 64, 64)
+    shape = Stage1ScaleShape("bad", 768, 1024, 1536, 2048, 16, 48, 64, 64)
 
     report = build_stage1_openfhe_scale_sweep_report(
         shapes=(shape,),
@@ -66,7 +66,7 @@ def test_completed_run_loads_artifact_summary(tmp_path: Path) -> None:
     )
 
     report = build_stage1_openfhe_scale_sweep_report(
-        shapes=(Stage1ScaleShape("tiny", 8, 8, 6, 8, 2, 4, 4),),
+        shapes=(Stage1ScaleShape("tiny", 8, 8, 6, 8, 2, 4, 4, 4),),
         completed_runs=(
             CompletedScaleRun(
                 "tiny",
@@ -86,7 +86,7 @@ def test_completed_run_loads_artifact_summary(tmp_path: Path) -> None:
 
 
 def test_parse_scale_shape_and_completed_run() -> None:
-    shape = parse_scale_shape("tiny:8:8:6:8:2:4:4")
+    shape = parse_scale_shape("tiny:8:8:6:8:2:4:4:4")
     run = parse_completed_run("tiny:10288:runs/out.json:6724912:00:05:55")
 
     assert shape.rank_pad == 8
@@ -108,7 +108,7 @@ def test_scale_sweep_script_runs(tmp_path: Path) -> None:
             sys.executable,
             "scripts/build_stage1_openfhe_scale_sweep.py",
             "--shape",
-            "tiny:8:8:6:8:2:4:4",
+            "tiny:8:8:6:8:2:4:4:4",
             "--completed-run",
             f"tiny:10288:{artifact}:6724912:00:05:55",
             "--output-json",

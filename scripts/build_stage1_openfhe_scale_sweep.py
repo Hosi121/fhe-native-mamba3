@@ -63,7 +63,7 @@ def _parse_args() -> argparse.Namespace:
         default=[],
         help=(
             "Shape spec name:d_model:d_model_pad:mimo_rank:rank_pad:"
-            "d_state:model_baby_step:rank_baby_step. May repeat."
+            "d_state:dt_rank:model_baby_step:rank_baby_step. May repeat."
         ),
     )
     parser.add_argument(
@@ -84,7 +84,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--bootstrap-rotation-key-count", type=int, default=59)
     parser.add_argument("--key-size-mb", type=float, default=200.0)
-    parser.add_argument("--max-application-rotation-keys", type=int, default=150)
+    parser.add_argument("--max-application-rotation-keys", type=int, default=180)
     parser.add_argument("--max-key-memory-gib", type=float, default=120.0)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()

@@ -24,6 +24,7 @@ class Stage1ScaleShape:
     mimo_rank: int
     rank_pad: int
     d_state: int
+    dt_rank: int
     model_baby_step: int
     rank_baby_step: int
 
@@ -39,6 +40,7 @@ class Stage1ScaleShape:
             "mimo_rank": self.mimo_rank,
             "rank_pad": self.rank_pad,
             "d_state": self.d_state,
+            "dt_rank": self.dt_rank,
             "model_baby_step": self.model_baby_step,
             "rank_baby_step": self.rank_baby_step,
             "slot_count": self.slot_count,
@@ -136,10 +138,10 @@ class Stage1ScaleSweepReport:
 
 
 DEFAULT_STAGE1_SCALE_SHAPES: tuple[Stage1ScaleShape, ...] = (
-    Stage1ScaleShape("tiny", 8, 8, 6, 8, 2, 4, 4),
-    Stage1ScaleShape("small", 64, 64, 96, 128, 4, 16, 16),
-    Stage1ScaleShape("medium", 128, 128, 192, 256, 8, 16, 32),
-    Stage1ScaleShape("mamba130m", 768, 1024, 1536, 2048, 16, 64, 64),
+    Stage1ScaleShape("tiny", 8, 8, 6, 8, 2, 4, 4, 4),
+    Stage1ScaleShape("small", 64, 64, 96, 128, 4, 8, 16, 16),
+    Stage1ScaleShape("medium", 128, 128, 192, 256, 8, 16, 16, 32),
+    Stage1ScaleShape("mamba130m", 768, 1024, 1536, 2048, 16, 48, 64, 64),
 )
 
 
@@ -150,7 +152,7 @@ def build_stage1_openfhe_scale_sweep_report(
     pre_recurrence_mode: str = "rank-gate-bc-decay-bsgs-poly",
     bootstrap_rotation_key_count: int = 59,
     key_size_mb: float = 200.0,
-    max_application_rotation_keys: int = 150,
+    max_application_rotation_keys: int = 180,
     max_key_memory_gib: float = 120.0,
     artifact_root: Path | str = ".",
 ) -> Stage1ScaleSweepReport:
@@ -202,13 +204,13 @@ def build_stage1_openfhe_scale_sweep_report(
 
 
 def parse_scale_shape(spec: str) -> Stage1ScaleShape:
-    """Parse ``name:d_model:d_model_pad:mimo_rank:rank_pad:d_state:model_baby:rank_baby``."""
+    """Parse a colon-delimited scale shape specification."""
 
     parts = spec.split(":")
-    if len(parts) != 8:
+    if len(parts) != 9:
         msg = (
             "shape must be name:d_model:d_model_pad:mimo_rank:rank_pad:"
-            "d_state:model_baby_step:rank_baby_step"
+            "d_state:dt_rank:model_baby_step:rank_baby_step"
         )
         raise ValueError(msg)
     name = parts[0]
@@ -276,6 +278,7 @@ def _build_row(
     checkpoint_rotations = required_state_major_checkpoint_layer_rotations(
         config,
         pre_recurrence_mode=pre_recurrence_mode,
+        dt_rank=shape.dt_rank,
     )
     checkpoint_count = len(checkpoint_rotations)
     total_count = checkpoint_count + bootstrap_rotation_key_count
