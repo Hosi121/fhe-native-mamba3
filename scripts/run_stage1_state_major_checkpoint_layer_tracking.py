@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Run a checkpoint layer through the Stage 1 state-major tracking kernel."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+
+def main() -> int:
+    from fhe_native_mamba3 import __version__
+    from fhe_native_mamba3.artifact_validation import current_git_commit
+    from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
+    from fhe_native_mamba3.cli_support import emit_json_payload
+    from fhe_native_mamba3.stage1_state_major_checkpoint import (
+        run_state_major_checkpoint_layer_tracking,
+    )
+
+    args = _parse_args()
+    state_dict, resolved_key = load_checkpoint_state_dict(
+        args.checkpoint,
+        state_dict_key=args.state_dict_key,
+    )
+    result = run_state_major_checkpoint_layer_tracking(
+        state_dict,
+        prompt_token=args.prompt_token,
+        layer_index=args.layer_index,
+        d_state=args.d_state,
+        mimo_rank=args.mimo_rank,
+        d_model_pad=args.d_model_pad,
+        rank_pad=args.rank_pad,
+        model_baby_step=args.model_baby_step,
+        rank_baby_step=args.rank_baby_step,
+        norm_eps=args.norm_eps,
+        atol=args.atol,
+    )
+    payload = {
+        "version": __version__,
+        "repo_commit": current_git_commit(ROOT),
+        "checkpoint": str(args.checkpoint),
+        "state_dict_key": resolved_key,
+        "passed": result.passed,
+        "measurements": {
+            "max_abs_error": result.max_abs_error,
+            "checkpoint_adapter_max_abs_error": result.checkpoint_adapter_max_abs_error,
+            "kernel_max_abs_error": result.kernel_max_abs_error,
+            "required_application_rotation_key_count": (
+                result.required_application_rotation_key_count
+            ),
+        },
+        "operation_counts": {
+            "ct_ct_mul": result.backend_stats["ct_ct_mul_count"],
+            "ct_pt_mul": result.backend_stats["ct_pt_mul_count"],
+            "rotations": result.backend_stats["rotation_count"],
+            "decrypt": result.backend_stats["decrypt_count"],
+        },
+        **result.to_json_dict(),
+    }
+    emit_json_payload(payload, output_json=args.output_json)
+    return 0 if result.passed else 1
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("checkpoint")
+    parser.add_argument("--state-dict-key", default=None)
+    parser.add_argument("--layer-index", type=int, default=0)
+    parser.add_argument("--prompt-token", type=int, default=0)
+    parser.add_argument("--d-state", type=int, default=None)
+    parser.add_argument("--mimo-rank", type=int, default=None)
+    parser.add_argument("--d-model-pad", type=int, default=None)
+    parser.add_argument("--rank-pad", type=int, default=None)
+    parser.add_argument("--model-baby-step", type=int, default=64)
+    parser.add_argument("--rank-baby-step", type=int, default=64)
+    parser.add_argument("--norm-eps", type=float, default=1e-5)
+    parser.add_argument("--atol", type=float, default=1e-6)
+    parser.add_argument("--output-json", default="")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

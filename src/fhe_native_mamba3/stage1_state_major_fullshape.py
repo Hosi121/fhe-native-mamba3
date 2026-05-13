@@ -84,6 +84,16 @@ class _FullShapeTensors:
     w_out: np.ndarray
 
 
+@dataclass(frozen=True)
+class _StateMajorTailCiphertexts:
+    state_new: Any
+    readout_rank: Any
+    rank_output: Any
+    rank_payload: Any
+    output_delta: Any
+    output_model: Any
+
+
 def run_state_major_full_shape_tracking(
     config: StateMajorFullShapeConfig | None = None,
     *,
@@ -146,27 +156,20 @@ def run_state_major_full_shape_tracking(
         tensors.w_c,
         config=config,
     )
-    x_ct = _broadcast_rank_block0(resolved_backend, x_block_ct, config=config)
     previous_ct = resolved_backend.encrypt(_pack_state_major(tensors.previous_state, config=config))
     decay_ct = resolved_backend.encrypt(_pack_state_major(tensors.decay, config=config))
-    state_new_ct = resolved_backend.add(
-        resolved_backend.mul_ct(decay_ct, previous_ct),
-        resolved_backend.mul_ct(b_ct, x_ct),
-    )
-    readout_terms_ct = resolved_backend.mul_ct(c_ct, state_new_ct)
-    reduced_ct = readout_terms_ct
-    for step in state_axis_rotation_steps(rank_pad=config.rank_pad, d_state=config.d_state, sign=1):
-        reduced_ct = resolved_backend.add(reduced_ct, resolved_backend.rotate(reduced_ct, step))
-    rank_payload_ct = resolved_backend.mul_ct(gate_ct, reduced_ct)
-    output_delta_ct = slot_bsgs_linear_block0(
+    tail = _run_state_major_tail(
         resolved_backend,
-        rank_payload_ct,
-        tensors.w_out,
-        input_dim=config.mimo_rank,
-        output_dim=config.d_model,
-        baby_step=config.rank_baby_step,
+        residual_ct=model_ct,
+        x_block_ct=x_block_ct,
+        gate_ct=gate_ct,
+        b_ct=b_ct,
+        c_ct=c_ct,
+        previous_ct=previous_ct,
+        decay_ct=decay_ct,
+        w_out=tensors.w_out,
+        config=config,
     )
-    output_ct = resolved_backend.add(model_ct, output_delta_ct)
 
     boundary_errors = {
         "x": _max_abs_error(_decrypt_rank(x_block_ct, resolved_backend, config), reference["x"]),
@@ -183,15 +186,15 @@ def run_state_major_full_shape_tracking(
             reference["c"],
         ),
         "state_new": _max_abs_error(
-            _decrypt_state_major(state_new_ct, resolved_backend, config),
+            _decrypt_state_major(tail.state_new, resolved_backend, config),
             reference["state_new"],
         ),
         "readout_rank": _max_abs_error(
-            _decrypt_rank(reduced_ct, resolved_backend, config),
+            _decrypt_rank(tail.readout_rank, resolved_backend, config),
             reference["readout_rank"],
         ),
         "output_model": _max_abs_error(
-            np.asarray(resolved_backend.decrypt(output_ct, length=config.d_model)),
+            np.asarray(resolved_backend.decrypt(tail.output_model, length=config.d_model)),
             reference["output_model"],
         ),
     }
@@ -306,6 +309,52 @@ def _project_state_major_slots_bsgs(
     return accumulator
 
 
+def _run_state_major_tail(
+    backend: FHEBackend,
+    *,
+    residual_ct: Any,
+    x_block_ct: Any,
+    gate_ct: Any,
+    b_ct: Any,
+    c_ct: Any,
+    previous_ct: Any,
+    decay_ct: Any,
+    w_out: np.ndarray,
+    config: StateMajorFullShapeConfig,
+    skip_update_ct: Any | None = None,
+) -> _StateMajorTailCiphertexts:
+    x_ct = _broadcast_rank_block0(backend, x_block_ct, config=config)
+    state_new_ct = backend.add(
+        backend.mul_ct(decay_ct, previous_ct),
+        backend.mul_ct(b_ct, x_ct),
+    )
+    readout_terms_ct = backend.mul_ct(c_ct, state_new_ct)
+    readout_rank_ct = readout_terms_ct
+    for step in state_axis_rotation_steps(rank_pad=config.rank_pad, d_state=config.d_state, sign=1):
+        readout_rank_ct = backend.add(readout_rank_ct, backend.rotate(readout_rank_ct, step))
+    rank_output_ct = (
+        readout_rank_ct if skip_update_ct is None else backend.add(readout_rank_ct, skip_update_ct)
+    )
+    rank_payload_ct = backend.mul_ct(gate_ct, rank_output_ct)
+    output_delta_ct = slot_bsgs_linear_block0(
+        backend,
+        rank_payload_ct,
+        w_out,
+        input_dim=config.mimo_rank,
+        output_dim=config.d_model,
+        baby_step=config.rank_baby_step,
+    )
+    output_ct = backend.add(residual_ct, output_delta_ct)
+    return _StateMajorTailCiphertexts(
+        state_new=state_new_ct,
+        readout_rank=readout_rank_ct,
+        rank_output=rank_output_ct,
+        rank_payload=rank_payload_ct,
+        output_delta=output_delta_ct,
+        output_model=output_ct,
+    )
+
+
 def _broadcast_rank_block0(
     backend: FHEBackend,
     ciphertext: Any,
@@ -336,6 +385,15 @@ def _move_block0_to_state_block(
         remaining >>= 1
         bit <<= 1
     return result
+
+
+def _pack_rank_block0(values: np.ndarray, *, config: StateMajorFullShapeConfig) -> np.ndarray:
+    if values.shape != (config.mimo_rank,):
+        msg = f"rank values must have shape {(config.mimo_rank,)}, got {values.shape}"
+        raise ValueError(msg)
+    slots = np.zeros(config.rank_pad * config.d_state, dtype=float)
+    slots[: config.mimo_rank] = values
+    return slots
 
 
 def _pack_model_input(values: np.ndarray, *, config: StateMajorFullShapeConfig) -> np.ndarray:

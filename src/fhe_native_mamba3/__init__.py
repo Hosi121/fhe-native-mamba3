@@ -366,6 +366,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_state_major_fullshape",
         "StateMajorFullShapeResult",
     ),
+    "StateMajorCheckpointLayerResult": (
+        "fhe_native_mamba3.stage1_state_major_checkpoint",
+        "StateMajorCheckpointLayerResult",
+    ),
     "SlotBsgsSchedule": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "SlotBsgsSchedule",
@@ -986,6 +990,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_state_major_fullshape",
         "run_state_major_full_shape_tracking",
     ),
+    "run_state_major_checkpoint_layer_tracking": (
+        "fhe_native_mamba3.stage1_state_major_checkpoint",
+        "run_state_major_checkpoint_layer_tracking",
+    ),
     "validate_artifact_file": (
         "fhe_native_mamba3.artifact_validation",
         "validate_artifact_file",
@@ -1130,6 +1138,7 @@ __all__ = [
     "StateDictMappingDraft",
     "StateDictMappingReport",
     "StateDictMappingRule",
+    "StateMajorCheckpointLayerResult",
     "StateMajorFullShapeConfig",
     "StateMajorFullShapeResult",
     "StateMajorLayoutPlan",
@@ -1277,6 +1286,7 @@ __all__ = [
     "run_stage1_pack_sweep",
     "run_stage2_sketch_seed_sweep",
     "run_stage2_sketch_sweep",
+    "run_state_major_checkpoint_layer_tracking",
     "run_state_major_full_shape_tracking",
     "run_state_major_toy_kernel",
     "run_static_mimo_recurrence_ciphertext_chain_with_backend",
