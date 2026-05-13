@@ -157,6 +157,7 @@ def run_state_major_checkpoint_layer_tracking(
     rank_baby_step: int = 64,
     pre_recurrence_mode: str = "source-boundary",
     polynomial_degree: int = 15,
+    gate_polynomial_degree: int | None = None,
     polynomial_range: float = 8.0,
     previous_state: np.ndarray | torch.Tensor | None = None,
     previous_state_scale: float = 0.0,
@@ -192,6 +193,12 @@ def run_state_major_checkpoint_layer_tracking(
         raise ValueError(msg)
     if polynomial_degree <= 0:
         msg = "polynomial_degree must be positive"
+        raise ValueError(msg)
+    resolved_gate_polynomial_degree = (
+        polynomial_degree if gate_polynomial_degree is None else gate_polynomial_degree
+    )
+    if resolved_gate_polynomial_degree <= 0:
+        msg = "gate_polynomial_degree must be positive"
         raise ValueError(msg)
     if polynomial_range <= 0:
         msg = "polynomial_range must be positive"
@@ -266,6 +273,7 @@ def run_state_major_checkpoint_layer_tracking(
             config=config,
             norm_eps=norm_eps,
             polynomial_degree=polynomial_degree,
+            gate_polynomial_degree=resolved_gate_polynomial_degree,
             polynomial_range=polynomial_range,
         )
         x_ct = pre_cts.rank_input
@@ -382,6 +390,7 @@ def run_state_major_checkpoint_layer_tracking(
             "encrypted_recurrence_readout_out_projection": True,
             "pre_recurrence_mode": pre_recurrence_mode,
             "polynomial_degree": polynomial_degree,
+            "gate_polynomial_degree": resolved_gate_polynomial_degree,
             "polynomial_range": polynomial_range,
             "inter_layer_handoff_layout": "model",
             "residual_input_ciphertext_supplied": residual_input_ciphertext is not None,
@@ -425,6 +434,7 @@ def run_state_major_checkpoint_chain_tracking(
     rank_baby_step: int = 64,
     pre_recurrence_mode: str = "rank-gate-bc-decay-bsgs-poly",
     polynomial_degree: int = 15,
+    gate_polynomial_degree: int | None = None,
     polynomial_range: float = 8.0,
     previous_state_scale: float = 0.0,
     previous_state_seed: int = 0,
@@ -484,6 +494,7 @@ def run_state_major_checkpoint_chain_tracking(
             rank_baby_step=config.rank_baby_step,
             pre_recurrence_mode=pre_recurrence_mode,
             polynomial_degree=polynomial_degree,
+            gate_polynomial_degree=gate_polynomial_degree,
             polynomial_range=polynomial_range,
             previous_state_scale=previous_state_scale,
             previous_state_seed=previous_state_seed + layer_index,
@@ -516,6 +527,10 @@ def run_state_major_checkpoint_chain_tracking(
             "inter_layer_residual_ciphertext_handoff": n_layers > 1,
             "pre_recurrence_plaintext_reference_input": True,
             "pre_recurrence_mode": pre_recurrence_mode,
+            "polynomial_degree": polynomial_degree,
+            "gate_polynomial_degree": (
+                polynomial_degree if gate_polynomial_degree is None else gate_polynomial_degree
+            ),
             "boundary_decrypts_for_diagnostics": True,
             "full_model_correctness_claimed": False,
             "claim": (
@@ -619,6 +634,7 @@ def _rank_gate_bsgs_poly_ciphertexts(
     config: StateMajorFullShapeConfig,
     norm_eps: float,
     polynomial_degree: int,
+    gate_polynomial_degree: int,
     polynomial_range: float,
 ) -> _RankGatePreRecurrenceCiphertexts:
     source = _build_layer_tensors(
@@ -677,7 +693,7 @@ def _rank_gate_bsgs_poly_ciphertexts(
         gate_pre_ct,
         output_dim=config.mimo_rank,
         backend=backend,
-        degree=polynomial_degree,
+        degree=gate_polynomial_degree,
         approximation_range=polynomial_range,
     )
     skip_ct = backend.mul_plain(

@@ -39,6 +39,7 @@ def main() -> int:
             rank_baby_step=args.rank_baby_step,
             pre_recurrence_mode=args.pre_recurrence_mode,
             polynomial_degree=degree,
+            gate_polynomial_degree=args.gate_polynomial_degree,
             polynomial_range=args.polynomial_range,
             previous_state_scale=args.previous_state_scale,
             previous_state_seed=args.previous_state_seed,
@@ -48,6 +49,9 @@ def main() -> int:
         rows.append(
             {
                 "degree": degree,
+                "gate_degree": degree
+                if args.gate_polynomial_degree is None
+                else args.gate_polynomial_degree,
                 "max_abs_error": result.max_abs_error,
                 "gate_error": result.kernel_boundary_errors["gate"],
                 "output_model_error": result.kernel_boundary_errors["output_model"],
@@ -111,6 +115,7 @@ def _parse_args() -> argparse.Namespace:
         default="rank-gate-bc-decay-bsgs-poly",
     )
     parser.add_argument("--degrees", type=int, nargs="+", default=(3, 5, 7, 9, 11, 13, 15))
+    parser.add_argument("--gate-polynomial-degree", type=int, default=None)
     parser.add_argument("--polynomial-range", type=float, default=8.0)
     parser.add_argument("--previous-state-scale", type=float, default=0.0)
     parser.add_argument("--previous-state-seed", type=int, default=0)

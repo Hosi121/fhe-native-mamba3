@@ -233,6 +233,34 @@ def test_checkpoint_layer_tracking_checks_decay_on_nonzero_state() -> None:
     assert result.kernel_boundary_errors["state_new"] < 4e-3
 
 
+def test_checkpoint_layer_tracking_supports_mixed_gate_polynomial_degree() -> None:
+    result = run_state_major_checkpoint_layer_tracking(
+        _tiny_hf_mamba_state_dict(),
+        prompt_token=1,
+        d_state=2,
+        mimo_rank=6,
+        d_model_pad=8,
+        rank_pad=8,
+        model_baby_step=4,
+        rank_baby_step=4,
+        pre_recurrence_mode="rank-gate-bc-decay-bsgs-poly",
+        polynomial_degree=15,
+        gate_polynomial_degree=11,
+        polynomial_range=8.0,
+        previous_state_scale=0.05,
+        previous_state_seed=7,
+        atol=7e-2,
+    )
+
+    assert result.passed is True
+    assert result.measurement_scope["polynomial_degree"] == 15
+    assert result.measurement_scope["gate_polynomial_degree"] == 11
+    assert result.kernel_boundary_errors["rank_input"] < 6e-3
+    assert result.kernel_boundary_errors["gate"] < 2e-2
+    assert result.kernel_boundary_errors["output_model"] < 7e-2
+    assert result.backend_stats["ct_ct_mul_count"] == 33
+
+
 def test_checkpoint_chain_tracks_model_layout_ciphertext_handoff() -> None:
     result = run_state_major_checkpoint_chain_tracking(
         _tiny_hf_mamba_state_dict(n_layers=2),
@@ -372,6 +400,63 @@ def test_checkpoint_poly_sweep_script_runs(tmp_path) -> None:
     assert [row["degree"] for row in payload["rows"]] == [9, 11, 15]
     assert payload["rows"][0]["max_abs_error"] > payload["rows"][1]["max_abs_error"]
     assert persisted["rows"] == payload["rows"]
+
+
+def test_checkpoint_poly_sweep_supports_fixed_gate_degree(tmp_path) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_json = tmp_path / "mixed-poly-sweep.json"
+    torch.save({"model": _tiny_hf_mamba_state_dict()}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_stage1_state_major_checkpoint_poly_sweep.py",
+            str(checkpoint_path),
+            "--state-dict-key",
+            "model",
+            "--prompt-token",
+            "1",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "6",
+            "--d-model-pad",
+            "8",
+            "--rank-pad",
+            "8",
+            "--model-baby-step",
+            "4",
+            "--rank-baby-step",
+            "4",
+            "--degrees",
+            "11",
+            "13",
+            "15",
+            "--gate-polynomial-degree",
+            "11",
+            "--previous-state-scale",
+            "0.05",
+            "--previous-state-seed",
+            "7",
+            "--max-acceptable-error",
+            "0.1",
+            "--output-json",
+            str(output_json),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+
+    assert payload["version"] == __version__
+    assert payload["passed"] is True
+    assert payload["recommended_degree"] == 15
+    assert [row["gate_degree"] for row in payload["rows"]] == [11, 11, 11]
+    assert payload["rows"][-1]["ct_ct_mul"] == 33
+    assert payload["rows"][-1]["max_abs_error"] < 7e-2
 
 
 def _tiny_hf_mamba_state_dict(*, n_layers: int = 1) -> dict[str, torch.Tensor]:

@@ -72,6 +72,7 @@ def _run(args: argparse.Namespace) -> int:
         rank_baby_step=args.rank_baby_step,
         pre_recurrence_mode=args.pre_recurrence_mode,
         polynomial_degree=args.polynomial_degree,
+        gate_polynomial_degree=args.gate_polynomial_degree,
         polynomial_range=args.polynomial_range,
         previous_state_scale=args.previous_state_scale,
         previous_state_seed=args.previous_state_seed,
@@ -142,6 +143,7 @@ def _emit_failure_payload(args: argparse.Namespace, exc: Exception) -> None:
             "model_baby_step": args.model_baby_step,
             "rank_baby_step": args.rank_baby_step,
             "polynomial_degree": args.polynomial_degree,
+            "gate_polynomial_degree": args.gate_polynomial_degree,
             "polynomial_range": args.polynomial_range,
             "multiplicative_depth": args.multiplicative_depth,
             "scaling_mod_size": args.scaling_mod_size,
@@ -176,6 +178,7 @@ def _parse_args() -> argparse.Namespace:
         default="source-boundary",
     )
     parser.add_argument("--polynomial-degree", type=int, default=15)
+    parser.add_argument("--gate-polynomial-degree", type=int, default=None)
     parser.add_argument("--polynomial-range", type=float, default=8.0)
     parser.add_argument("--previous-state-scale", type=float, default=0.0)
     parser.add_argument("--previous-state-seed", type=int, default=0)
