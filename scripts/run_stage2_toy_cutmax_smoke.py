@@ -62,7 +62,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mask-threshold", type=float, default=0.35)
     parser.add_argument("--multiplicative-depth", type=int, default=16)
     parser.add_argument("--scaling-mod-size", type=int, default=40)
-    parser.add_argument("--ring-dimension", type=int, default=32768)
+    parser.add_argument("--ring-dimension", type=int, default=65536)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()
 
