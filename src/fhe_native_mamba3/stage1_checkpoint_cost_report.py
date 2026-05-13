@@ -18,11 +18,21 @@ class Stage1CheckpointCostRow:
     guard_result: str
     work_multiplier_vs_monolithic: int
     measured_openfhe_bootstrap_latency_sec: float | None
-    estimated_group_refresh_latency_sec: float | None
+    estimated_openfhe_group_refresh_latency_sec: float | None
+    measured_fideslib_bootstrap_latency_sec: float | None
+    estimated_fideslib_group_refresh_latency_sec: float | None
     estimated_latency_basis: str
 
+    @property
+    def estimated_group_refresh_latency_sec(self) -> float | None:
+        """Backward-compatible OpenFHE refresh estimate alias."""
+
+        return self.estimated_openfhe_group_refresh_latency_sec
+
     def to_json_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["estimated_group_refresh_latency_sec"] = self.estimated_group_refresh_latency_sec
+        return payload
 
 
 @dataclass(frozen=True)
@@ -100,7 +110,13 @@ def build_stage1_checkpoint_cost_report(
         and _stage1_target_compatible(fideslib_bootstrap_payload) is not False
     )
     rows = tuple(
-        _build_row(row, measured_openfhe_bootstrap_latency_sec=openfhe_bootstrap_latency)
+        _build_row(
+            row,
+            measured_openfhe_bootstrap_latency_sec=openfhe_bootstrap_latency,
+            measured_fideslib_bootstrap_latency_sec=fideslib_bootstrap_latency
+            if fideslib_stage1_available
+            else None,
+        )
         for row in inventory_rows
     )
     guard_summary = _chain_guard_summary(chain_guard_payload)
@@ -176,9 +192,10 @@ def stage1_checkpoint_cost_markdown(report: Stage1CheckpointCostReport) -> str:
         "",
         (
             "| pack | groups | rotations | key GiB | feasible | guard | "
-            "OpenFHE boot s | est group refresh s |"
+            "OpenFHE boot s | est OpenFHE refresh s | FIDESlib boot s | "
+            "est FIDESlib refresh s |"
         ),
-        "|---:|---:|---:|---:|:---:|---|---:|---:|",
+        "|---:|---:|---:|---:|:---:|---|---:|---:|---:|---:|",
     ]
     for row in report.rows:
         lines.append(
@@ -190,7 +207,9 @@ def stage1_checkpoint_cost_markdown(report: Stage1CheckpointCostReport) -> str:
             f"{_md_bool(row.feasible_under_key_budget)} | "
             f"{row.guard_result} | "
             f"{_md_float(row.measured_openfhe_bootstrap_latency_sec)} | "
-            f"{_md_float(row.estimated_group_refresh_latency_sec)} |"
+            f"{_md_float(row.estimated_openfhe_group_refresh_latency_sec)} | "
+            f"{_md_float(row.measured_fideslib_bootstrap_latency_sec)} | "
+            f"{_md_float(row.estimated_fideslib_group_refresh_latency_sec)} |"
         )
     lines.extend(
         [
@@ -206,12 +225,18 @@ def _build_row(
     row: dict[str, Any],
     *,
     measured_openfhe_bootstrap_latency_sec: float | None,
+    measured_fideslib_bootstrap_latency_sec: float | None,
 ) -> Stage1CheckpointCostRow:
     group_count = _required_int(row, "group_count")
-    estimated_group_refresh_latency_sec = (
+    estimated_openfhe_group_refresh_latency_sec = (
         None
         if measured_openfhe_bootstrap_latency_sec is None
         else group_count * measured_openfhe_bootstrap_latency_sec
+    )
+    estimated_fideslib_group_refresh_latency_sec = (
+        None
+        if measured_fideslib_bootstrap_latency_sec is None
+        else group_count * measured_fideslib_bootstrap_latency_sec
     )
     return Stage1CheckpointCostRow(
         pack_size=_required_int(row, "pack_size"),
@@ -222,10 +247,12 @@ def _build_row(
         guard_result=str(row.get("guard_result", "")),
         work_multiplier_vs_monolithic=_required_int(row, "work_multiplier_vs_monolithic"),
         measured_openfhe_bootstrap_latency_sec=measured_openfhe_bootstrap_latency_sec,
-        estimated_group_refresh_latency_sec=estimated_group_refresh_latency_sec,
+        estimated_openfhe_group_refresh_latency_sec=estimated_openfhe_group_refresh_latency_sec,
+        measured_fideslib_bootstrap_latency_sec=measured_fideslib_bootstrap_latency_sec,
+        estimated_fideslib_group_refresh_latency_sec=estimated_fideslib_group_refresh_latency_sec,
         estimated_latency_basis=(
-            "measured OpenFHE Python bootstrap latency multiplied by group_count; "
-            "not a FIDESlib/GPU or end-to-end speedup claim"
+            "measured backend bootstrap latency multiplied by group_count; "
+            "not an end-to-end speedup claim"
         ),
     )
 
@@ -380,7 +407,7 @@ def _md_bool(value: bool | None) -> str:
 
 def _md_float(value: float | None) -> str:
     if value is None:
-        return ""
+        return "n/a"
     if value == 0:
         return "0"
     if abs(value) < 0.001:

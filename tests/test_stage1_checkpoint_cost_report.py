@@ -29,6 +29,9 @@ def test_stage1_checkpoint_cost_report_separates_measured_and_estimated_values()
     assert report.bootstrap_evidence_complete is False
     assert report.rows[0].measured_openfhe_bootstrap_latency_sec == 10.0
     assert report.rows[0].estimated_group_refresh_latency_sec == 20.0
+    assert report.rows[0].estimated_openfhe_group_refresh_latency_sec == 20.0
+    assert report.rows[0].measured_fideslib_bootstrap_latency_sec is None
+    assert report.rows[0].estimated_fideslib_group_refresh_latency_sec is None
     assert report.rows[1].estimated_group_refresh_latency_sec == 10.0
     assert report.blockers == ("estimated_rotation_key_memory", "fideslib_bootstrap_missing")
     assert report.chain_guard["rotation_count"] == 111
@@ -46,7 +49,7 @@ def test_stage1_checkpoint_cost_report_markdown_renders_table() -> None:
     markdown = stage1_checkpoint_cost_markdown(report)
 
     assert "# Stage 1 Checkpoint Cost Report" in markdown
-    assert "| 4 | 2 | 100 | 20.000 | yes | ok | 10.000 | 20.000 |" in markdown
+    assert "| 4 | 2 | 100 | 20.000 | yes | ok | 10.000 | 20.000 | n/a | n/a |" in markdown
     assert "report-only artifact" in markdown
 
 
@@ -89,6 +92,8 @@ def test_stage1_checkpoint_cost_report_counts_stage1_fideslib_probe_as_complete(
     assert report.fideslib_bootstrap_available is True
     assert report.bootstrap_evidence_complete is True
     assert "fideslib_bootstrap_missing" not in report.blockers
+    assert report.rows[0].measured_fideslib_bootstrap_latency_sec == 0.45
+    assert report.rows[0].estimated_fideslib_group_refresh_latency_sec == 0.9
     assert report.bootstrap_measurements["fideslib"]["batch_size"] == 32768
     assert report.bootstrap_measurements["fideslib"]["ring_dimension"] == 65536
 
