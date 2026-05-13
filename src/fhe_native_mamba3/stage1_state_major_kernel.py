@@ -601,11 +601,13 @@ def _slot_bsgs_pre_mask(
     offset: int,
 ) -> np.ndarray:
     mask = np.zeros(batch_size, dtype=float)
-    for output_index in range(output_dim):
-        input_index = output_index + offset
-        if 0 <= input_index < input_dim:
-            source_slot = (output_index + giant) % batch_size
-            mask[source_slot] = weights[output_index, input_index]
+    output_indices = np.arange(output_dim)
+    input_indices = output_indices + offset
+    valid = (input_indices >= 0) & (input_indices < input_dim)
+    if np.any(valid):
+        valid_outputs = output_indices[valid]
+        source_slots = (valid_outputs + giant) % batch_size
+        mask[source_slots] = weights[valid_outputs, input_indices[valid]]
     return mask
 
 
