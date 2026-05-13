@@ -12,19 +12,57 @@ sys.path.insert(0, str(ROOT / "src"))
 
 
 def main() -> int:
+    args = _parse_args()
+    try:
+        return _run(args)
+    except Exception as exc:
+        if not args.output_json:
+            raise
+        _emit_failure_payload(args, exc)
+        return 1
+
+
+def _run(args: argparse.Namespace) -> int:
     from fhe_native_mamba3 import __version__
     from fhe_native_mamba3.artifact_validation import current_git_commit
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.cli_support import emit_json_payload
     from fhe_native_mamba3.stage1_state_major_checkpoint import (
+        StateMajorFullShapeConfig,
+        required_state_major_checkpoint_layer_rotations,
         run_state_major_checkpoint_chain_tracking,
     )
 
-    args = _parse_args()
     state_dict, resolved_key = load_checkpoint_state_dict(
         args.checkpoint,
         state_dict_key=args.state_dict_key,
     )
+    backend = None
+    if args.backend == "openfhe":
+        from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
+
+        if args.d_model is None:
+            msg = "--d-model is required when --backend openfhe is used"
+            raise ValueError(msg)
+        config = StateMajorFullShapeConfig(
+            d_model=args.d_model,
+            d_model_pad=args.d_model_pad,
+            mimo_rank=args.mimo_rank,
+            rank_pad=args.rank_pad,
+            d_state=args.d_state,
+            model_baby_step=args.model_baby_step,
+            rank_baby_step=args.rank_baby_step,
+        )
+        backend = OpenFheCkksBackend(
+            batch_size=config.rank_pad * config.d_state,
+            multiplicative_depth=args.multiplicative_depth,
+            scaling_mod_size=args.scaling_mod_size,
+            rotations=required_state_major_checkpoint_layer_rotations(
+                config,
+                pre_recurrence_mode=args.pre_recurrence_mode,
+            ),
+            ring_dimension=args.ring_dimension or None,
+        )
     result = run_state_major_checkpoint_chain_tracking(
         state_dict,
         prompt_token=args.prompt_token,
@@ -41,6 +79,7 @@ def main() -> int:
         polynomial_range=args.polynomial_range,
         previous_state_scale=args.previous_state_scale,
         previous_state_seed=args.previous_state_seed,
+        backend=backend,
         norm_eps=args.norm_eps,
         atol=args.atol,
     )
@@ -71,12 +110,61 @@ def main() -> int:
     return 0 if result.passed else 1
 
 
+def _emit_failure_payload(args: argparse.Namespace, exc: Exception) -> None:
+    from fhe_native_mamba3 import __version__
+    from fhe_native_mamba3.artifact_validation import current_git_commit
+    from fhe_native_mamba3.cli_support import emit_json_payload
+
+    payload = {
+        "version": __version__,
+        "repo_commit": current_git_commit(ROOT),
+        "stage": "stage1-state-major-checkpoint-chain-tracking",
+        "status": "failed",
+        "passed": False,
+        "checkpoint": str(args.checkpoint),
+        "state_dict_key": args.state_dict_key,
+        "backend": args.backend,
+        "encrypted": args.backend == "openfhe",
+        "failure_type": type(exc).__name__,
+        "failure_reason": str(exc),
+        "measurement_scope": {
+            "benchmark": False,
+            "checkpoint_chain": True,
+            "state_major_layout": True,
+            "rank_pack_first": True,
+            "slot_semantics_bsgs": True,
+            "pre_recurrence_mode": args.pre_recurrence_mode,
+            "diagnostic_failure_artifact": True,
+            "full_model_correctness_claimed": False,
+        },
+        "parameters": {
+            "d_model": args.d_model,
+            "d_state": args.d_state,
+            "mimo_rank": args.mimo_rank,
+            "d_model_pad": args.d_model_pad,
+            "rank_pad": args.rank_pad,
+            "model_baby_step": args.model_baby_step,
+            "rank_baby_step": args.rank_baby_step,
+            "n_layers": args.n_layers,
+            "polynomial_degree": args.polynomial_degree,
+            "gate_polynomial_degree": args.gate_polynomial_degree,
+            "polynomial_range": args.polynomial_range,
+            "multiplicative_depth": args.multiplicative_depth,
+            "scaling_mod_size": args.scaling_mod_size,
+            "ring_dimension": args.ring_dimension,
+        },
+    }
+    emit_json_payload(payload, output_json=args.output_json)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint")
+    parser.add_argument("--backend", choices=("tracking", "openfhe"), default="tracking")
     parser.add_argument("--state-dict-key", default=None)
     parser.add_argument("--prompt-token", type=int, default=0)
     parser.add_argument("--n-layers", type=int, default=2)
+    parser.add_argument("--d-model", type=int, default=None)
     parser.add_argument("--d-state", type=int, required=True)
     parser.add_argument("--mimo-rank", type=int, required=True)
     parser.add_argument("--d-model-pad", type=int, required=True)
@@ -100,6 +188,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--previous-state-seed", type=int, default=0)
     parser.add_argument("--norm-eps", type=float, default=1e-5)
     parser.add_argument("--atol", type=float, default=1e-6)
+    parser.add_argument("--multiplicative-depth", type=int, default=48)
+    parser.add_argument("--scaling-mod-size", type=int, default=40)
+    parser.add_argument("--ring-dimension", type=int, default=0)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()
 

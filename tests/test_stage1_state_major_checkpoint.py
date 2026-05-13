@@ -301,6 +301,8 @@ def test_checkpoint_chain_tracking_script_runs(tmp_path) -> None:
             sys.executable,
             "scripts/run_stage1_state_major_checkpoint_chain_tracking.py",
             str(checkpoint_path),
+            "--backend",
+            "tracking",
             "--prompt-token",
             "1",
             "--n-layers",
@@ -319,6 +321,8 @@ def test_checkpoint_chain_tracking_script_runs(tmp_path) -> None:
             "4",
             "--pre-recurrence-mode",
             "rank-gate-bc-decay-bsgs-poly",
+            "--gate-polynomial-degree",
+            "9",
             "--previous-state-scale",
             "0.05",
             "--previous-state-seed",
@@ -341,7 +345,8 @@ def test_checkpoint_chain_tracking_script_runs(tmp_path) -> None:
     assert payload["passed"] is True
     assert payload["stage"] == "stage1-state-major-checkpoint-chain-tracking"
     assert payload["measurement_scope"]["inter_layer_residual_ciphertext_handoff"] is True
-    assert payload["operation_counts"]["ct_ct_mul"] == 74
+    assert payload["measurement_scope"]["gate_polynomial_degree"] == 9
+    assert payload["operation_counts"]["ct_ct_mul"] == 62
     assert payload["measurements"]["required_application_rotation_key_count"] == 10
     assert persisted["layer_max_abs_errors"] == payload["layer_max_abs_errors"]
 
