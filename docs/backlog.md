@@ -94,6 +94,7 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 | PBI-OPS-002 | DevEx | Done | none | Maintain an artifact ledger that maps high/SLURM job IDs to PBI IDs, JSON paths, git commits, and pass/fail status. Evidence: `docs/artifact_ledger.md`, `scripts/update_artifact_ledger.py`, and tests in `tests/test_artifact_ledger_update_script.py`. The updater consumes `ledger_rows` emitted by safe-campaign collection artifacts, dry-runs by default, appends with `--write`, dedupes exact rows, and fails on same-job/artifact conflicts instead of silently overwriting richer curated ledger entries. |
 | PBI-OPS-003 | DevEx | Done | PBI-OPS-002 | Export backlog PBIs to GitHub issues when repository permissions are available; Project board item movement is out of scope for this slice. Acceptance requires issue titles, dependencies, and status labels generated from `docs/backlog.md` without hand-copying. Evidence: `src/fhe_native_mamba3/backlog_issues.py`, `scripts/sync_backlog_issues.py`, tests in `tests/test_backlog_issues.py` / `tests/test_backlog_issue_sync_script.py`, and dry-run artifact `runs/pbi-ops-003-issue-sync-plan-v0390.json`. Result: the script parses `69` backlog PBIs, maps existing GitHub issues by PBI ID, and emits deterministic create/update/close/noop plans with generated titles, dependencies, and status labels. |
 | PBI-OPS-004 | DevEx | Done | PBI-OPS-002 | Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection. Evidence: `scripts/submit_safe_slurm_campaign.py` submits/dry-runs only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, and emits manifest/ledger-row templates; `scripts/collect_safe_slurm_campaign.py` validates completed artifacts, emits ledger-row candidates, and now supports `--pull-missing --remote high --remote-dir ~/cipher/fhe-native-mamba3` with `--pull-dry-run` for safe validation. Covered by `tests/test_safe_slurm_campaign_script.py` and `tests/test_safe_slurm_campaign_collect_script.py`, exercised by high jobs `10157`-`10163`. High-memory OpenFHE full-chain jobs remain explicitly excluded from the safe campaign manifest. |
+| PBI-OPS-005 | DevEx | Done | PBI-OPS-002 | Add a single heavy-SLURM-job collection helper for jobs that should not go through the safe campaign runner. Acceptance: poll `sacct`, optionally pull the expected artifact with `rsync`, validate artifact schema when present, and emit a ledger-row candidate without failing on still-running jobs unless requested. Evidence: `scripts/collect_slurm_job_artifact.py`, tests in `tests/test_collect_slurm_job_artifact_script.py`, and live running collection artifact `runs/stage1-s041-running-collection-v0392.json` for job `10300`. Result: the helper reports `root_state=RUNNING`, `collection_complete=false`, and `artifact_exists=false` for the in-flight PBI-S1-041 job, so future polling can collect the final artifact without manual path reconstruction. |
 
 ## Dependency Map
 
@@ -129,7 +130,7 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 - Sketch/range evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-013 is complete; PBI-S2-005 adds the first learned/data-dependent sketch baseline; PBI-S2-014 expands it to the matrix report; PBI-S2-015 adds the current range/LoRA decision gate. PBI-S2-004 and PBI-S0-010 continue to feed future PBI-S2-009 work if later encrypted chains expose a calibration failure.
 - Encrypted sketch execution: PBI-S2-006 and PBI-S2-007 are complete; the learned/data-dependent sketch branch is complete through PBI-S2-014. PBI-S2-015 currently recommends deferring LoRA until a later chain artifact fails the existing deterministic calibration gate.
 - Decoding branch: PBI-S2-003 is complete at the current scope. PBI-S2-010 records client-side decode accounting, and PBI-S2-011 records a toy encrypted CutMax/OpenFHE path. Full-vocab encrypted generation is not claimed.
-- Development operations: PBI-OPS-001 through PBI-OPS-004 are done at their current scope. PBI-OPS-003 now provides deterministic GitHub Issue sync plans from the canonical backlog; GitHub Project board automation is not yet claimed.
+- Development operations: PBI-OPS-001 through PBI-OPS-005 are done at their current scope. PBI-OPS-003 provides deterministic GitHub Issue sync plans from the canonical backlog, and PBI-OPS-005 collects single heavy SLURM jobs outside the safe campaign runner; GitHub Project board automation is not yet claimed.
 
 ## Near-Term Parallel Slices
 
@@ -140,7 +141,9 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   a later multi-layer chain exposes a new range/accuracy failure.
 - Low-risk reporting C: run `scripts/sync_backlog_issues.py` after backlog
   edits to keep GitHub Issue plans in sync; direct Project board automation is
-  future DevEx work, not claimed in this line.
+  future DevEx work, not claimed in this line. Use
+  `scripts/collect_slurm_job_artifact.py` for in-flight heavy jobs such as
+  PBI-S1-041/job `10300`.
 
 ## Stale Or Obsolete Notes
 
