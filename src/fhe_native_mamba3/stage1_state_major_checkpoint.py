@@ -91,6 +91,15 @@ class _CheckpointTailTensors:
     dt_rank: int
 
 
+@dataclass(frozen=True)
+class _RankGatePreRecurrenceCiphertexts:
+    rank_input: Any
+    gate: Any
+    b: Any
+    c: Any
+    skip_update: Any
+
+
 def run_state_major_checkpoint_layer_tracking(
     state_dict: dict[str, torch.Tensor],
     *,
@@ -121,8 +130,16 @@ def run_state_major_checkpoint_layer_tracking(
     if atol < 0:
         msg = "atol must be non-negative"
         raise ValueError(msg)
-    if pre_recurrence_mode not in {"source-boundary", "rank-gate-bsgs-poly"}:
-        msg = "pre_recurrence_mode must be 'source-boundary' or 'rank-gate-bsgs-poly'"
+    valid_pre_modes = {
+        "source-boundary",
+        "rank-gate-bsgs-poly",
+        "rank-gate-bc-bsgs-poly",
+    }
+    if pre_recurrence_mode not in valid_pre_modes:
+        msg = (
+            "pre_recurrence_mode must be 'source-boundary', "
+            "'rank-gate-bsgs-poly', or 'rank-gate-bc-bsgs-poly'"
+        )
         raise ValueError(msg)
     if polynomial_degree <= 0:
         msg = "polynomial_degree must be positive"
@@ -177,8 +194,8 @@ def run_state_major_checkpoint_layer_tracking(
     )
     reference = _precomputed_tail_reference(tensors)
     residual_ct = resolved_backend.encrypt(_pack_model_input(tensors.residual_input, config=config))
-    if pre_recurrence_mode == "rank-gate-bsgs-poly":
-        x_ct, gate_ct, skip_ct = _rank_gate_bsgs_poly_ciphertexts(
+    if pre_recurrence_mode in {"rank-gate-bsgs-poly", "rank-gate-bc-bsgs-poly"}:
+        pre_cts = _rank_gate_bsgs_poly_ciphertexts(
             resolved_backend,
             state_dict,
             layer_input=resolved_layer_input,
@@ -188,12 +205,21 @@ def run_state_major_checkpoint_layer_tracking(
             polynomial_degree=polynomial_degree,
             polynomial_range=polynomial_range,
         )
+        x_ct = pre_cts.rank_input
+        gate_ct = pre_cts.gate
+        skip_ct = pre_cts.skip_update
+        if pre_recurrence_mode == "rank-gate-bc-bsgs-poly":
+            b_ct = pre_cts.b
+            c_ct = pre_cts.c
+        else:
+            b_ct = resolved_backend.encrypt(_pack_state_major(tensors.b, config=config))
+            c_ct = resolved_backend.encrypt(_pack_state_major(tensors.c, config=config))
     else:
         x_ct = resolved_backend.encrypt(_pack_rank_block0(tensors.rank_input, config=config))
         gate_ct = resolved_backend.encrypt(_pack_rank_block0(tensors.gate, config=config))
         skip_ct = resolved_backend.encrypt(_pack_rank_block0(tensors.skip_update, config=config))
-    b_ct = resolved_backend.encrypt(_pack_state_major(tensors.b, config=config))
-    c_ct = resolved_backend.encrypt(_pack_state_major(tensors.c, config=config))
+        b_ct = resolved_backend.encrypt(_pack_state_major(tensors.b, config=config))
+        c_ct = resolved_backend.encrypt(_pack_state_major(tensors.c, config=config))
     previous_ct = resolved_backend.encrypt(_pack_state_major(tensors.previous_state, config=config))
     decay_ct = resolved_backend.encrypt(_pack_state_major(tensors.decay, config=config))
     tail = _run_state_major_tail(
@@ -246,7 +272,10 @@ def run_state_major_checkpoint_layer_tracking(
     checkpoint_adapter_max = max(checkpoint_adapter_errors.values())
     kernel_max = max(kernel_boundary_errors.values())
     max_abs_error = max(checkpoint_adapter_max, kernel_max)
-    rotations = required_state_major_checkpoint_layer_rotations(config)
+    rotations = required_state_major_checkpoint_layer_rotations(
+        config,
+        pre_recurrence_mode=pre_recurrence_mode,
+    )
     return StateMajorCheckpointLayerResult(
         stage="stage1-state-major-checkpoint-layer-tracking",
         measurement_scope={
@@ -258,12 +287,10 @@ def run_state_major_checkpoint_layer_tracking(
             "rank_pack_first": True,
             "slot_semantics_bsgs": True,
             "precomputed_source_pre_recurrence": pre_recurrence_mode == "source-boundary",
-            "rank_gate_computed_in_kernel": pre_recurrence_mode == "rank-gate-bsgs-poly",
-            "source_boundary_tensors": (
-                ("rank_input", "gate", "b", "c", "decay")
-                if pre_recurrence_mode == "source-boundary"
-                else ("b", "c", "decay")
-            ),
+            "rank_gate_computed_in_kernel": pre_recurrence_mode
+            in {"rank-gate-bsgs-poly", "rank-gate-bc-bsgs-poly"},
+            "dynamic_bc_computed_in_kernel": pre_recurrence_mode == "rank-gate-bc-bsgs-poly",
+            "source_boundary_tensors": _source_boundary_tensors(pre_recurrence_mode),
             "encrypted_recurrence_readout_out_projection": True,
             "pre_recurrence_mode": pre_recurrence_mode,
             "polynomial_degree": polynomial_degree,
@@ -271,9 +298,9 @@ def run_state_major_checkpoint_layer_tracking(
             "inter_layer_handoff_layout": "model",
             "full_model_correctness_claimed": False,
             "claim": (
-                "Validates a real checkpoint layer from source pre-recurrence "
-                "boundary tensors through the state-major recurrence/readout "
-                "and model-layout output handoff."
+                "Validates a real checkpoint layer through the state-major "
+                "pre-recurrence bridge, recurrence/readout, and model-layout "
+                "output handoff."
             ),
         },
         layer_index=layer_index,
@@ -296,8 +323,10 @@ def run_state_major_checkpoint_layer_tracking(
 
 def required_state_major_checkpoint_layer_rotations(
     config: StateMajorFullShapeConfig,
+    *,
+    pre_recurrence_mode: str = "source-boundary",
 ) -> tuple[int, ...]:
-    """Return application rotations used by the checkpoint tail kernel."""
+    """Return application rotations used by the checkpoint state-major kernel."""
 
     groups = slot_bsgs_rotation_groups(
         input_dim=config.mimo_rank,
@@ -312,7 +341,48 @@ def required_state_major_checkpoint_layer_rotations(
     rotations.update(
         state_axis_rotation_steps(rank_pad=config.rank_pad, d_state=config.d_state, sign=1)
     )
+    if pre_recurrence_mode in {"rank-gate-bsgs-poly", "rank-gate-bc-bsgs-poly"}:
+        model_groups = slot_bsgs_rotation_groups(
+            input_dim=config.d_model,
+            output_dim=config.mimo_rank,
+            baby_step=config.model_baby_step,
+        )
+        rotations.update(model_groups["baby"])
+        rotations.update(model_groups["giant"])
+    if pre_recurrence_mode == "rank-gate-bc-bsgs-poly":
+        bc_groups = slot_bsgs_rotation_groups(
+            input_dim=config.mimo_rank,
+            output_dim=config.d_state,
+            baby_step=min(config.rank_baby_step, config.mimo_rank),
+        )
+        rotations.update(bc_groups["baby"])
+        rotations.update(bc_groups["giant"])
+        rotations.update(_state_vector_to_state_major_rotation_steps(config))
     return tuple(sorted(rotations))
+
+
+def _state_vector_to_state_major_rotation_steps(
+    config: StateMajorFullShapeConfig,
+) -> tuple[int, ...]:
+    rotations: set[int] = set()
+    for state_index in range(config.d_state):
+        target_slot = state_index * config.rank_pad
+        shift = state_index - target_slot
+        if shift:
+            rotations.add(shift)
+        step = 1
+        while step < config.rank_pad:
+            rotations.add(-step)
+            step *= 2
+    return tuple(sorted(rotations))
+
+
+def _source_boundary_tensors(pre_recurrence_mode: str) -> tuple[str, ...]:
+    if pre_recurrence_mode == "source-boundary":
+        return ("rank_input", "gate", "b", "c", "decay")
+    if pre_recurrence_mode == "rank-gate-bsgs-poly":
+        return ("b", "c", "decay")
+    return ("decay",)
 
 
 def _rank_gate_bsgs_poly_ciphertexts(
@@ -325,7 +395,7 @@ def _rank_gate_bsgs_poly_ciphertexts(
     norm_eps: float,
     polynomial_degree: int,
     polynomial_range: float,
-) -> tuple[Any, Any, Any]:
+) -> _RankGatePreRecurrenceCiphertexts:
     source = _build_layer_tensors(
         state_dict,
         layer_index=layer_index,
@@ -389,7 +459,78 @@ def _rank_gate_bsgs_poly_ciphertexts(
         rank_input_ct,
         backend.encode(_pack_rank_block0(_to_numpy(source.d_skip), config=config)),
     )
-    return rank_input_ct, gate_ct, skip_ct
+    b_ct, c_ct = _dynamic_bc_ciphertexts(
+        backend,
+        rank_input_ct,
+        source=source,
+        dt_rank=0 if source.dt_in_weight is None else int(source.dt_in_weight.shape[0]),
+        config=config,
+    )
+    return _RankGatePreRecurrenceCiphertexts(
+        rank_input=rank_input_ct,
+        gate=gate_ct,
+        b=b_ct,
+        c=c_ct,
+        skip_update=skip_ct,
+    )
+
+
+def _dynamic_bc_ciphertexts(
+    backend: FHEBackend,
+    rank_input_ct: Any,
+    *,
+    source: Any,
+    dt_rank: int,
+    config: StateMajorFullShapeConfig,
+) -> tuple[Any, Any]:
+    if source.x_proj_weight is None:
+        msg = "checkpoint layer must provide x_proj tensors for dynamic B/C"
+        raise ValueError(msg)
+    x_proj = source.x_proj_weight.detach().cpu().float()
+    b_weight = x_proj[dt_rank : dt_rank + config.d_state]
+    c_weight = x_proj[dt_rank + config.d_state : dt_rank + 2 * config.d_state]
+    b_vec_ct = slot_bsgs_linear_block0(
+        backend,
+        rank_input_ct,
+        _to_numpy(b_weight),
+        input_dim=config.mimo_rank,
+        output_dim=config.d_state,
+        baby_step=min(config.rank_baby_step, config.mimo_rank),
+    )
+    c_vec_ct = slot_bsgs_linear_block0(
+        backend,
+        rank_input_ct,
+        _to_numpy(c_weight),
+        input_dim=config.mimo_rank,
+        output_dim=config.d_state,
+        baby_step=min(config.rank_baby_step, config.mimo_rank),
+    )
+    return (
+        _state_vector_to_state_major_ciphertext(backend, b_vec_ct, config=config),
+        _state_vector_to_state_major_ciphertext(backend, c_vec_ct, config=config),
+    )
+
+
+def _state_vector_to_state_major_ciphertext(
+    backend: FHEBackend,
+    state_vector_ct: Any,
+    *,
+    config: StateMajorFullShapeConfig,
+) -> Any:
+    output_ct = backend.encrypt(np.zeros(backend.batch_size, dtype=float))
+    for state_index in range(config.d_state):
+        mask = np.zeros(backend.batch_size, dtype=float)
+        mask[state_index] = 1.0
+        selected = backend.mul_plain(state_vector_ct, backend.encode(mask))
+        target_slot = state_index * config.rank_pad
+        shift = state_index - target_slot
+        block_ct = selected if shift == 0 else backend.rotate(selected, shift)
+        step = 1
+        while step < config.rank_pad:
+            block_ct = backend.add(block_ct, backend.rotate(block_ct, -step))
+            step *= 2
+        output_ct = backend.add(output_ct, block_ct)
+    return output_ct
 
 
 def _checkpoint_tail_tensors(

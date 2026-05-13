@@ -81,7 +81,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--rank-baby-step", type=int, default=64)
     parser.add_argument(
         "--pre-recurrence-mode",
-        choices=("source-boundary", "rank-gate-bsgs-poly"),
+        choices=("source-boundary", "rank-gate-bsgs-poly", "rank-gate-bc-bsgs-poly"),
         default="source-boundary",
     )
     parser.add_argument("--polynomial-degree", type=int, default=15)
