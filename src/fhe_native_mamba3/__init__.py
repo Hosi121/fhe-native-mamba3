@@ -77,6 +77,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.checkpoint_sketch_matrix",
         "CheckpointSketchMatrixRow",
     ),
+    "CheckpointLearnedSketchMatrixResult": (
+        "fhe_native_mamba3.checkpoint_learned_sketch_matrix",
+        "CheckpointLearnedSketchMatrixResult",
+    ),
+    "CheckpointLearnedSketchMatrixRow": (
+        "fhe_native_mamba3.checkpoint_learned_sketch_matrix",
+        "CheckpointLearnedSketchMatrixRow",
+    ),
     "SketchEvidenceReport": (
         "fhe_native_mamba3.sketch_evidence_report",
         "SketchEvidenceReport",
@@ -488,6 +496,10 @@ _LAZY_IMPORTS = {
     "run_checkpoint_sketch_matrix": (
         "fhe_native_mamba3.checkpoint_sketch_matrix",
         "run_checkpoint_sketch_matrix",
+    ),
+    "run_checkpoint_learned_sketch_matrix": (
+        "fhe_native_mamba3.checkpoint_learned_sketch_matrix",
+        "run_checkpoint_learned_sketch_matrix",
     ),
     "resolve_rank_strategy": (
         "fhe_native_mamba3.checkpoint_sketch_matrix",
@@ -1064,6 +1076,8 @@ __all__ = [
     "CheckpointFullLayerSweepLayer",
     "CheckpointFullLayerSweepResult",
     "CheckpointInspection",
+    "CheckpointLearnedSketchMatrixResult",
+    "CheckpointLearnedSketchMatrixRow",
     "CheckpointPreRecurrenceChainGate",
     "CheckpointPreRecurrenceCiphertextTrace",
     "CheckpointPreRecurrenceGroupedCiphertextTrace",
@@ -1295,6 +1309,7 @@ __all__ = [
     "run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_chain_proxy",
     "run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_ciphertexts_with_backend",
     "run_checkpoint_grouped_encrypted_pre_recurrence_full_layer_gate",
+    "run_checkpoint_learned_sketch_matrix",
     "run_checkpoint_pre_recurrence_chain_gate",
     "run_checkpoint_pre_recurrence_ciphertexts_with_backend",
     "run_checkpoint_pre_recurrence_stage_gate",
