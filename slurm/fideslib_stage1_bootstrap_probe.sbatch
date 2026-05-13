@@ -26,6 +26,7 @@ BUILD_DIR="${BUILD_DIR:-${SLURM_SUBMIT_DIR}/build/fideslib_stage1_bootstrap_prob
 BUILD_JOBS="${BUILD_JOBS:-${SLURM_CPUS_PER_TASK:-8}}"
 RUN_NAME="${RUN_NAME:-stage1-s007-fideslib-bootstrap-${SLURM_JOB_ID:-manual}}"
 OUTPUT_JSON="${OUTPUT_JSON:-runs/${RUN_NAME}.json}"
+export OUTPUT_JSON
 
 RING_DIM="${RING_DIM:-65536}"
 NUM_SLOTS="${NUM_SLOTS:-32768}"

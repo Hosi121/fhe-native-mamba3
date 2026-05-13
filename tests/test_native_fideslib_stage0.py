@@ -109,6 +109,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "run_fideslib_stage1_bootstrap_probe.py" in stage1_bootstrap_slurm_text
     assert "RING_DIM:-65536" in stage1_bootstrap_slurm_text
     assert "NUM_SLOTS:-32768" in stage1_bootstrap_slurm_text
+    assert "export OUTPUT_JSON" in stage1_bootstrap_slurm_text
 
     checkpoint_openfhe_text = checkpoint_openfhe_slurm.read_text()
     assert "mamba-checkpoint-recurrence-smoke" in checkpoint_openfhe_text
