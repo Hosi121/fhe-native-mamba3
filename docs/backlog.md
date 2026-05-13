@@ -91,7 +91,7 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 | PBI-S2-014 | Stage 2 | Done | PBI-S2-005, PBI-S2-013 | Expand learned sketch baselines from a single trace to the checkpoint sketch matrix. Acceptance: run PCA/SVD learned rows over the same layer/prompt/rank-strategy grid used by PBI-S2-013, emit a compact learned-vs-SRHT report, and keep metadata explicit that projection training is plaintext/offline and data-dependent. Evidence: `src/fhe_native_mamba3/checkpoint_learned_sketch_matrix.py`, `src/fhe_native_mamba3/learned_sketch_report.py`, scripts `run_checkpoint_learned_sketch_matrix.py` and `build_stage2_learned_sketch_report.py`, tests in `tests/test_checkpoint_learned_sketch_matrix.py` / `tests/test_learned_sketch_report.py`, matrix artifact `runs/stage2-s014-learned-sketch-matrix-v0387.json`, and report artifact `runs/stage2-s014-learned-sketch-report-v0388.json`. Result: over the PBI-S2-013 grid (layers `0/12/23`, prompts `short/repeat`, rank strategies `first:8` and `stride:8:64`), learned PCA/SVD recommends sketch size `4` for `12/12` rows with worst pairnorm L2 error `3.06e-02`; matched SRHT recommends size `16` for `11/12` rows and size `8` for `1/12`. Scope remains plaintext/offline and data-dependent; no encrypted execution or perplexity claim. |
 | PBI-OPS-001 | DevEx | Done | none | Add fast/slow test profiles so low-risk edits run a short local/remote gate while OpenFHE, SLURM, and full pre-commit checks remain available as explicit slow gates. Evidence: `scripts/run_fast_checks.sh`, `scripts/run_checks.sh`, `scripts/remote_checks.sh`, and `docs/testing.md`; full checks avoid duplicate pre-commit execution unless `RUN_PRECOMMIT=1` is requested. |
 | PBI-OPS-002 | DevEx | Done | none | Maintain an artifact ledger that maps high/SLURM job IDs to PBI IDs, JSON paths, git commits, and pass/fail status. Evidence: `docs/artifact_ledger.md`, `scripts/update_artifact_ledger.py`, and tests in `tests/test_artifact_ledger_update_script.py`. The updater consumes `ledger_rows` emitted by safe-campaign collection artifacts, dry-runs by default, appends with `--write`, dedupes exact rows, and fails on same-job/artifact conflicts instead of silently overwriting richer curated ledger entries. |
-| PBI-OPS-003 | DevEx | Open | PBI-OPS-002 | Export backlog PBIs to GitHub issues/project items when repository permissions are available. Acceptance requires issue titles, dependencies, and status labels generated from `docs/backlog.md` without hand-copying. |
+| PBI-OPS-003 | DevEx | Done | PBI-OPS-002 | Export backlog PBIs to GitHub issues when repository permissions are available; Project board item movement is out of scope for this slice. Acceptance requires issue titles, dependencies, and status labels generated from `docs/backlog.md` without hand-copying. Evidence: `src/fhe_native_mamba3/backlog_issues.py`, `scripts/sync_backlog_issues.py`, tests in `tests/test_backlog_issues.py` / `tests/test_backlog_issue_sync_script.py`, and dry-run artifact `runs/pbi-ops-003-issue-sync-plan-v0390.json`. Result: the script parses `69` backlog PBIs, maps existing GitHub issues by PBI ID, and emits deterministic create/update/close/noop plans with generated titles, dependencies, and status labels. |
 | PBI-OPS-004 | DevEx | Done | PBI-OPS-002 | Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection. Evidence: `scripts/submit_safe_slurm_campaign.py` submits/dry-runs only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, and emits manifest/ledger-row templates; `scripts/collect_safe_slurm_campaign.py` validates completed artifacts, emits ledger-row candidates, and now supports `--pull-missing --remote high --remote-dir ~/cipher/fhe-native-mamba3` with `--pull-dry-run` for safe validation. Covered by `tests/test_safe_slurm_campaign_script.py` and `tests/test_safe_slurm_campaign_collect_script.py`, exercised by high jobs `10157`-`10163`. High-memory OpenFHE full-chain jobs remain explicitly excluded from the safe campaign manifest. |
 
 ## Dependency Map
@@ -126,18 +126,19 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   PBI-S1-041, deciding whether to run the full one-layer evaluation or record a
   bounded no-go from the observed setup memory and tracking op count.
 - Sketch/range evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-013 is complete; PBI-S2-005 adds the first learned/data-dependent sketch baseline; PBI-S2-014 expands it to the matrix report; PBI-S2-004 continues to feed PBI-S2-008/PBI-S2-009, and PBI-S0-010 feeds PBI-S2-009.
-- Encrypted sketch execution: PBI-S2-006 and PBI-S2-007 are complete; the remaining sketch branch is PBI-S2-005 learned/data-dependent sketch baselines.
+- Encrypted sketch execution: PBI-S2-006 and PBI-S2-007 are complete; the learned/data-dependent sketch branch is complete through PBI-S2-014. Remaining Stage 2 work is range-aware calibration/LoRA under PBI-S2-009.
 - Decoding branch: PBI-S2-003 is complete at the current scope. PBI-S2-010 records client-side decode accounting, and PBI-S2-011 records a toy encrypted CutMax/OpenFHE path. Full-vocab encrypted generation is not claimed.
-- Development operations: PBI-OPS-001 and PBI-OPS-002 are done; PBI-OPS-002 now feeds PBI-OPS-003 and the remaining remote-artifact-pull slice of PBI-OPS-004.
+- Development operations: PBI-OPS-001 through PBI-OPS-004 are done at their current scope. PBI-OPS-003 now provides deterministic GitHub Issue sync plans from the canonical backlog; GitHub Project board automation is not yet claimed.
 
 ## Near-Term Parallel Slices
 
-- Mainline A: implement PBI-S1-041, the bounded Mamba-130M-shape one-layer
-  OpenFHE evaluation or no-go artifact.
+- Mainline A: collect high job `10300` for PBI-S1-041, the bounded
+  Mamba-130M-shape one-layer OpenFHE evaluation or no-go artifact.
 - Stage 2 B: PBI-S2-009 range-aware calibration/LoRA evidence can proceed
   independently of the Stage 1 one-layer OpenFHE run.
-- Low-risk reporting C: PBI-OPS-004 remote artifact pull automation can proceed
-  independently.
+- Low-risk reporting C: run `scripts/sync_backlog_issues.py` after backlog
+  edits to keep GitHub Issue plans in sync; direct Project board automation is
+  future DevEx work, not claimed in this line.
 
 ## Stale Or Obsolete Notes
 
