@@ -11,9 +11,10 @@ from torch.nn import functional
 
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.tracking import NumpyTrackingBackend
+from fhe_native_mamba3.checkpoint_pre_recurrence import _silu_ciphertext
 from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint
 from fhe_native_mamba3.mamba_reference import _build_layer_tensors, _run_source_dynamic_formula
-from fhe_native_mamba3.slot_bsgs import slot_bsgs_rotation_groups
+from fhe_native_mamba3.slot_bsgs import slot_bsgs_linear_block0, slot_bsgs_rotation_groups
 from fhe_native_mamba3.stage1_state_major_fullshape import (
     StateMajorFullShapeConfig,
     _decrypt_rank,
@@ -102,6 +103,9 @@ def run_state_major_checkpoint_layer_tracking(
     rank_pad: int | None = None,
     model_baby_step: int = 64,
     rank_baby_step: int = 64,
+    pre_recurrence_mode: str = "source-boundary",
+    polynomial_degree: int = 15,
+    polynomial_range: float = 8.0,
     backend: FHEBackend | None = None,
     norm_eps: float = 1e-5,
     atol: float = 1e-6,
@@ -116,6 +120,15 @@ def run_state_major_checkpoint_layer_tracking(
 
     if atol < 0:
         msg = "atol must be non-negative"
+        raise ValueError(msg)
+    if pre_recurrence_mode not in {"source-boundary", "rank-gate-bsgs-poly"}:
+        msg = "pre_recurrence_mode must be 'source-boundary' or 'rank-gate-bsgs-poly'"
+        raise ValueError(msg)
+    if polynomial_degree <= 0:
+        msg = "polynomial_degree must be positive"
+        raise ValueError(msg)
+    if polynomial_range <= 0:
+        msg = "polynomial_range must be positive"
         raise ValueError(msg)
     plan = plan_mamba_checkpoint(state_dict)
     if layer_index >= len(plan.layers):
@@ -164,13 +177,25 @@ def run_state_major_checkpoint_layer_tracking(
     )
     reference = _precomputed_tail_reference(tensors)
     residual_ct = resolved_backend.encrypt(_pack_model_input(tensors.residual_input, config=config))
-    x_ct = resolved_backend.encrypt(_pack_rank_block0(tensors.rank_input, config=config))
-    gate_ct = resolved_backend.encrypt(_pack_rank_block0(tensors.gate, config=config))
+    if pre_recurrence_mode == "rank-gate-bsgs-poly":
+        x_ct, gate_ct, skip_ct = _rank_gate_bsgs_poly_ciphertexts(
+            resolved_backend,
+            state_dict,
+            layer_input=resolved_layer_input,
+            layer_index=layer_index,
+            config=config,
+            norm_eps=norm_eps,
+            polynomial_degree=polynomial_degree,
+            polynomial_range=polynomial_range,
+        )
+    else:
+        x_ct = resolved_backend.encrypt(_pack_rank_block0(tensors.rank_input, config=config))
+        gate_ct = resolved_backend.encrypt(_pack_rank_block0(tensors.gate, config=config))
+        skip_ct = resolved_backend.encrypt(_pack_rank_block0(tensors.skip_update, config=config))
     b_ct = resolved_backend.encrypt(_pack_state_major(tensors.b, config=config))
     c_ct = resolved_backend.encrypt(_pack_state_major(tensors.c, config=config))
     previous_ct = resolved_backend.encrypt(_pack_state_major(tensors.previous_state, config=config))
     decay_ct = resolved_backend.encrypt(_pack_state_major(tensors.decay, config=config))
-    skip_ct = resolved_backend.encrypt(_pack_rank_block0(tensors.skip_update, config=config))
     tail = _run_state_major_tail(
         resolved_backend,
         residual_ct=residual_ct,
@@ -232,8 +257,17 @@ def run_state_major_checkpoint_layer_tracking(
             "state_major_layout": True,
             "rank_pack_first": True,
             "slot_semantics_bsgs": True,
-            "precomputed_source_pre_recurrence": True,
+            "precomputed_source_pre_recurrence": pre_recurrence_mode == "source-boundary",
+            "rank_gate_computed_in_kernel": pre_recurrence_mode == "rank-gate-bsgs-poly",
+            "source_boundary_tensors": (
+                ("rank_input", "gate", "b", "c", "decay")
+                if pre_recurrence_mode == "source-boundary"
+                else ("b", "c", "decay")
+            ),
             "encrypted_recurrence_readout_out_projection": True,
+            "pre_recurrence_mode": pre_recurrence_mode,
+            "polynomial_degree": polynomial_degree,
+            "polynomial_range": polynomial_range,
             "inter_layer_handoff_layout": "model",
             "full_model_correctness_claimed": False,
             "claim": (
@@ -279,6 +313,83 @@ def required_state_major_checkpoint_layer_rotations(
         state_axis_rotation_steps(rank_pad=config.rank_pad, d_state=config.d_state, sign=1)
     )
     return tuple(sorted(rotations))
+
+
+def _rank_gate_bsgs_poly_ciphertexts(
+    backend: FHEBackend,
+    state_dict: dict[str, torch.Tensor],
+    *,
+    layer_input: torch.Tensor,
+    layer_index: int,
+    config: StateMajorFullShapeConfig,
+    norm_eps: float,
+    polynomial_degree: int,
+    polynomial_range: float,
+) -> tuple[Any, Any, Any]:
+    source = _build_layer_tensors(
+        state_dict,
+        layer_index=layer_index,
+        d_model=config.d_model,
+        d_state=config.d_state,
+        mimo_rank=config.mimo_rank,
+        include_gate=True,
+    )
+    if source.gate_weight is None:
+        msg = "checkpoint layer must provide gate tensors"
+        raise ValueError(msg)
+    dtype = layer_input.dtype
+    device = layer_input.device
+    with torch.no_grad():
+        rms = layer_input * torch.rsqrt(layer_input.pow(2).mean(dim=-1, keepdim=True) + norm_eps)
+        rms = rms * source.norm_weight.to(device=device, dtype=dtype)
+    rms_ct = backend.encrypt(_pack_model_input(_to_numpy(rms[0, 0]), config=config))
+    conv_last = source.conv1d_weight[:, -1].to(device=device, dtype=dtype)
+    effective_rank_weight = source.in_rank_weight.to(device=device, dtype=dtype) * conv_last.view(
+        -1,
+        1,
+    )
+    conv_pre_ct = slot_bsgs_linear_block0(
+        backend,
+        rms_ct,
+        _to_numpy(effective_rank_weight),
+        input_dim=config.d_model,
+        output_dim=config.mimo_rank,
+        baby_step=config.model_baby_step,
+    )
+    conv_bias_ct = backend.encrypt(
+        _pack_rank_block0(
+            _to_numpy(source.conv1d_bias.to(device=device, dtype=dtype)),
+            config=config,
+        )
+    )
+    conv_pre_ct = backend.add(conv_pre_ct, conv_bias_ct)
+    rank_input_ct = _silu_ciphertext(
+        conv_pre_ct,
+        output_dim=config.mimo_rank,
+        backend=backend,
+        degree=polynomial_degree,
+        approximation_range=polynomial_range,
+    )
+    gate_pre_ct = slot_bsgs_linear_block0(
+        backend,
+        rms_ct,
+        _to_numpy(source.gate_weight.to(device=device, dtype=dtype)),
+        input_dim=config.d_model,
+        output_dim=config.mimo_rank,
+        baby_step=config.model_baby_step,
+    )
+    gate_ct = _silu_ciphertext(
+        gate_pre_ct,
+        output_dim=config.mimo_rank,
+        backend=backend,
+        degree=polynomial_degree,
+        approximation_range=polynomial_range,
+    )
+    skip_ct = backend.mul_plain(
+        rank_input_ct,
+        backend.encode(_pack_rank_block0(_to_numpy(source.d_skip), config=config)),
+    )
+    return rank_input_ct, gate_ct, skip_ct
 
 
 def _checkpoint_tail_tensors(

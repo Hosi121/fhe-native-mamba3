@@ -35,6 +35,9 @@ def main() -> int:
         rank_pad=args.rank_pad,
         model_baby_step=args.model_baby_step,
         rank_baby_step=args.rank_baby_step,
+        pre_recurrence_mode=args.pre_recurrence_mode,
+        polynomial_degree=args.polynomial_degree,
+        polynomial_range=args.polynomial_range,
         norm_eps=args.norm_eps,
         atol=args.atol,
     )
@@ -76,6 +79,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--rank-pad", type=int, default=None)
     parser.add_argument("--model-baby-step", type=int, default=64)
     parser.add_argument("--rank-baby-step", type=int, default=64)
+    parser.add_argument(
+        "--pre-recurrence-mode",
+        choices=("source-boundary", "rank-gate-bsgs-poly"),
+        default="source-boundary",
+    )
+    parser.add_argument("--polynomial-degree", type=int, default=15)
+    parser.add_argument("--polynomial-range", type=float, default=8.0)
     parser.add_argument("--norm-eps", type=float, default=1e-5)
     parser.add_argument("--atol", type=float, default=1e-6)
     parser.add_argument("--output-json", default="")
