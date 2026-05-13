@@ -38,6 +38,8 @@ def main() -> int:
         pre_recurrence_mode=args.pre_recurrence_mode,
         polynomial_degree=args.polynomial_degree,
         polynomial_range=args.polynomial_range,
+        previous_state_scale=args.previous_state_scale,
+        previous_state_seed=args.previous_state_seed,
         norm_eps=args.norm_eps,
         atol=args.atol,
     )
@@ -91,6 +93,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--polynomial-degree", type=int, default=15)
     parser.add_argument("--polynomial-range", type=float, default=8.0)
+    parser.add_argument("--previous-state-scale", type=float, default=0.0)
+    parser.add_argument("--previous-state-seed", type=int, default=0)
     parser.add_argument("--norm-eps", type=float, default=1e-5)
     parser.add_argument("--atol", type=float, default=1e-6)
     parser.add_argument("--output-json", default="")

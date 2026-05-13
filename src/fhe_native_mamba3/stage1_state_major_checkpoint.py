@@ -120,6 +120,9 @@ def run_state_major_checkpoint_layer_tracking(
     pre_recurrence_mode: str = "source-boundary",
     polynomial_degree: int = 15,
     polynomial_range: float = 8.0,
+    previous_state: np.ndarray | torch.Tensor | None = None,
+    previous_state_scale: float = 0.0,
+    previous_state_seed: int = 0,
     backend: FHEBackend | None = None,
     norm_eps: float = 1e-5,
     atol: float = 1e-6,
@@ -153,6 +156,9 @@ def run_state_major_checkpoint_layer_tracking(
         raise ValueError(msg)
     if polynomial_range <= 0:
         msg = "polynomial_range must be positive"
+        raise ValueError(msg)
+    if previous_state_scale < 0:
+        msg = "previous_state_scale must be non-negative"
         raise ValueError(msg)
     plan = plan_mamba_checkpoint(state_dict)
     if layer_index >= len(plan.layers):
@@ -198,6 +204,9 @@ def run_state_major_checkpoint_layer_tracking(
         layer_index=layer_index,
         config=config,
         norm_eps=norm_eps,
+        previous_state=previous_state,
+        previous_state_scale=previous_state_scale,
+        previous_state_seed=previous_state_seed,
     )
     reference = _precomputed_tail_reference(tensors)
     residual_ct = resolved_backend.encrypt(_pack_model_input(tensors.residual_input, config=config))
@@ -318,6 +327,11 @@ def run_state_major_checkpoint_layer_tracking(
             "dynamic_bc_computed_in_kernel": pre_recurrence_mode
             in {"rank-gate-bc-bsgs-poly", "rank-gate-bc-decay-bsgs-poly"},
             "decay_computed_in_kernel": pre_recurrence_mode == "rank-gate-bc-decay-bsgs-poly",
+            "previous_state_nonzero": bool(np.any(tensors.previous_state)),
+            "previous_state_scale": previous_state_scale,
+            "previous_state_seed": previous_state_seed,
+            "decay_effect_checked": bool(np.any(tensors.previous_state))
+            and pre_recurrence_mode == "rank-gate-bc-decay-bsgs-poly",
             "source_boundary_tensors": _source_boundary_tensors(pre_recurrence_mode),
             "encrypted_recurrence_readout_out_projection": True,
             "pre_recurrence_mode": pre_recurrence_mode,
@@ -651,6 +665,9 @@ def _checkpoint_tail_tensors(
     layer_index: int,
     config: StateMajorFullShapeConfig,
     norm_eps: float,
+    previous_state: np.ndarray | torch.Tensor | None,
+    previous_state_scale: float,
+    previous_state_seed: int,
 ) -> _CheckpointTailTensors:
     source = _build_layer_tensors(
         state_dict,
@@ -682,6 +699,9 @@ def _checkpoint_tail_tensors(
             decay_by_token=stages.decay_by_token,
             config=config,
         )
+    residual_input = _to_numpy(layer_input[0, 0])
+    rank_input = _to_numpy(stages.causal_conv_post_silu[0, 0])
+    gate_values = _to_numpy(gate[0, 0])
     b = np.broadcast_to(
         _to_numpy(stages.dynamic_b_terms[0, 0]).reshape(config.d_state, 1),
         (config.d_state, config.mimo_rank),
@@ -690,18 +710,31 @@ def _checkpoint_tail_tensors(
         _to_numpy(stages.dynamic_c_terms[0, 0]).reshape(config.d_state, 1),
         (config.d_state, config.mimo_rank),
     ).copy()
+    resolved_previous_state = _resolve_previous_state(
+        previous_state,
+        config=config,
+        scale=previous_state_scale,
+        seed=previous_state_seed,
+    )
+    skip_update_values = _to_numpy(skip_update[0, 0])
+    w_out = _to_numpy(source.out_rank_weight)
+    state_new = decay * resolved_previous_state + b * rank_input[None, :]
+    readout_rank = np.sum(c * state_new, axis=0)
+    source_final_output = residual_input + w_out @ (
+        gate_values * (readout_rank + skip_update_values)
+    )
     return _CheckpointTailTensors(
-        residual_input=_to_numpy(layer_input[0, 0]),
-        rank_input=_to_numpy(stages.causal_conv_post_silu[0, 0]),
-        gate=_to_numpy(gate[0, 0]),
+        residual_input=residual_input,
+        rank_input=rank_input,
+        gate=gate_values,
         b=b,
         c=c,
         decay=decay,
-        previous_state=np.zeros((config.d_state, config.mimo_rank), dtype=float),
-        skip_update=_to_numpy(skip_update[0, 0]),
-        w_out=_to_numpy(source.out_rank_weight),
-        source_readout_rank=_to_numpy(stages.recurrence_rank_output[0, 0]),
-        source_final_output=_to_numpy(stages.final_block_output[0, 0]),
+        previous_state=resolved_previous_state,
+        skip_update=skip_update_values,
+        w_out=w_out,
+        source_readout_rank=readout_rank,
+        source_final_output=source_final_output,
         dt_rank=0 if source.dt_in_weight is None else int(source.dt_in_weight.shape[0]),
     )
 
@@ -716,6 +749,31 @@ def _source_decay_matrix(
         decay = source_decay.view(config.mimo_rank).reshape(1, config.mimo_rank)
         return np.broadcast_to(_to_numpy(decay), (config.d_state, config.mimo_rank)).copy()
     return _to_numpy(decay_by_token[0, 0]).T.copy()
+
+
+def _resolve_previous_state(
+    previous_state: np.ndarray | torch.Tensor | None,
+    *,
+    config: StateMajorFullShapeConfig,
+    scale: float,
+    seed: int,
+) -> np.ndarray:
+    shape = (config.d_state, config.mimo_rank)
+    if previous_state is not None:
+        values = (
+            previous_state.detach().cpu().numpy()
+            if isinstance(previous_state, torch.Tensor)
+            else np.asarray(previous_state)
+        )
+        values = values.astype(float, copy=False)
+        if values.shape != shape:
+            msg = f"previous_state must have shape {shape}, got {values.shape}"
+            raise ValueError(msg)
+        return values.copy()
+    if scale == 0:
+        return np.zeros(shape, dtype=float)
+    rng = np.random.default_rng(seed)
+    return rng.normal(0.0, scale, size=shape)
 
 
 def _precomputed_tail_reference(tensors: _CheckpointTailTensors) -> dict[str, np.ndarray]:
