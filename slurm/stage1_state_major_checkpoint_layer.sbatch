@@ -29,6 +29,7 @@ MODEL_BABY_STEP="${MODEL_BABY_STEP:-4}"
 RANK_BABY_STEP="${RANK_BABY_STEP:-4}"
 PRE_RECURRENCE_MODE="${PRE_RECURRENCE_MODE:-rank-gate-bc-decay-bsgs-poly}"
 POLYNOMIAL_DEGREE="${POLYNOMIAL_DEGREE:-15}"
+GATE_POLYNOMIAL_DEGREE="${GATE_POLYNOMIAL_DEGREE:-}"
 POLYNOMIAL_RANGE="${POLYNOMIAL_RANGE:-8.0}"
 PREVIOUS_STATE_SCALE="${PREVIOUS_STATE_SCALE:-0.05}"
 PREVIOUS_STATE_SEED="${PREVIOUS_STATE_SEED:-7}"
@@ -86,6 +87,11 @@ PY
   fi
 fi
 
+EXTRA_ARGS=()
+if [[ -n "${GATE_POLYNOMIAL_DEGREE}" ]]; then
+  EXTRA_ARGS+=(--gate-polynomial-degree "${GATE_POLYNOMIAL_DEGREE}")
+fi
+
 section "Run Stage 1 state-major checkpoint layer"
 "${PYTHON}" scripts/run_stage1_state_major_checkpoint_layer_tracking.py "${CHECKPOINT}" \
   --backend "${BACKEND}" \
@@ -99,6 +105,7 @@ section "Run Stage 1 state-major checkpoint layer"
   --rank-baby-step "${RANK_BABY_STEP}" \
   --pre-recurrence-mode "${PRE_RECURRENCE_MODE}" \
   --polynomial-degree "${POLYNOMIAL_DEGREE}" \
+  "${EXTRA_ARGS[@]}" \
   --polynomial-range "${POLYNOMIAL_RANGE}" \
   --previous-state-scale "${PREVIOUS_STATE_SCALE}" \
   --previous-state-seed "${PREVIOUS_STATE_SEED}" \
