@@ -92,6 +92,47 @@ def test_checkpoint_layer_tracking_script_runs(tmp_path) -> None:
     assert persisted["kernel_boundary_errors"] == payload["kernel_boundary_errors"]
 
 
+def test_checkpoint_layer_tracking_script_emits_failure_json(tmp_path) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_json = tmp_path / "failed-state-major-checkpoint.json"
+    torch.save({"model": _tiny_hf_mamba_state_dict()}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_stage1_state_major_checkpoint_layer_tracking.py",
+            str(checkpoint_path),
+            "--state-dict-key",
+            "missing",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "6",
+            "--d-model-pad",
+            "8",
+            "--rank-pad",
+            "8",
+            "--output-json",
+            str(output_json),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    persisted = json.loads(output_json.read_text(encoding="utf-8"))
+
+    assert completed.returncode == 1
+    assert payload["version"] == __version__
+    assert payload["status"] == "failed"
+    assert payload["passed"] is False
+    assert payload["failure_type"] == "ValueError"
+    assert payload["measurement_scope"]["diagnostic_failure_artifact"] is True
+    assert persisted["failure_reason"] == payload["failure_reason"]
+
+
 def test_checkpoint_layer_tracking_can_compute_rank_and_gate_with_bsgs_poly() -> None:
     result = run_state_major_checkpoint_layer_tracking(
         _tiny_hf_mamba_state_dict(),

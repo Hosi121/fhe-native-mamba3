@@ -12,6 +12,17 @@ sys.path.insert(0, str(ROOT / "src"))
 
 
 def main() -> int:
+    args = _parse_args()
+    try:
+        return _run(args)
+    except Exception as exc:
+        if not args.output_json:
+            raise
+        _emit_failure_payload(args, exc)
+        return 1
+
+
+def _run(args: argparse.Namespace) -> int:
     from fhe_native_mamba3 import __version__
     from fhe_native_mamba3.artifact_validation import current_git_commit
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
@@ -22,7 +33,6 @@ def main() -> int:
         run_state_major_checkpoint_layer_tracking,
     )
 
-    args = _parse_args()
     state_dict, resolved_key = load_checkpoint_state_dict(
         args.checkpoint,
         state_dict_key=args.state_dict_key,
@@ -94,6 +104,51 @@ def main() -> int:
     }
     emit_json_payload(payload, output_json=args.output_json)
     return 0 if result.passed else 1
+
+
+def _emit_failure_payload(args: argparse.Namespace, exc: Exception) -> None:
+    from fhe_native_mamba3 import __version__
+    from fhe_native_mamba3.artifact_validation import current_git_commit
+    from fhe_native_mamba3.cli_support import emit_json_payload
+
+    payload = {
+        "version": __version__,
+        "repo_commit": current_git_commit(ROOT),
+        "stage": "stage1-state-major-checkpoint-layer-tracking",
+        "status": "failed",
+        "passed": False,
+        "checkpoint": str(args.checkpoint),
+        "state_dict_key": args.state_dict_key,
+        "backend": args.backend,
+        "encrypted": args.backend == "openfhe",
+        "failure_type": type(exc).__name__,
+        "failure_reason": str(exc),
+        "measurement_scope": {
+            "benchmark": False,
+            "checkpoint_layer": True,
+            "state_major_layout": True,
+            "rank_pack_first": True,
+            "slot_semantics_bsgs": True,
+            "pre_recurrence_mode": args.pre_recurrence_mode,
+            "diagnostic_failure_artifact": True,
+            "full_model_correctness_claimed": False,
+        },
+        "parameters": {
+            "d_model": args.d_model,
+            "d_state": args.d_state,
+            "mimo_rank": args.mimo_rank,
+            "d_model_pad": args.d_model_pad,
+            "rank_pad": args.rank_pad,
+            "model_baby_step": args.model_baby_step,
+            "rank_baby_step": args.rank_baby_step,
+            "polynomial_degree": args.polynomial_degree,
+            "polynomial_range": args.polynomial_range,
+            "multiplicative_depth": args.multiplicative_depth,
+            "scaling_mod_size": args.scaling_mod_size,
+            "ring_dimension": args.ring_dimension,
+        },
+    }
+    emit_json_payload(payload, output_json=args.output_json)
 
 
 def _parse_args() -> argparse.Namespace:
