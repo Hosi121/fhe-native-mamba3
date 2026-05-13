@@ -8,6 +8,8 @@ from fhe_native_mamba3.backends.openfhe import (
     _resolve_ring_dimension,
     ckks_batch_size_for_slots,
     ckks_ring_dimension_for_batch_size,
+    normalize_ckks_rotation_index,
+    normalize_ckks_rotation_set,
 )
 from fhe_native_mamba3.backends.tracking import TrackingBackend
 from fhe_native_mamba3.openfhe_backend import (
@@ -65,6 +67,15 @@ def test_explicit_openfhe_ring_dimension_is_validated() -> None:
         _resolve_ring_dimension(batch_size=16, ring_dimension=16)
     with pytest.raises(ValueError, match="power"):
         _resolve_ring_dimension(batch_size=16, ring_dimension=65535)
+
+
+def test_ckks_rotation_indices_are_normalized_to_batch_slots() -> None:
+    assert normalize_ckks_rotation_index(-381, 512) == 131
+    assert normalize_ckks_rotation_index(512, 512) == 0
+    assert normalize_ckks_rotation_index(-256, 512) == 256
+    assert normalize_ckks_rotation_set((-381, 131, 512, -1), 512) == (-1, 131)
+    with pytest.raises(ValueError, match="positive"):
+        normalize_ckks_rotation_index(1, 0)
 
 
 def test_openfhe_static_recurrence_matches_plaintext() -> None:

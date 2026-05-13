@@ -105,8 +105,9 @@ class OpenFheCkksBackend:
             self.cc.Enable(PKESchemeFeature.FHE)
         self.keys = self.cc.KeyGen()
         self.cc.EvalMultKeyGen(self.keys.secretKey)
-        if rotations:
-            self.cc.EvalRotateKeyGen(self.keys.secretKey, list(rotations))
+        normalized_rotations = normalize_ckks_rotation_set(rotations, ckks_batch_size)
+        if normalized_rotations:
+            self.cc.EvalRotateKeyGen(self.keys.secretKey, list(normalized_rotations))
         if bootstrap_config is not None:
             self._configure_bootstrap(bootstrap_config)
 
@@ -164,8 +165,11 @@ class OpenFheCkksBackend:
         return self.cc.EvalMult(left, right)
 
     def rotate(self, ciphertext: Any, steps: int) -> Any:
+        normalized_steps = normalize_ckks_rotation_index(steps, self.batch_size)
+        if normalized_steps == 0:
+            return ciphertext
         self._stats.rotation_count += 1
-        return self.cc.EvalRotate(ciphertext, steps)
+        return self.cc.EvalRotate(ciphertext, normalized_steps)
 
     def bootstrap(self, ciphertext: Any) -> Any:
         self._stats.bootstrap_count += 1
@@ -209,3 +213,30 @@ def _resolve_ring_dimension(batch_size: int, ring_dimension: int | None) -> int:
         msg = "ring_dimension must be a power of two"
         raise ValueError(msg)
     return ring_dimension
+
+
+def normalize_ckks_rotation_index(steps: int, batch_size: int) -> int:
+    """Return the shortest equivalent CKKS slot rotation for ``batch_size``."""
+
+    if batch_size <= 0:
+        msg = "batch_size must be positive"
+        raise ValueError(msg)
+    normalized = steps % batch_size
+    half = batch_size // 2
+    if normalized > half:
+        normalized -= batch_size
+    return normalized
+
+
+def normalize_ckks_rotation_set(rotations: Sequence[int], batch_size: int) -> tuple[int, ...]:
+    """Normalize and deduplicate a rotation-key set for OpenFHE keygen."""
+
+    return tuple(
+        sorted(
+            {
+                normalized
+                for steps in rotations
+                if (normalized := normalize_ckks_rotation_index(steps, batch_size)) != 0
+            },
+        ),
+    )
