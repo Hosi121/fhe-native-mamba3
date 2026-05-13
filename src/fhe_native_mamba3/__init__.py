@@ -178,6 +178,7 @@ _LAZY_IMPORTS = {
         "BackendPackedMimoReadoutResult",
     ),
     "BackendStats": ("fhe_native_mamba3.backends.base", "BackendStats"),
+    "BsgsSchedule": ("fhe_native_mamba3.stage1_state_major_layout", "BsgsSchedule"),
     "CiphertextHandoffLayer": (
         "fhe_native_mamba3.ciphertext_handoff",
         "CiphertextHandoffLayer",
@@ -264,6 +265,14 @@ _LAZY_IMPORTS = {
         "SsdPrefixScanResult",
     ),
     "BackendCapability": ("fhe_native_mamba3.backends.capabilities", "BackendCapability"),
+    "CompositeRotationBackend": (
+        "fhe_native_mamba3.composite_rotation",
+        "CompositeRotationBackend",
+    ),
+    "CompositeRotationEstimate": (
+        "fhe_native_mamba3.composite_rotation",
+        "CompositeRotationEstimate",
+    ),
     "FHEBackend": ("fhe_native_mamba3.backends.base", "FHEBackend"),
     "FheCostEstimate": ("fhe_native_mamba3.cost", "FheCostEstimate"),
     "FheMamba3Block": ("fhe_native_mamba3.model", "FheMamba3Block"),
@@ -335,6 +344,18 @@ _LAZY_IMPORTS = {
     "Stage1CheckpointGroupedGateInventoryRow": (
         "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
         "Stage1CheckpointGroupedGateInventoryRow",
+    ),
+    "Stage1CompositeRotationReport": (
+        "fhe_native_mamba3.stage1_composite_rotation_report",
+        "Stage1CompositeRotationReport",
+    ),
+    "Stage1CompositeRotationRow": (
+        "fhe_native_mamba3.stage1_composite_rotation_report",
+        "Stage1CompositeRotationRow",
+    ),
+    "StateMajorLayoutPlan": (
+        "fhe_native_mamba3.stage1_state_major_layout",
+        "StateMajorLayoutPlan",
     ),
     "Stage1GroupedFullLayerLiftSmokeResult": (
         "fhe_native_mamba3.stage1_grouped_recurrence",
@@ -544,10 +565,22 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.decoding",
         "client_side_decode_ciphertext",
     ),
+    "composite_rotation_basis_for_steps": (
+        "fhe_native_mamba3.composite_rotation",
+        "composite_rotation_basis_for_steps",
+    ),
     "decoding_policies": ("fhe_native_mamba3.decoding", "decoding_policies"),
+    "decompose_rotation_steps": (
+        "fhe_native_mamba3.composite_rotation",
+        "decompose_rotation_steps",
+    ),
     "draft_mapping_rules": ("fhe_native_mamba3.state_dict_mapping", "draft_mapping_rules"),
     "estimate_block_cost": ("fhe_native_mamba3.cost", "estimate_block_cost"),
     "estimate_integrated_cost": ("fhe_native_mamba3.cost", "estimate_integrated_cost"),
+    "estimate_composite_rotation_basis": (
+        "fhe_native_mamba3.composite_rotation",
+        "estimate_composite_rotation_basis",
+    ),
     "estimate_cumulative_log_contraction": (
         "fhe_native_mamba3.profiling",
         "estimate_cumulative_log_contraction",
@@ -588,6 +621,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
         "build_stage1_checkpoint_grouped_gate_inventory",
     ),
+    "build_stage1_composite_rotation_report": (
+        "fhe_native_mamba3.stage1_composite_rotation_report",
+        "build_stage1_composite_rotation_report",
+    ),
+    "build_state_major_layout_plan": (
+        "fhe_native_mamba3.stage1_state_major_layout",
+        "build_state_major_layout_plan",
+    ),
     "checkpoint_grouped_gate_rotation_steps": (
         "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
         "checkpoint_grouped_gate_rotation_steps",
@@ -597,6 +638,10 @@ _LAZY_IMPORTS = {
         "checkpoint_monolithic_gate_rotation_steps",
     ),
     "build_stage1_plan": ("fhe_native_mamba3.stage1_plan", "build_stage1_plan"),
+    "build_fixed_bsgs_schedule": (
+        "fhe_native_mamba3.stage1_state_major_layout",
+        "build_fixed_bsgs_schedule",
+    ),
     "build_srht_sketch_metadata": (
         "fhe_native_mamba3.srht_sketch",
         "build_srht_sketch_metadata",
@@ -604,6 +649,10 @@ _LAZY_IMPORTS = {
     "measure_openfhe_bootstrap_latency": (
         "fhe_native_mamba3.bootstrap_latency",
         "measure_openfhe_bootstrap_latency",
+    ),
+    "normalize_rotation_step": (
+        "fhe_native_mamba3.composite_rotation",
+        "normalize_rotation_step",
     ),
     "extract_stage1_profile_hints": (
         "fhe_native_mamba3.stage1_plan",
@@ -652,6 +701,10 @@ _LAZY_IMPORTS = {
     "plaintext_static_recurrence": (
         "fhe_native_mamba3.openfhe_backend",
         "plaintext_static_recurrence",
+    ),
+    "power_of_two_rotation_basis": (
+        "fhe_native_mamba3.composite_rotation",
+        "power_of_two_rotation_basis",
     ),
     "plaintext_recurrence_trace": (
         "fhe_native_mamba3.openfhe_backend",
@@ -717,6 +770,7 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "run_openfhe_static_recurrence",
     ),
+    "rotate_composite": ("fhe_native_mamba3.composite_rotation", "rotate_composite"),
     "run_checkpoint_recurrence_correctness_gate": (
         "fhe_native_mamba3.checkpoint_correctness",
         "run_checkpoint_recurrence_correctness_gate",
@@ -834,6 +888,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_checkpoint_cost_report",
         "stage1_checkpoint_cost_markdown",
     ),
+    "state_axis_rotation_steps": (
+        "fhe_native_mamba3.stage1_state_major_layout",
+        "state_axis_rotation_steps",
+    ),
     "srht_sample_indices": ("fhe_native_mamba3.srht_sketch", "srht_sample_indices"),
     "srht_sampling_mask": ("fhe_native_mamba3.srht_sketch", "srht_sampling_mask"),
     "srht_sketch_matrix": ("fhe_native_mamba3.srht_sketch", "srht_sketch_matrix"),
@@ -912,6 +970,7 @@ __all__ = [
     "BootstrapExecutionSchedule",
     "BootstrapExecutionScheduleStep",
     "BootstrapSchedule",
+    "BsgsSchedule",
     "CheckpointClientDecodeSmoke",
     "CheckpointEncryptedPreRecurrenceRecurrenceGate",
     "CheckpointFullLayerCiphertextChainGate",
@@ -941,6 +1000,8 @@ __all__ = [
     "CkksTrace",
     "ClientDecodeReport",
     "ClientDecodeReportRow",
+    "CompositeRotationBackend",
+    "CompositeRotationEstimate",
     "FHEBackend",
     "FheCostEstimate",
     "FheMamba3Block",
@@ -990,6 +1051,8 @@ __all__ = [
     "Stage1CheckpointGroupedGateInventoryRow",
     "Stage1ComparisonReport",
     "Stage1ComparisonRow",
+    "Stage1CompositeRotationReport",
+    "Stage1CompositeRotationRow",
     "Stage1Dependency",
     "Stage1GroupedChainInventoryReport",
     "Stage1GroupedChainInventoryRow",
@@ -1008,6 +1071,7 @@ __all__ = [
     "StateDictMappingDraft",
     "StateDictMappingReport",
     "StateDictMappingRule",
+    "StateMajorLayoutPlan",
     "TinyMimoBlockProblem",
     "TinyMimoBlockSmokeResult",
     "ToyCutMaxSmokeResult",
@@ -1031,6 +1095,7 @@ __all__ = [
     "build_bootstrap_execution_schedule",
     "build_checkpoint_source_sketch_trace",
     "build_client_decode_report",
+    "build_fixed_bsgs_schedule",
     "build_lazy_bootstrap_report",
     "build_mamba_source_recurrence_problem",
     "build_mamba_source_visible_handoff_tensors",
@@ -1044,8 +1109,10 @@ __all__ = [
     "build_stage1_checkpoint_cost_report",
     "build_stage1_checkpoint_grouped_gate_inventory",
     "build_stage1_comparison_report",
+    "build_stage1_composite_rotation_report",
     "build_stage1_grouped_chain_inventory",
     "build_stage1_plan",
+    "build_state_major_layout_plan",
     "build_tiny_mimo_block_problem",
     "build_weight_bundle_manifest",
     "build_weight_bundle_recurrence_problem",
@@ -1063,11 +1130,14 @@ __all__ = [
     "client_side_decode_scores",
     "compare_mamba_layer_reference",
     "compare_mamba_source_delta",
+    "composite_rotation_basis_for_steps",
     "current_git_commit",
     "decoding_policies",
+    "decompose_rotation_steps",
     "draft_mapping_rules",
     "encrypted_pre_recurrence_logical_batch_size",
     "estimate_block_cost",
+    "estimate_composite_rotation_basis",
     "estimate_cumulative_log_contraction",
     "estimate_high_decay_burst_len",
     "estimate_integrated_cost",
@@ -1091,6 +1161,7 @@ __all__ = [
     "map_state_dict",
     "mark_only_lora_trainable",
     "measure_openfhe_bootstrap_latency",
+    "normalize_rotation_step",
     "packed_mimo_readout_output_slots",
     "packed_prefix_scan_carry_rotation_steps",
     "packed_prefix_scan_rotation_steps",
@@ -1098,6 +1169,7 @@ __all__ = [
     "plaintext_recurrence_trace",
     "plaintext_static_recurrence",
     "plan_mamba_checkpoint",
+    "power_of_two_rotation_basis",
     "prefix_decay_products",
     "probe_official_mamba_parity",
     "profile_checkpoint_source_layers",
@@ -1111,6 +1183,7 @@ __all__ = [
     "required_toy_cutmax_rotations",
     "resolve_pre_recurrence_shape",
     "resolve_rank_strategy",
+    "rotate_composite",
     "run_backend_srht_smoke",
     "run_checkpoint_client_decode_smoke",
     "run_checkpoint_encrypted_pre_recurrence_full_layer_chain_gate",
@@ -1158,6 +1231,7 @@ __all__ = [
     "ssd_prefix_scan_prefill",
     "stage1_checkpoint_cost_markdown",
     "stage1_comparison_markdown",
+    "state_axis_rotation_steps",
     "sweep_head_pack_candidates",
     "validate_artifact_file",
     "validate_benchmark_artifact",
