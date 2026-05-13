@@ -33,7 +33,8 @@ def test_build_stage1_state_major_layout_plan_script(tmp_path) -> None:
     assert payload["stage"] == "stage1-state-major-layout-plan"
     assert payload["passed"] is True
     assert payload["measurement_scope"]["preferred_stage1_architecture"] is True
-    assert payload["measurements"]["application_rotation_key_count"] == 117
-    assert payload["measurements"]["total_with_bootstrap_rotation_key_count"] == 176
+    assert payload["measurement_scope"]["slot_semantics_bsgs"] is True
+    assert payload["measurements"]["application_rotation_key_count"] == 133
+    assert payload["measurements"]["total_with_bootstrap_rotation_key_count"] == 192
     assert payload["measurements"]["guard_result"] == "allowed"
     assert persisted["application_rotations"] == payload["application_rotations"]

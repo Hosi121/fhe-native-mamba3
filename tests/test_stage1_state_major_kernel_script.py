@@ -38,9 +38,9 @@ def test_run_stage1_state_major_toy_kernel_script(tmp_path) -> None:
     assert payload["passed"] is True
     assert payload["measurement_scope"]["rank_id_scatter_rotations"] is False
     assert payload["projection_mode"] == "tracking-bsgs"
-    assert payload["measurements"]["projection_rotations"] == [-16, -8, 1, 2, 3, 4, 6]
+    assert payload["measurements"]["projection_rotations"] == [-16, -8, -6, -4, -2, 1, 2, 3, 4, 6]
     assert payload["measurements"]["state_reduce_rotations"] == [8, 16]
-    assert payload["operation_counts"]["rotations"] == 14
+    assert payload["operation_counts"]["rotations"] == 20
     assert persisted["output_model"] == payload["output_model"]
 
 

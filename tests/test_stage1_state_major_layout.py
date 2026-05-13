@@ -4,6 +4,7 @@ import pytest
 
 from fhe_native_mamba3.stage1_state_major_layout import (
     build_fixed_bsgs_schedule,
+    build_slot_bsgs_schedule,
     build_state_major_layout_plan,
     state_axis_rotation_steps,
 )
@@ -18,6 +19,23 @@ def test_fixed_bsgs_schedule_uses_one_orientation() -> None:
     assert schedule.baby_rotations[:3] == (1, 2, 3)
     assert schedule.giant_rotations[:3] == (32, 64, 96)
     assert schedule.giant_rotations[-1] == 992
+
+
+def test_slot_bsgs_schedule_includes_negative_rectangular_offsets() -> None:
+    schedule = build_slot_bsgs_schedule(
+        name="toy_model_to_rank",
+        input_dimension=4,
+        output_dimension=6,
+        baby_step=2,
+    )
+
+    assert schedule.input_dimension == 4
+    assert schedule.output_dimension == 6
+    assert schedule.min_offset == -5
+    assert schedule.max_offset == 3
+    assert schedule.baby_rotations == (1,)
+    assert schedule.giant_rotations == (-6, -4, -2, 2)
+    assert schedule.rotation_key_count == 5
 
 
 def test_state_axis_rotations_match_state_major_layout() -> None:
@@ -45,12 +63,13 @@ def test_state_major_layout_plan_hits_target_rotation_budget() -> None:
     assert plan.rank_pad == 2048
     assert plan.slot_count == 32768
     assert plan.logical_batch_size == 32768
-    assert plan.model_to_rank_schedule.rotation_key_count == 62
-    assert plan.rank_to_model_schedule.rotation_key_count == 94
-    assert plan.application_rotation_key_count == 117
-    assert plan.total_with_bootstrap_rotation_key_count == 176
-    assert plan.estimated_application_key_memory_gib == pytest.approx(22.8515625)
-    assert plan.estimated_total_key_memory_gib == pytest.approx(34.375)
+    assert plan.measurement_scope["slot_semantics_bsgs"] is True
+    assert plan.model_to_rank_schedule.rotation_key_count == 110
+    assert plan.rank_to_model_schedule.rotation_key_count == 110
+    assert plan.application_rotation_key_count == 133
+    assert plan.total_with_bootstrap_rotation_key_count == 192
+    assert plan.estimated_application_key_memory_gib == pytest.approx(25.9765625)
+    assert plan.estimated_total_key_memory_gib == pytest.approx(37.5)
     assert plan.passed is True
     assert plan.guard_result == "allowed"
     assert plan.guard_reasons == ()

@@ -47,10 +47,10 @@ def test_state_major_toy_kernel_records_fixed_tracking_bsgs_projection_schedule(
     assert result.projection_mode == "tracking-bsgs"
     assert result.measurement_scope["plaintext_projection"] is False
     assert result.measurement_scope["tracking_bsgs_projection"] is True
-    assert result.projection_rotations == (-16, -8, 1, 2, 3, 4, 6)
+    assert result.projection_rotations == (-16, -8, -6, -4, -2, 1, 2, 3, 4, 6)
     assert set(result.projection_rotations).issubset(result.required_application_rotations)
     assert result.output_model == pytest.approx(result.expected_output_model)
-    assert result.backend_stats["rotation_count"] == 14
+    assert result.backend_stats["rotation_count"] == 20
 
 
 def test_state_major_toy_kernel_slot_bsgs_projection_computes_ciphertext_values() -> None:
@@ -77,7 +77,7 @@ def test_required_state_major_toy_kernel_rotations_follow_projection_mode() -> N
     assert required_state_major_toy_kernel_rotations(
         problem,
         projection_mode="tracking-bsgs",
-    ) == (-16, -8, 1, 2, 3, 4, 6, 8, 16)
+    ) == (-16, -8, -6, -4, -2, 1, 2, 3, 4, 6, 8, 16)
     assert required_state_major_toy_kernel_rotations(
         problem,
         projection_mode="slot-bsgs",

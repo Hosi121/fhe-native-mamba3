@@ -357,6 +357,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_state_major_layout",
         "StateMajorLayoutPlan",
     ),
+    "SlotBsgsSchedule": (
+        "fhe_native_mamba3.stage1_state_major_layout",
+        "SlotBsgsSchedule",
+    ),
     "StateMajorToyKernelResult": (
         "fhe_native_mamba3.stage1_state_major_kernel",
         "StateMajorToyKernelResult",
@@ -636,6 +640,10 @@ _LAZY_IMPORTS = {
     "build_state_major_layout_plan": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "build_state_major_layout_plan",
+    ),
+    "build_slot_bsgs_schedule": (
+        "fhe_native_mamba3.stage1_state_major_layout",
+        "build_slot_bsgs_schedule",
     ),
     "checkpoint_grouped_gate_rotation_steps": (
         "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
@@ -1063,6 +1071,7 @@ __all__ = [
     "SketchEvidenceReport",
     "SketchEvidenceReportRow",
     "SketchRecurrenceClaim",
+    "SlotBsgsSchedule",
     "SrhtButterflyStage",
     "SrhtSketchMetadata",
     "SsdPrefixScanResult",
@@ -1130,6 +1139,7 @@ __all__ = [
     "build_recurrence_bootstrap_plan",
     "build_rotation_inventory",
     "build_sketch_evidence_report",
+    "build_slot_bsgs_schedule",
     "build_srht_sketch_metadata",
     "build_stage0_status_report",
     "build_stage1_checkpoint_cost_report",

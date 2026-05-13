@@ -63,7 +63,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mimo-rank", type=int, default=1536)
     parser.add_argument("--rank-pad", type=int, default=2048)
     parser.add_argument("--d-state", type=int, default=16)
-    parser.add_argument("--model-baby-step", type=int, default=32)
+    parser.add_argument("--model-baby-step", type=int, default=64)
     parser.add_argument("--rank-baby-step", type=int, default=64)
     parser.add_argument("--bootstrap-rotation-key-count", type=int, default=59)
     parser.add_argument("--key-size-mb", type=float, default=200.0)

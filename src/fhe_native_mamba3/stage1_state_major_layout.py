@@ -24,6 +24,24 @@ class BsgsSchedule:
 
 
 @dataclass(frozen=True)
+class SlotBsgsSchedule:
+    """True full-slot non-cyclic rectangular BSGS schedule."""
+
+    name: str
+    input_dimension: int
+    output_dimension: int
+    baby_step: int
+    min_offset: int
+    max_offset: int
+    baby_rotations: tuple[int, ...]
+    giant_rotations: tuple[int, ...]
+    rotation_key_count: int
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class StateMajorLayoutPlan:
     """Shape-only plan for the preferred Stage 1 layout."""
 
@@ -36,8 +54,8 @@ class StateMajorLayoutPlan:
     d_state: int
     slot_count: int
     logical_batch_size: int
-    model_to_rank_schedule: BsgsSchedule
-    rank_to_model_schedule: BsgsSchedule
+    model_to_rank_schedule: SlotBsgsSchedule
+    rank_to_model_schedule: SlotBsgsSchedule
     state_axis_broadcast_rotations: tuple[int, ...]
     state_axis_reduce_rotations: tuple[int, ...]
     application_rotations: tuple[int, ...]
@@ -90,7 +108,7 @@ def build_state_major_layout_plan(
     mimo_rank: int = 1536,
     rank_pad: int = 2048,
     d_state: int = 16,
-    model_baby_step: int = 32,
+    model_baby_step: int = 64,
     rank_baby_step: int = 64,
     bootstrap_rotation_key_count: int = 59,
     key_size_mb: float = 200.0,
@@ -114,14 +132,16 @@ def build_state_major_layout_plan(
     )
     slot_count = rank_pad * d_state
     logical_batch_size = ckks_batch_size_for_slots(max(d_model_pad, slot_count))
-    model_schedule = build_fixed_bsgs_schedule(
+    model_schedule = build_slot_bsgs_schedule(
         name="model_to_rank",
-        dimension=d_model_pad,
+        input_dimension=d_model_pad,
+        output_dimension=rank_pad,
         baby_step=model_baby_step,
     )
-    rank_schedule = build_fixed_bsgs_schedule(
+    rank_schedule = build_slot_bsgs_schedule(
         name="rank_to_model",
-        dimension=rank_pad,
+        input_dimension=rank_pad,
+        output_dimension=d_model_pad,
         baby_step=rank_baby_step,
     )
     state_broadcast = state_axis_rotation_steps(
@@ -170,10 +190,12 @@ def build_state_major_layout_plan(
             "preferred_stage1_architecture": True,
             "rank_pack_first": True,
             "state_major_layout": True,
+            "slot_semantics_bsgs": True,
             "full_model_correctness_claimed": False,
             "claim": (
                 "State-major layout planning constrains application rotations to fixed "
-                "BSGS schedules and state-axis shifts before attempting HE execution."
+                "true slot-semantics BSGS schedules and state-axis shifts before "
+                "attempting HE execution."
             ),
         },
         d_model=d_model,
@@ -216,6 +238,51 @@ def build_fixed_bsgs_schedule(*, name: str, dimension: int, baby_step: int) -> B
         name=name,
         dimension=dimension,
         baby_step=baby_step,
+        baby_rotations=baby,
+        giant_rotations=giant,
+        rotation_key_count=len(set(baby) | set(giant)),
+    )
+
+
+def build_slot_bsgs_schedule(
+    *,
+    name: str,
+    input_dimension: int,
+    output_dimension: int,
+    baby_step: int,
+) -> SlotBsgsSchedule:
+    """Build the rotation keys for non-cyclic full-slot rectangular BSGS.
+
+    For output slot ``r`` and input slot ``d``, the logical offset is ``d - r``.
+    Offsets are partitioned into ``giant + baby`` with ``baby`` in
+    ``[0, baby_step)``. Plaintext masks remove any cyclic wraparound, so the
+    schedule must include negative giant rotations when ``output_dimension`` is
+    larger than the input dimension.
+    """
+
+    if input_dimension <= 0:
+        msg = "input_dimension must be positive"
+        raise ValueError(msg)
+    if output_dimension <= 0:
+        msg = "output_dimension must be positive"
+        raise ValueError(msg)
+    if baby_step <= 0:
+        msg = "baby_step must be positive"
+        raise ValueError(msg)
+    min_offset = -(output_dimension - 1)
+    max_offset = input_dimension - 1
+    giant_with_zero = {
+        offset - (offset % baby_step) for offset in range(min_offset, max_offset + 1)
+    }
+    baby = tuple(range(1, baby_step))
+    giant = tuple(sorted(step for step in giant_with_zero if step != 0))
+    return SlotBsgsSchedule(
+        name=name,
+        input_dimension=input_dimension,
+        output_dimension=output_dimension,
+        baby_step=baby_step,
+        min_offset=min_offset,
+        max_offset=max_offset,
         baby_rotations=baby,
         giant_rotations=giant,
         rotation_key_count=len(set(baby) | set(giant)),
