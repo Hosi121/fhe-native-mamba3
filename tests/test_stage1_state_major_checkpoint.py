@@ -318,6 +318,62 @@ def test_checkpoint_chain_tracking_script_runs(tmp_path) -> None:
     assert persisted["layer_max_abs_errors"] == payload["layer_max_abs_errors"]
 
 
+def test_checkpoint_poly_sweep_script_runs(tmp_path) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_json = tmp_path / "poly-sweep.json"
+    torch.save({"model": _tiny_hf_mamba_state_dict()}, checkpoint_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_stage1_state_major_checkpoint_poly_sweep.py",
+            str(checkpoint_path),
+            "--state-dict-key",
+            "model",
+            "--prompt-token",
+            "1",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "6",
+            "--d-model-pad",
+            "8",
+            "--rank-pad",
+            "8",
+            "--model-baby-step",
+            "4",
+            "--rank-baby-step",
+            "4",
+            "--degrees",
+            "9",
+            "11",
+            "15",
+            "--previous-state-scale",
+            "0.05",
+            "--previous-state-seed",
+            "7",
+            "--max-acceptable-error",
+            "0.5",
+            "--output-json",
+            str(output_json),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    persisted = json.loads(output_json.read_text(encoding="utf-8"))
+
+    assert payload["version"] == __version__
+    assert payload["passed"] is True
+    assert payload["recommended_degree"] == 11
+    assert [row["degree"] for row in payload["rows"]] == [9, 11, 15]
+    assert payload["rows"][0]["max_abs_error"] > payload["rows"][1]["max_abs_error"]
+    assert persisted["rows"] == payload["rows"]
+
+
 def _tiny_hf_mamba_state_dict(*, n_layers: int = 1) -> dict[str, torch.Tensor]:
     state_dict = {
         "backbone.embeddings.weight": torch.arange(88, dtype=torch.float32).view(11, 8) / 100.0,
