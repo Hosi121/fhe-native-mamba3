@@ -293,6 +293,7 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.openfhe_backend",
         "OpenFheRecurrenceResult",
     ),
+    "NumpyTrackingBackend": ("fhe_native_mamba3.backends.tracking", "NumpyTrackingBackend"),
     "OpenFheRecurrenceCiphertextTrace": (
         "fhe_native_mamba3.openfhe_backend",
         "OpenFheRecurrenceCiphertextTrace",
@@ -1054,6 +1055,7 @@ __all__ = [
     "MambaSourceDeltaResult",
     "MambaSourceLayerDiagnostics",
     "MambaSourceVisibleHandoffTensors",
+    "NumpyTrackingBackend",
     "OfficialMambaParityResult",
     "OpenFheBootstrapConfig",
     "OpenFheBootstrapLatencyConfig",
