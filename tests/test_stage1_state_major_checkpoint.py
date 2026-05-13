@@ -138,6 +138,29 @@ def test_checkpoint_layer_tracking_can_compute_dynamic_bc_with_bsgs() -> None:
     assert result.backend_stats["rotation_count"] > 20
 
 
+def test_checkpoint_layer_tracking_can_compute_decay_with_bsgs_poly() -> None:
+    result = run_state_major_checkpoint_layer_tracking(
+        _tiny_hf_mamba_state_dict(),
+        prompt_token=1,
+        d_state=2,
+        mimo_rank=6,
+        d_model_pad=8,
+        rank_pad=8,
+        model_baby_step=4,
+        rank_baby_step=4,
+        pre_recurrence_mode="rank-gate-bc-decay-bsgs-poly",
+        polynomial_degree=15,
+        polynomial_range=8.0,
+        atol=7e-2,
+    )
+
+    assert result.passed is True
+    assert result.measurement_scope["decay_computed_in_kernel"] is True
+    assert result.measurement_scope["source_boundary_tensors"] == ()
+    assert result.kernel_boundary_errors["decay"] < 5e-5
+    assert result.backend_stats["ct_ct_mul_count"] > 32
+
+
 def _tiny_hf_mamba_state_dict() -> dict[str, torch.Tensor]:
     return {
         "backbone.embeddings.weight": torch.arange(88, dtype=torch.float32).view(11, 8) / 100.0,

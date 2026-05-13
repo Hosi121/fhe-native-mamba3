@@ -11,12 +11,16 @@ from torch.nn import functional
 
 from fhe_native_mamba3.backends.base import FHEBackend
 from fhe_native_mamba3.backends.tracking import NumpyTrackingBackend
-from fhe_native_mamba3.checkpoint_pre_recurrence import _silu_ciphertext
+from fhe_native_mamba3.checkpoint_pre_recurrence import (
+    _decay_polynomial_coefficient_vectors,
+    _silu_ciphertext,
+)
 from fhe_native_mamba3.mamba_checkpoint import plan_mamba_checkpoint
 from fhe_native_mamba3.mamba_reference import _build_layer_tensors, _run_source_dynamic_formula
 from fhe_native_mamba3.slot_bsgs import slot_bsgs_linear_block0, slot_bsgs_rotation_groups
 from fhe_native_mamba3.stage1_state_major_fullshape import (
     StateMajorFullShapeConfig,
+    _broadcast_rank_block0,
     _decrypt_rank,
     _decrypt_state_major,
     _max_abs_error,
@@ -97,6 +101,7 @@ class _RankGatePreRecurrenceCiphertexts:
     gate: Any
     b: Any
     c: Any
+    decay: Any
     skip_update: Any
 
 
@@ -134,11 +139,13 @@ def run_state_major_checkpoint_layer_tracking(
         "source-boundary",
         "rank-gate-bsgs-poly",
         "rank-gate-bc-bsgs-poly",
+        "rank-gate-bc-decay-bsgs-poly",
     }
     if pre_recurrence_mode not in valid_pre_modes:
         msg = (
             "pre_recurrence_mode must be 'source-boundary', "
-            "'rank-gate-bsgs-poly', or 'rank-gate-bc-bsgs-poly'"
+            "'rank-gate-bsgs-poly', 'rank-gate-bc-bsgs-poly', "
+            "or 'rank-gate-bc-decay-bsgs-poly'"
         )
         raise ValueError(msg)
     if polynomial_degree <= 0:
@@ -194,7 +201,11 @@ def run_state_major_checkpoint_layer_tracking(
     )
     reference = _precomputed_tail_reference(tensors)
     residual_ct = resolved_backend.encrypt(_pack_model_input(tensors.residual_input, config=config))
-    if pre_recurrence_mode in {"rank-gate-bsgs-poly", "rank-gate-bc-bsgs-poly"}:
+    if pre_recurrence_mode in {
+        "rank-gate-bsgs-poly",
+        "rank-gate-bc-bsgs-poly",
+        "rank-gate-bc-decay-bsgs-poly",
+    }:
         pre_cts = _rank_gate_bsgs_poly_ciphertexts(
             resolved_backend,
             state_dict,
@@ -208,7 +219,10 @@ def run_state_major_checkpoint_layer_tracking(
         x_ct = pre_cts.rank_input
         gate_ct = pre_cts.gate
         skip_ct = pre_cts.skip_update
-        if pre_recurrence_mode == "rank-gate-bc-bsgs-poly":
+        if pre_recurrence_mode in {
+            "rank-gate-bc-bsgs-poly",
+            "rank-gate-bc-decay-bsgs-poly",
+        }:
             b_ct = pre_cts.b
             c_ct = pre_cts.c
         else:
@@ -221,7 +235,11 @@ def run_state_major_checkpoint_layer_tracking(
         b_ct = resolved_backend.encrypt(_pack_state_major(tensors.b, config=config))
         c_ct = resolved_backend.encrypt(_pack_state_major(tensors.c, config=config))
     previous_ct = resolved_backend.encrypt(_pack_state_major(tensors.previous_state, config=config))
-    decay_ct = resolved_backend.encrypt(_pack_state_major(tensors.decay, config=config))
+    decay_ct = (
+        pre_cts.decay
+        if pre_recurrence_mode == "rank-gate-bc-decay-bsgs-poly"
+        else resolved_backend.encrypt(_pack_state_major(tensors.decay, config=config))
+    )
     tail = _run_state_major_tail(
         resolved_backend,
         residual_ct=residual_ct,
@@ -248,6 +266,10 @@ def run_state_major_checkpoint_layer_tracking(
         "gate": _max_abs_error(_decrypt_rank(gate_ct, resolved_backend, config), tensors.gate),
         "b": _max_abs_error(_decrypt_state_major(b_ct, resolved_backend, config), tensors.b),
         "c": _max_abs_error(_decrypt_state_major(c_ct, resolved_backend, config), tensors.c),
+        "decay": _max_abs_error(
+            _decrypt_state_major(decay_ct, resolved_backend, config),
+            tensors.decay,
+        ),
         "state_new": _max_abs_error(
             _decrypt_state_major(tail.state_new, resolved_backend, config),
             reference["state_new"],
@@ -288,8 +310,14 @@ def run_state_major_checkpoint_layer_tracking(
             "slot_semantics_bsgs": True,
             "precomputed_source_pre_recurrence": pre_recurrence_mode == "source-boundary",
             "rank_gate_computed_in_kernel": pre_recurrence_mode
-            in {"rank-gate-bsgs-poly", "rank-gate-bc-bsgs-poly"},
-            "dynamic_bc_computed_in_kernel": pre_recurrence_mode == "rank-gate-bc-bsgs-poly",
+            in {
+                "rank-gate-bsgs-poly",
+                "rank-gate-bc-bsgs-poly",
+                "rank-gate-bc-decay-bsgs-poly",
+            },
+            "dynamic_bc_computed_in_kernel": pre_recurrence_mode
+            in {"rank-gate-bc-bsgs-poly", "rank-gate-bc-decay-bsgs-poly"},
+            "decay_computed_in_kernel": pre_recurrence_mode == "rank-gate-bc-decay-bsgs-poly",
             "source_boundary_tensors": _source_boundary_tensors(pre_recurrence_mode),
             "encrypted_recurrence_readout_out_projection": True,
             "pre_recurrence_mode": pre_recurrence_mode,
@@ -341,7 +369,11 @@ def required_state_major_checkpoint_layer_rotations(
     rotations.update(
         state_axis_rotation_steps(rank_pad=config.rank_pad, d_state=config.d_state, sign=1)
     )
-    if pre_recurrence_mode in {"rank-gate-bsgs-poly", "rank-gate-bc-bsgs-poly"}:
+    if pre_recurrence_mode in {
+        "rank-gate-bsgs-poly",
+        "rank-gate-bc-bsgs-poly",
+        "rank-gate-bc-decay-bsgs-poly",
+    }:
         model_groups = slot_bsgs_rotation_groups(
             input_dim=config.d_model,
             output_dim=config.mimo_rank,
@@ -349,7 +381,10 @@ def required_state_major_checkpoint_layer_rotations(
         )
         rotations.update(model_groups["baby"])
         rotations.update(model_groups["giant"])
-    if pre_recurrence_mode == "rank-gate-bc-bsgs-poly":
+    if pre_recurrence_mode in {
+        "rank-gate-bc-bsgs-poly",
+        "rank-gate-bc-decay-bsgs-poly",
+    }:
         bc_groups = slot_bsgs_rotation_groups(
             input_dim=config.mimo_rank,
             output_dim=config.d_state,
@@ -382,7 +417,9 @@ def _source_boundary_tensors(pre_recurrence_mode: str) -> tuple[str, ...]:
         return ("rank_input", "gate", "b", "c", "decay")
     if pre_recurrence_mode == "rank-gate-bsgs-poly":
         return ("b", "c", "decay")
-    return ("decay",)
+    if pre_recurrence_mode == "rank-gate-bc-bsgs-poly":
+        return ("decay",)
+    return ()
 
 
 def _rank_gate_bsgs_poly_ciphertexts(
@@ -466,13 +503,73 @@ def _rank_gate_bsgs_poly_ciphertexts(
         dt_rank=0 if source.dt_in_weight is None else int(source.dt_in_weight.shape[0]),
         config=config,
     )
+    decay_ct = _state_major_decay_ciphertext(
+        backend,
+        rank_input_ct,
+        source=source,
+        config=config,
+    )
     return _RankGatePreRecurrenceCiphertexts(
         rank_input=rank_input_ct,
         gate=gate_ct,
         b=b_ct,
         c=c_ct,
+        decay=decay_ct,
         skip_update=skip_ct,
     )
+
+
+def _state_major_decay_ciphertext(
+    backend: FHEBackend,
+    rank_input_ct: Any,
+    *,
+    source: Any,
+    config: StateMajorFullShapeConfig,
+    degree: int = 5,
+    approximation_range: tuple[float, float] = (-0.5, 0.5),
+) -> Any:
+    if source.dt_in_weight is None or source.dt_proj_weight is None or source.dt_proj_bias is None:
+        msg = "checkpoint layer must provide dt projection tensors for computed decay"
+        raise ValueError(msg)
+    dt_rank = int(source.dt_in_weight.shape[0])
+    dt_hidden_ct = slot_bsgs_linear_block0(
+        backend,
+        rank_input_ct,
+        _to_numpy(source.dt_in_weight),
+        input_dim=config.mimo_rank,
+        output_dim=dt_rank,
+        baby_step=min(config.rank_baby_step, config.mimo_rank),
+    )
+    dt_pre_ct = slot_bsgs_linear_block0(
+        backend,
+        dt_hidden_ct,
+        _to_numpy(source.dt_proj_weight),
+        input_dim=dt_rank,
+        output_dim=config.mimo_rank,
+        baby_step=min(config.rank_baby_step, max(1, dt_rank)),
+    )
+    dt_pre_ct = backend.add(
+        dt_pre_ct,
+        backend.encrypt(_pack_rank_block0(_to_numpy(source.dt_proj_bias), config=config)),
+    )
+    state_major_dt_ct = _broadcast_rank_block0(backend, dt_pre_ct, config=config)
+    coefficient_vectors = _decay_polynomial_coefficient_vectors(
+        source.a_log,
+        d_state=config.d_state,
+        mimo_rank=config.mimo_rank,
+        degree=degree,
+        approximation_range=approximation_range,
+    )
+    state_major_coefficients = _rank_state_coefficients_to_state_major(
+        coefficient_vectors,
+        config=config,
+    )
+    result = backend.encrypt(state_major_coefficients[-1])
+    for coefficients in reversed(state_major_coefficients[:-1]):
+        result = backend.mul_ct(result, state_major_dt_ct)
+        if np.any(coefficients):
+            result = backend.add(result, backend.encrypt(coefficients))
+    return result
 
 
 def _dynamic_bc_ciphertexts(
@@ -531,6 +628,20 @@ def _state_vector_to_state_major_ciphertext(
             step *= 2
         output_ct = backend.add(output_ct, block_ct)
     return output_ct
+
+
+def _rank_state_coefficients_to_state_major(
+    coefficient_vectors: tuple[tuple[float, ...], ...],
+    *,
+    config: StateMajorFullShapeConfig,
+) -> tuple[np.ndarray, ...]:
+    output: list[np.ndarray] = []
+    for vector in coefficient_vectors:
+        rank_state = np.asarray(vector, dtype=float).reshape(config.mimo_rank, config.d_state)
+        slots = np.zeros((config.d_state, config.rank_pad), dtype=float)
+        slots[:, : config.mimo_rank] = rank_state.T
+        output.append(slots.reshape(config.rank_pad * config.d_state))
+    return tuple(output)
 
 
 def _checkpoint_tail_tensors(
