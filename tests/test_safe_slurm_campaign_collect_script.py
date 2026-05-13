@@ -112,3 +112,58 @@ def test_collect_safe_slurm_campaign_fails_missing_artifact(tmp_path) -> None:
 
     assert completed.returncode == 1
     assert '"missing_count": 1' in completed.stdout
+
+
+def test_collect_safe_slurm_campaign_can_dry_run_remote_pull(tmp_path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": __version__,
+                "stage": "safe-slurm-campaign",
+                "run_prefix": "test",
+                "jobs": [
+                    {
+                        "name": "remote-missing",
+                        "job_id": "125",
+                        "pbi_ids": ["PBI-OPS-004"],
+                        "expected_artifact": "runs/remote-artifact.json",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_json = tmp_path / "collection.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/collect_safe_slurm_campaign.py",
+            str(manifest),
+            "--pull-missing",
+            "--pull-dry-run",
+            "--remote",
+            "high",
+            "--remote-dir",
+            "~/cipher/fhe-native-mamba3",
+            "--output-json",
+            str(output_json),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    attempt = payload["remote_pull"]["attempts"][0]
+
+    assert completed.returncode == 1
+    assert payload["missing_count"] == 1
+    assert payload["remote_pull"]["enabled"] is True
+    assert payload["remote_pull"]["dry_run"] is True
+    assert payload["measurements"]["remote_pull_attempts"] == 1
+    assert attempt["status"] == "dry_run"
+    assert attempt["remote_path"] == "high:~/cipher/fhe-native-mamba3/runs/remote-artifact.json"
+    assert payload["rows"][0]["remote_pull"]["status"] == "dry_run"

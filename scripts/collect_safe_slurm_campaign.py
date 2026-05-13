@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ def main() -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest_root = manifest_path.parent
     rows: list[dict[str, Any]] = []
+    pull_rows: list[dict[str, Any]] = []
     for job in manifest.get("jobs", []):
         if not isinstance(job, dict):
             continue
@@ -34,6 +36,16 @@ def main() -> int:
             manifest_root=manifest_root,
             repo_root=ROOT,
         )
+        pull_result = None
+        if args.pull_missing and not artifact_path.exists():
+            pull_result = _pull_remote_artifact(
+                str(job.get("expected_artifact", "")),
+                destination=artifact_path,
+                remote=args.remote,
+                remote_dir=args.remote_dir,
+                dry_run=args.pull_dry_run,
+            )
+            pull_rows.append(pull_result)
         exists = artifact_path.exists()
         validation = None
         artifact_payload = None
@@ -57,6 +69,7 @@ def main() -> int:
                     artifact_payload.get("version") if isinstance(artifact_payload, dict) else None
                 ),
                 "artifact_commit": _artifact_commit(artifact_payload),
+                "remote_pull": pull_result,
                 "validation": validation,
             }
         )
@@ -86,6 +99,14 @@ def main() -> int:
             "valid_artifacts": sum(1 for row in rows if row["valid"]),
             "missing_artifacts": missing_count,
             "invalid_artifacts": invalid_count,
+            "remote_pull_attempts": len(pull_rows),
+        },
+        "remote_pull": {
+            "enabled": args.pull_missing,
+            "dry_run": args.pull_dry_run,
+            "remote": args.remote,
+            "remote_dir": args.remote_dir,
+            "attempts": pull_rows,
         },
         "rows": rows,
         "ledger_rows": [_ledger_row(row) for row in rows],
@@ -119,6 +140,42 @@ def _success_value(payload: Any) -> bool | None:
     if isinstance(result, dict) and isinstance(result.get("passed"), bool):
         return bool(result["passed"])
     return None
+
+
+def _pull_remote_artifact(
+    expected_artifact: str,
+    *,
+    destination: Path,
+    remote: str,
+    remote_dir: str,
+    dry_run: bool,
+) -> dict[str, Any]:
+    if not expected_artifact:
+        return {
+            "status": "skipped",
+            "reason": "missing expected_artifact",
+            "command": None,
+        }
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    remote_path = f"{remote}:{remote_dir.rstrip('/')}/{expected_artifact.lstrip('/')}"
+    command = ["rsync", "-az", remote_path, str(destination)]
+    if dry_run:
+        return {
+            "status": "dry_run",
+            "command": command,
+            "remote_path": remote_path,
+            "destination": str(destination),
+        }
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    return {
+        "status": "pulled" if completed.returncode == 0 else "failed",
+        "returncode": completed.returncode,
+        "command": command,
+        "remote_path": remote_path,
+        "destination": str(destination),
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
 
 
 def _artifact_commit(payload: Any) -> str | None:
@@ -158,6 +215,10 @@ def _short_commit(value: Any) -> str:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest")
+    parser.add_argument("--pull-missing", action="store_true")
+    parser.add_argument("--pull-dry-run", action="store_true")
+    parser.add_argument("--remote", default="high")
+    parser.add_argument("--remote-dir", default="~/cipher/fhe-native-mamba3")
     parser.add_argument("--output-json", default="")
     return parser.parse_args()
 
