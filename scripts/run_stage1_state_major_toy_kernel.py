@@ -14,11 +14,13 @@ sys.path.insert(0, str(ROOT / "src"))
 def main() -> int:
     from fhe_native_mamba3 import __version__
     from fhe_native_mamba3.artifact_validation import current_git_commit
+    from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
     from fhe_native_mamba3.cli_support import emit_json_payload
     from fhe_native_mamba3.stage1_state_major_kernel import (
         make_state_major_toy_problem,
         run_state_major_toy_kernel,
     )
+    from fhe_native_mamba3.stage1_state_major_layout import state_axis_rotation_steps
 
     args = _parse_args()
     problem = make_state_major_toy_problem(
@@ -28,7 +30,20 @@ def main() -> int:
         rank_pad=args.rank_pad,
         d_state=args.d_state,
     )
-    result = run_state_major_toy_kernel(problem, atol=args.atol)
+    backend = None
+    if args.backend == "openfhe":
+        backend = OpenFheCkksBackend(
+            batch_size=args.rank_pad * args.d_state,
+            multiplicative_depth=args.multiplicative_depth,
+            scaling_mod_size=args.scaling_mod_size,
+            rotations=state_axis_rotation_steps(
+                rank_pad=args.rank_pad,
+                d_state=args.d_state,
+                sign=1,
+            ),
+            ring_dimension=args.ring_dimension or None,
+        )
+    result = run_state_major_toy_kernel(problem, backend=backend, atol=args.atol)
     payload = {
         "version": __version__,
         "repo_commit": current_git_commit(ROOT),
@@ -50,11 +65,15 @@ def main() -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--backend", choices=["tracking", "openfhe"], default="tracking")
     parser.add_argument("--d-model", type=int, default=4)
     parser.add_argument("--d-model-pad", type=int, default=8)
     parser.add_argument("--mimo-rank", type=int, default=6)
     parser.add_argument("--rank-pad", type=int, default=8)
     parser.add_argument("--d-state", type=int, default=4)
+    parser.add_argument("--multiplicative-depth", type=int, default=8)
+    parser.add_argument("--scaling-mod-size", type=int, default=40)
+    parser.add_argument("--ring-dimension", type=int, default=0)
     parser.add_argument("--atol", type=float, default=1e-12)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()

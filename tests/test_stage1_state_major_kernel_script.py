@@ -17,6 +17,8 @@ def test_run_stage1_state_major_toy_kernel_script(tmp_path) -> None:
         [
             sys.executable,
             "scripts/run_stage1_state_major_toy_kernel.py",
+            "--backend",
+            "tracking",
             "--output-json",
             str(output_json),
         ],
