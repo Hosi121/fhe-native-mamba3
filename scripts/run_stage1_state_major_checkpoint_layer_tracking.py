@@ -17,6 +17,8 @@ def main() -> int:
     from fhe_native_mamba3.checkpoint import load_checkpoint_state_dict
     from fhe_native_mamba3.cli_support import emit_json_payload
     from fhe_native_mamba3.stage1_state_major_checkpoint import (
+        StateMajorFullShapeConfig,
+        required_state_major_checkpoint_layer_rotations,
         run_state_major_checkpoint_layer_tracking,
     )
 
@@ -25,6 +27,29 @@ def main() -> int:
         args.checkpoint,
         state_dict_key=args.state_dict_key,
     )
+    backend = None
+    if args.backend == "openfhe":
+        from fhe_native_mamba3.backends.openfhe import OpenFheCkksBackend
+
+        config = StateMajorFullShapeConfig(
+            d_model=args.d_model,
+            d_model_pad=args.d_model_pad,
+            mimo_rank=args.mimo_rank,
+            rank_pad=args.rank_pad,
+            d_state=args.d_state,
+            model_baby_step=args.model_baby_step,
+            rank_baby_step=args.rank_baby_step,
+        )
+        backend = OpenFheCkksBackend(
+            batch_size=config.rank_pad * config.d_state,
+            multiplicative_depth=args.multiplicative_depth,
+            scaling_mod_size=args.scaling_mod_size,
+            rotations=required_state_major_checkpoint_layer_rotations(
+                config,
+                pre_recurrence_mode=args.pre_recurrence_mode,
+            ),
+            ring_dimension=args.ring_dimension or None,
+        )
     result = run_state_major_checkpoint_layer_tracking(
         state_dict,
         prompt_token=args.prompt_token,
@@ -40,6 +65,7 @@ def main() -> int:
         polynomial_range=args.polynomial_range,
         previous_state_scale=args.previous_state_scale,
         previous_state_seed=args.previous_state_seed,
+        backend=backend,
         norm_eps=args.norm_eps,
         atol=args.atol,
     )
@@ -62,6 +88,7 @@ def main() -> int:
             "ct_pt_mul": result.backend_stats["ct_pt_mul_count"],
             "rotations": result.backend_stats["rotation_count"],
             "decrypt": result.backend_stats["decrypt_count"],
+            "bootstrap": result.backend_stats["bootstrap_count"],
         },
         **result.to_json_dict(),
     }
@@ -72,13 +99,15 @@ def main() -> int:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint")
+    parser.add_argument("--backend", choices=("tracking", "openfhe"), default="tracking")
     parser.add_argument("--state-dict-key", default=None)
     parser.add_argument("--layer-index", type=int, default=0)
     parser.add_argument("--prompt-token", type=int, default=0)
-    parser.add_argument("--d-state", type=int, default=None)
-    parser.add_argument("--mimo-rank", type=int, default=None)
-    parser.add_argument("--d-model-pad", type=int, default=None)
-    parser.add_argument("--rank-pad", type=int, default=None)
+    parser.add_argument("--d-state", type=int, required=True)
+    parser.add_argument("--mimo-rank", type=int, required=True)
+    parser.add_argument("--d-model", type=int, default=8)
+    parser.add_argument("--d-model-pad", type=int, required=True)
+    parser.add_argument("--rank-pad", type=int, required=True)
     parser.add_argument("--model-baby-step", type=int, default=64)
     parser.add_argument("--rank-baby-step", type=int, default=64)
     parser.add_argument(
@@ -95,6 +124,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--polynomial-range", type=float, default=8.0)
     parser.add_argument("--previous-state-scale", type=float, default=0.0)
     parser.add_argument("--previous-state-seed", type=int, default=0)
+    parser.add_argument("--multiplicative-depth", type=int, default=64)
+    parser.add_argument("--scaling-mod-size", type=int, default=30)
+    parser.add_argument("--ring-dimension", type=int, default=0)
     parser.add_argument("--norm-eps", type=float, default=1e-5)
     parser.add_argument("--atol", type=float, default=1e-6)
     parser.add_argument("--output-json", default="")

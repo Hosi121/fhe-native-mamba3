@@ -52,6 +52,8 @@ def test_checkpoint_layer_tracking_script_runs(tmp_path) -> None:
             sys.executable,
             "scripts/run_stage1_state_major_checkpoint_layer_tracking.py",
             str(checkpoint_path),
+            "--backend",
+            "tracking",
             "--prompt-token",
             "1",
             "--d-state",
@@ -80,8 +82,10 @@ def test_checkpoint_layer_tracking_script_runs(tmp_path) -> None:
 
     assert payload["version"] == __version__
     assert payload["passed"] is True
+    assert payload["backend"] == "numpy-tracking"
     assert payload["stage"] == "stage1-state-major-checkpoint-layer-tracking"
     assert payload["state_dict_key"] == "model"
+    assert payload["operation_counts"]["bootstrap"] == 0
     assert payload["measurements"]["kernel_max_abs_error"] <= 1e-10
     assert payload["measurements"]["checkpoint_adapter_max_abs_error"] <= 1e-6
     assert persisted["kernel_boundary_errors"] == payload["kernel_boundary_errors"]
