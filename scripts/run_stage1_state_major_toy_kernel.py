@@ -43,12 +43,19 @@ def main() -> int:
             ),
             ring_dimension=args.ring_dimension or None,
         )
-    result = run_state_major_toy_kernel(problem, backend=backend, atol=args.atol)
+    result = run_state_major_toy_kernel(
+        problem,
+        backend=backend,
+        projection_mode=args.projection_mode,
+        atol=args.atol,
+    )
     payload = {
         "version": __version__,
         "repo_commit": current_git_commit(ROOT),
         "measurements": {
             "max_abs_error": result.max_abs_error,
+            "projection_mode": result.projection_mode,
+            "projection_rotations": result.projection_rotations,
             "state_reduce_rotations": result.state_reduce_rotations,
             "required_application_rotation_key_count": len(result.required_application_rotations),
         },
@@ -66,6 +73,11 @@ def main() -> int:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=["tracking", "openfhe"], default="tracking")
+    parser.add_argument(
+        "--projection-mode",
+        choices=["plaintext-exact", "tracking-bsgs"],
+        default="plaintext-exact",
+    )
     parser.add_argument("--d-model", type=int, default=4)
     parser.add_argument("--d-model-pad", type=int, default=8)
     parser.add_argument("--mimo-rank", type=int, default=6)

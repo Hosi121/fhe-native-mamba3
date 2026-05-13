@@ -19,6 +19,8 @@ def test_run_stage1_state_major_toy_kernel_script(tmp_path) -> None:
             "scripts/run_stage1_state_major_toy_kernel.py",
             "--backend",
             "tracking",
+            "--projection-mode",
+            "tracking-bsgs",
             "--output-json",
             str(output_json),
         ],
@@ -35,6 +37,8 @@ def test_run_stage1_state_major_toy_kernel_script(tmp_path) -> None:
     assert payload["stage"] == "stage1-state-major-toy-kernel"
     assert payload["passed"] is True
     assert payload["measurement_scope"]["rank_id_scatter_rotations"] is False
+    assert payload["projection_mode"] == "tracking-bsgs"
+    assert payload["measurements"]["projection_rotations"] == [-16, -8, 1, 2, 3, 4, 6]
     assert payload["measurements"]["state_reduce_rotations"] == [8, 16]
-    assert payload["operation_counts"]["rotations"] == 2
+    assert payload["operation_counts"]["rotations"] == 14
     assert persisted["output_model"] == payload["output_model"]

@@ -22,7 +22,9 @@ def test_state_major_toy_kernel_matches_plaintext_reference() -> None:
     assert result.stage == "stage1-state-major-toy-kernel"
     assert result.measurement_scope["toy_kernel"] is True
     assert result.measurement_scope["plaintext_projection"] is True
+    assert result.measurement_scope["tracking_bsgs_projection"] is False
     assert result.measurement_scope["rank_id_scatter_rotations"] is False
+    assert result.projection_mode == "plaintext-exact"
     assert result.passed is True
     assert result.max_abs_error == pytest.approx(0.0)
     assert result.output_model == pytest.approx(result.expected_output_model)
@@ -32,6 +34,22 @@ def test_state_major_toy_kernel_matches_plaintext_reference() -> None:
     assert result.backend_stats["ct_ct_mul_count"] == 3
     assert result.backend_stats["rotation_count"] == 2
     assert result.backend_stats["decrypt_count"] == 1
+
+
+def test_state_major_toy_kernel_records_fixed_tracking_bsgs_projection_schedule() -> None:
+    problem = make_state_major_toy_problem()
+
+    result = run_state_major_toy_kernel(problem, projection_mode="tracking-bsgs")
+
+    assert result.passed is True
+    assert result.max_abs_error == pytest.approx(0.0)
+    assert result.projection_mode == "tracking-bsgs"
+    assert result.measurement_scope["plaintext_projection"] is False
+    assert result.measurement_scope["tracking_bsgs_projection"] is True
+    assert result.projection_rotations == (-16, -8, 1, 2, 3, 4, 6)
+    assert set(result.projection_rotations).issubset(result.required_application_rotations)
+    assert result.output_model == pytest.approx(result.expected_output_model)
+    assert result.backend_stats["rotation_count"] == 14
 
 
 def test_state_major_toy_problem_rejects_non_power_of_two_state() -> None:
@@ -49,3 +67,11 @@ def test_state_major_toy_problem_rejects_non_power_of_two_state() -> None:
 
     with pytest.raises(ValueError, match="power of two"):
         run_state_major_toy_kernel(bad)
+
+
+def test_state_major_toy_kernel_rejects_unknown_projection_mode() -> None:
+    with pytest.raises(ValueError, match="unsupported projection_mode"):
+        run_state_major_toy_kernel(
+            make_state_major_toy_problem(),
+            projection_mode="dense",
+        )

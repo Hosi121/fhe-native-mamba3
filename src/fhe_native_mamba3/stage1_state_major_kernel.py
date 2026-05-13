@@ -50,6 +50,8 @@ class StateMajorToyKernelResult:
     d_state: int
     backend: str
     encrypted: bool
+    projection_mode: str
+    projection_rotations: tuple[int, ...]
     required_application_rotations: tuple[int, ...]
     state_reduce_rotations: tuple[int, ...]
     max_abs_error: float
@@ -72,6 +74,8 @@ class StateMajorToyKernelResult:
             "d_state": self.d_state,
             "backend": self.backend,
             "encrypted": self.encrypted,
+            "projection_mode": self.projection_mode,
+            "projection_rotations": self.projection_rotations,
             "required_application_rotations": self.required_application_rotations,
             "state_reduce_rotations": self.state_reduce_rotations,
             "max_abs_error": self.max_abs_error,
@@ -178,6 +182,7 @@ def run_state_major_toy_kernel(
     problem: StateMajorToyProblem,
     *,
     backend: FHEBackend | None = None,
+    projection_mode: str = "plaintext-exact",
     atol: float = 1e-12,
 ) -> StateMajorToyKernelResult:
     """Run the state-major recurrence/readout toy kernel."""
@@ -192,9 +197,31 @@ def run_state_major_toy_kernel(
     if atol < 0:
         msg = "atol must be non-negative"
         raise ValueError(msg)
+    if projection_mode not in {"plaintext-exact", "tracking-bsgs"}:
+        msg = f"unsupported projection_mode: {projection_mode}"
+        raise ValueError(msg)
     batch_size = problem.rank_pad * problem.d_state
     resolved_backend = backend or TrackingBackend(batch_size=batch_size)
-    projected = _project_plaintext(problem)
+    if projection_mode == "tracking-bsgs" and resolved_backend.encrypted:
+        msg = "tracking-bsgs projection mode is only available with non-encrypted backends"
+        raise ValueError(msg)
+    plan = build_state_major_layout_plan(
+        d_model=problem.d_model,
+        d_model_pad=problem.d_model_pad,
+        mimo_rank=problem.mimo_rank,
+        rank_pad=problem.rank_pad,
+        d_state=problem.d_state,
+        model_baby_step=2,
+        rank_baby_step=4,
+        bootstrap_rotation_key_count=0,
+        max_application_rotation_keys=64,
+    )
+    model_ct = resolved_backend.encrypt(_pack_model_input(problem))
+    if projection_mode == "tracking-bsgs":
+        projected = _project_tracking_bsgs(problem, backend=resolved_backend, model_ct=model_ct)
+    else:
+        projected = _project_plaintext(problem)
+    projection_rotations = _projection_rotation_trace(problem, plan=plan)
     previous_state = np.asarray(problem.previous_state, dtype=float)
     decay = np.asarray(problem.decay, dtype=float)
     state_new_expected = decay * previous_state + projected["b"] * projected["x"][None, :]
@@ -207,7 +234,14 @@ def run_state_major_toy_kernel(
     previous_ct = resolved_backend.encrypt(_pack_state_major(previous_state, problem=problem))
     decay_ct = resolved_backend.encrypt(_pack_state_major(decay, problem=problem))
     b_ct = resolved_backend.encrypt(_pack_state_major(projected["b"], problem=problem))
-    x_ct = resolved_backend.encrypt(_pack_rank_broadcast(projected["x"], problem=problem))
+    if projection_mode == "tracking-bsgs":
+        x_ct = _broadcast_rank_block0(
+            resolved_backend,
+            resolved_backend.encrypt(_pack_rank_block0(projected["x"], problem=problem)),
+            problem=problem,
+        )
+    else:
+        x_ct = resolved_backend.encrypt(_pack_rank_broadcast(projected["x"], problem=problem))
     c_ct = resolved_backend.encrypt(_pack_state_major(projected["c"], problem=problem))
 
     state_new_ct = resolved_backend.add(
@@ -225,34 +259,33 @@ def run_state_major_toy_kernel(
         reduced_ct = resolved_backend.add(reduced_ct, resolved_backend.rotate(reduced_ct, step))
     readout_rank = np.asarray(resolved_backend.decrypt(reduced_ct, length=problem.mimo_rank))
     rank_payload = projected["gate"] * readout_rank
+    if projection_mode == "tracking-bsgs":
+        _record_schedule_rotations(
+            resolved_backend,
+            model_ct,
+            plan.rank_to_model_schedule.baby_rotations
+            + plan.rank_to_model_schedule.giant_rotations,
+        )
     output_model = np.asarray(problem.model_input) + np.asarray(problem.w_out) @ rank_payload
     max_abs_error = float(np.max(np.abs(output_model - output_expected)))
-    plan = build_state_major_layout_plan(
-        d_model=problem.d_model,
-        d_model_pad=problem.d_model_pad,
-        mimo_rank=problem.mimo_rank,
-        rank_pad=problem.rank_pad,
-        d_state=problem.d_state,
-        model_baby_step=2,
-        rank_baby_step=4,
-        bootstrap_rotation_key_count=0,
-        max_application_rotation_keys=64,
-    )
     return StateMajorToyKernelResult(
         stage="stage1-state-major-toy-kernel",
         measurement_scope={
             "benchmark": bool(resolved_backend.encrypted),
             "encrypted": bool(resolved_backend.encrypted),
             "toy_kernel": True,
-            "plaintext_projection": True,
+            "plaintext_projection": projection_mode == "plaintext-exact",
+            "tracking_bsgs_projection": projection_mode == "tracking-bsgs",
+            "projection_schedule_fixed": True,
             "tracking_state_major_recurrence": not resolved_backend.encrypted,
             "rank_id_scatter_rotations": False,
             "model_layout_handoff": True,
             "full_model_correctness_claimed": False,
             "claim": (
                 "Toy state-major kernel validates the model-layout to state-major "
-                "contract and state-axis recurrence/readout rotations. Dense "
-                "projections are evaluated as plaintext exact references in this slice."
+                "contract and state-axis recurrence/readout rotations. Projection "
+                "mode controls whether dense projections are plaintext references or "
+                "tracking-only fixed-schedule BSGS traces."
             ),
         },
         d_model=problem.d_model,
@@ -262,6 +295,8 @@ def run_state_major_toy_kernel(
         d_state=problem.d_state,
         backend=resolved_backend.name,
         encrypted=bool(resolved_backend.encrypted),
+        projection_mode=projection_mode,
+        projection_rotations=projection_rotations,
         required_application_rotations=plan.application_rotations,
         state_reduce_rotations=reduce_rotations,
         max_abs_error=max_abs_error,
@@ -287,6 +322,102 @@ def _project_plaintext(problem: StateMajorToyProblem) -> dict[str, np.ndarray]:
         "b": np.einsum("nrd,d->nr", w_b, model_input),
         "c": np.einsum("nrd,d->nr", w_c, model_input),
     }
+
+
+def _project_tracking_bsgs(
+    problem: StateMajorToyProblem,
+    *,
+    backend: FHEBackend,
+    model_ct: Any,
+) -> dict[str, np.ndarray]:
+    plan = build_state_major_layout_plan(
+        d_model=problem.d_model,
+        d_model_pad=problem.d_model_pad,
+        mimo_rank=problem.mimo_rank,
+        rank_pad=problem.rank_pad,
+        d_state=problem.d_state,
+        model_baby_step=2,
+        rank_baby_step=4,
+        bootstrap_rotation_key_count=0,
+        max_application_rotation_keys=64,
+    )
+    _record_schedule_rotations(
+        backend,
+        model_ct,
+        plan.model_to_rank_schedule.baby_rotations + plan.model_to_rank_schedule.giant_rotations,
+    )
+    projected = _project_plaintext(problem)
+    # B/C are state-specific. This first tracking slice records the fixed
+    # state-axis shifts needed to place block0 projection outputs into
+    # state-major blocks, while the dense arithmetic remains an exact reference.
+    dummy_rank = backend.encrypt(_pack_rank_block0(projected["x"], problem=problem))
+    _record_schedule_rotations(
+        backend,
+        dummy_rank,
+        state_axis_rotation_steps(rank_pad=problem.rank_pad, d_state=problem.d_state, sign=-1),
+    )
+    return projected
+
+
+def _projection_rotation_trace(
+    problem: StateMajorToyProblem,
+    *,
+    plan: Any,
+) -> tuple[int, ...]:
+    projection_steps = (
+        set(plan.model_to_rank_schedule.baby_rotations)
+        | set(plan.model_to_rank_schedule.giant_rotations)
+        | set(plan.rank_to_model_schedule.baby_rotations)
+        | set(plan.rank_to_model_schedule.giant_rotations)
+        | set(
+            state_axis_rotation_steps(
+                rank_pad=problem.rank_pad,
+                d_state=problem.d_state,
+                sign=-1,
+            )
+        )
+    )
+    return tuple(sorted(step for step in projection_steps if step != 0))
+
+
+def _record_schedule_rotations(
+    backend: FHEBackend,
+    ciphertext: Any,
+    rotations: tuple[int, ...],
+) -> None:
+    for step in rotations:
+        if step != 0:
+            backend.rotate(ciphertext, step)
+
+
+def _pack_model_input(problem: StateMajorToyProblem) -> tuple[float, ...]:
+    slots = np.zeros(problem.rank_pad * problem.d_state, dtype=float)
+    for index, value in enumerate(problem.model_input):
+        slots[index] = value
+    return tuple(float(value) for value in slots)
+
+
+def _pack_rank_block0(values: np.ndarray, *, problem: StateMajorToyProblem) -> tuple[float, ...]:
+    slots = np.zeros(problem.rank_pad * problem.d_state, dtype=float)
+    for rank_index in range(problem.mimo_rank):
+        slots[rank_index] = values[rank_index]
+    return tuple(float(value) for value in slots)
+
+
+def _broadcast_rank_block0(
+    backend: FHEBackend,
+    ciphertext: Any,
+    *,
+    problem: StateMajorToyProblem,
+) -> Any:
+    result = ciphertext
+    for step in state_axis_rotation_steps(
+        rank_pad=problem.rank_pad,
+        d_state=problem.d_state,
+        sign=-1,
+    ):
+        result = backend.add(result, backend.rotate(result, step))
+    return result
 
 
 def _pack_state_major(values: np.ndarray, *, problem: StateMajorToyProblem) -> tuple[float, ...]:
