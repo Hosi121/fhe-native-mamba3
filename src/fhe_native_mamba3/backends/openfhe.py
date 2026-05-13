@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -135,11 +136,11 @@ class OpenFheCkksBackend:
     def bootstrap_config(self) -> OpenFheBootstrapConfig | None:
         return self._bootstrap_config
 
-    def encode(self, values: list[float] | tuple[float, ...]) -> Any:
+    def encode(self, values: Sequence[float]) -> Any:
         self._stats.encode_count += 1
         return self.cc.MakeCKKSPackedPlaintext(self._normalize(values))
 
-    def encrypt(self, values: list[float] | tuple[float, ...]) -> Any:
+    def encrypt(self, values: Sequence[float]) -> Any:
         self._stats.encrypt_count += 1
         return self.cc.Encrypt(self.keys.publicKey, self.encode(values))
 
@@ -176,7 +177,7 @@ class OpenFheCkksBackend:
     def stats(self) -> BackendStats:
         return self._stats
 
-    def _normalize(self, values: list[float] | tuple[float, ...]) -> list[float]:
+    def _normalize(self, values: Sequence[float]) -> list[float]:
         if len(values) > self.batch_size:
             msg = f"got {len(values)} values for batch_size={self.batch_size}"
             raise ValueError(msg)

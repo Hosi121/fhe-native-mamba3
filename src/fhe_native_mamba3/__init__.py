@@ -358,6 +358,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_state_major_layout",
         "StateMajorLayoutPlan",
     ),
+    "StateMajorFullShapeConfig": (
+        "fhe_native_mamba3.stage1_state_major_fullshape",
+        "StateMajorFullShapeConfig",
+    ),
+    "StateMajorFullShapeResult": (
+        "fhe_native_mamba3.stage1_state_major_fullshape",
+        "StateMajorFullShapeResult",
+    ),
     "SlotBsgsSchedule": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "SlotBsgsSchedule",
@@ -896,6 +904,18 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_grouped_recurrence",
         "slice_recurrence_problem_by_rank",
     ),
+    "slot_bsgs_linear_block0": (
+        "fhe_native_mamba3.slot_bsgs",
+        "slot_bsgs_linear_block0",
+    ),
+    "slot_bsgs_pre_mask": (
+        "fhe_native_mamba3.slot_bsgs",
+        "slot_bsgs_pre_mask",
+    ),
+    "slot_bsgs_rotation_groups": (
+        "fhe_native_mamba3.slot_bsgs",
+        "slot_bsgs_rotation_groups",
+    ),
     "ssd_prefix_scan": ("fhe_native_mamba3.ssd_prefix_scan", "ssd_prefix_scan"),
     "ssd_prefix_scan_prefill": (
         "fhe_native_mamba3.ssd_prefix_scan",
@@ -961,6 +981,10 @@ _LAZY_IMPORTS = {
     "run_state_major_toy_kernel": (
         "fhe_native_mamba3.stage1_state_major_kernel",
         "run_state_major_toy_kernel",
+    ),
+    "run_state_major_full_shape_tracking": (
+        "fhe_native_mamba3.stage1_state_major_fullshape",
+        "run_state_major_full_shape_tracking",
     ),
     "validate_artifact_file": (
         "fhe_native_mamba3.artifact_validation",
@@ -1106,6 +1130,8 @@ __all__ = [
     "StateDictMappingDraft",
     "StateDictMappingReport",
     "StateDictMappingRule",
+    "StateMajorFullShapeConfig",
+    "StateMajorFullShapeResult",
     "StateMajorLayoutPlan",
     "StateMajorToyKernelResult",
     "StateMajorToyProblem",
@@ -1251,6 +1277,7 @@ __all__ = [
     "run_stage1_pack_sweep",
     "run_stage2_sketch_seed_sweep",
     "run_stage2_sketch_sweep",
+    "run_state_major_full_shape_tracking",
     "run_state_major_toy_kernel",
     "run_static_mimo_recurrence_ciphertext_chain_with_backend",
     "run_static_mimo_recurrence_ciphertexts_with_backend",
@@ -1265,6 +1292,9 @@ __all__ = [
     "scale_recurrence_state_and_output",
     "sketch_evidence_report_markdown",
     "slice_recurrence_problem_by_rank",
+    "slot_bsgs_linear_block0",
+    "slot_bsgs_pre_mask",
+    "slot_bsgs_rotation_groups",
     "srht_sample_indices",
     "srht_sampling_mask",
     "srht_sketch_matrix",

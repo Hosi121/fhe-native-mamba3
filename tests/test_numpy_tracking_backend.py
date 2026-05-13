@@ -29,6 +29,16 @@ def test_numpy_tracking_backend_matches_tuple_tracking_operations() -> None:
     assert numpy_backend.stats().ct_pt_mul_count == tuple_backend.stats().ct_pt_mul_count
 
 
+def test_tuple_tracking_backend_accepts_numpy_plaintexts() -> None:
+    backend = TrackingBackend(batch_size=4)
+    ciphertext = backend.encrypt((1.0, 2.0))
+    plaintext = backend.encode(np.array([3.0, 4.0]))
+
+    result = backend.mul_plain(ciphertext, plaintext)
+
+    assert backend.decrypt(result, length=4) == pytest.approx((3.0, 8.0, 0.0, 0.0))
+
+
 def test_state_major_slot_bsgs_runs_with_numpy_tracking_backend() -> None:
     problem = make_state_major_toy_problem()
     backend = NumpyTrackingBackend(batch_size=problem.rank_pad * problem.d_state)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
@@ -42,9 +43,9 @@ class FHEBackend(Protocol):
     @property
     def ring_dimension(self) -> int: ...
 
-    def encode(self, values: list[float] | tuple[float, ...]) -> Any: ...
+    def encode(self, values: Sequence[float]) -> Any: ...
 
-    def encrypt(self, values: list[float] | tuple[float, ...]) -> Any: ...
+    def encrypt(self, values: Sequence[float]) -> Any: ...
 
     def decrypt(self, value: Any, *, length: int) -> tuple[float, ...]: ...
 
