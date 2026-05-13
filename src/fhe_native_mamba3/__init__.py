@@ -357,6 +357,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_state_major_layout",
         "StateMajorLayoutPlan",
     ),
+    "StateMajorToyKernelResult": (
+        "fhe_native_mamba3.stage1_state_major_kernel",
+        "StateMajorToyKernelResult",
+    ),
+    "StateMajorToyProblem": (
+        "fhe_native_mamba3.stage1_state_major_kernel",
+        "StateMajorToyProblem",
+    ),
     "Stage1GroupedFullLayerLiftSmokeResult": (
         "fhe_native_mamba3.stage1_grouped_recurrence",
         "Stage1GroupedFullLayerLiftSmokeResult",
@@ -650,6 +658,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.bootstrap_latency",
         "measure_openfhe_bootstrap_latency",
     ),
+    "make_state_major_toy_problem": (
+        "fhe_native_mamba3.stage1_state_major_kernel",
+        "make_state_major_toy_problem",
+    ),
     "normalize_rotation_step": (
         "fhe_native_mamba3.composite_rotation",
         "normalize_rotation_step",
@@ -892,6 +904,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_state_major_layout",
         "state_axis_rotation_steps",
     ),
+    "state_major_slot": (
+        "fhe_native_mamba3.stage1_state_major_kernel",
+        "state_major_slot",
+    ),
     "srht_sample_indices": ("fhe_native_mamba3.srht_sketch", "srht_sample_indices"),
     "srht_sampling_mask": ("fhe_native_mamba3.srht_sketch", "srht_sampling_mask"),
     "srht_sketch_matrix": ("fhe_native_mamba3.srht_sketch", "srht_sketch_matrix"),
@@ -928,6 +944,10 @@ _LAZY_IMPORTS = {
     "run_toy_cutmax_smoke": (
         "fhe_native_mamba3.toy_cutmax",
         "run_toy_cutmax_smoke",
+    ),
+    "run_state_major_toy_kernel": (
+        "fhe_native_mamba3.stage1_state_major_kernel",
+        "run_state_major_toy_kernel",
     ),
     "validate_artifact_file": (
         "fhe_native_mamba3.artifact_validation",
@@ -1072,6 +1092,8 @@ __all__ = [
     "StateDictMappingReport",
     "StateDictMappingRule",
     "StateMajorLayoutPlan",
+    "StateMajorToyKernelResult",
+    "StateMajorToyProblem",
     "TinyMimoBlockProblem",
     "TinyMimoBlockSmokeResult",
     "ToyCutMaxSmokeResult",
@@ -1158,6 +1180,7 @@ __all__ = [
     "lora_parameter_count",
     "make_demo_full_layer_lift_inputs",
     "make_demo_problem",
+    "make_state_major_toy_problem",
     "map_state_dict",
     "mark_only_lora_trainable",
     "measure_openfhe_bootstrap_latency",
@@ -1211,6 +1234,7 @@ __all__ = [
     "run_stage1_pack_sweep",
     "run_stage2_sketch_seed_sweep",
     "run_stage2_sketch_sweep",
+    "run_state_major_toy_kernel",
     "run_static_mimo_recurrence_ciphertext_chain_with_backend",
     "run_static_mimo_recurrence_ciphertexts_with_backend",
     "run_tiny_mimo_block_smoke",
@@ -1232,6 +1256,7 @@ __all__ = [
     "stage1_checkpoint_cost_markdown",
     "stage1_comparison_markdown",
     "state_axis_rotation_steps",
+    "state_major_slot",
     "sweep_head_pack_candidates",
     "validate_artifact_file",
     "validate_benchmark_artifact",
