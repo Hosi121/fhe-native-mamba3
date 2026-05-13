@@ -428,6 +428,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage2_sketch_seed_sweep",
         "Stage2SketchSeedSweepRow",
     ),
+    "Stage2LearnedSketchBaselineResult": (
+        "fhe_native_mamba3.stage2_learned_sketch_baseline",
+        "Stage2LearnedSketchBaselineResult",
+    ),
+    "Stage2LearnedSketchBaselineRow": (
+        "fhe_native_mamba3.stage2_learned_sketch_baseline",
+        "Stage2LearnedSketchBaselineRow",
+    ),
     "TinyMimoBlockProblem": (
         "fhe_native_mamba3.stage1_tiny_mimo",
         "TinyMimoBlockProblem",
@@ -966,6 +974,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage2_sketch_seed_sweep",
         "run_stage2_sketch_seed_sweep",
     ),
+    "run_stage2_learned_sketch_baseline": (
+        "fhe_native_mamba3.stage2_learned_sketch_baseline",
+        "run_stage2_learned_sketch_baseline",
+    ),
     "run_tiny_mimo_block_smoke": (
         "fhe_native_mamba3.stage1_tiny_mimo",
         "run_tiny_mimo_block_smoke",
@@ -1138,6 +1150,8 @@ __all__ = [
     "Stage1PackSweepRow",
     "Stage1Plan",
     "Stage1ProfileHints",
+    "Stage2LearnedSketchBaselineResult",
+    "Stage2LearnedSketchBaselineRow",
     "Stage2SketchSeedSample",
     "Stage2SketchSeedSweepResult",
     "Stage2SketchSeedSweepRow",
@@ -1293,6 +1307,7 @@ __all__ = [
     "run_stage1_grouped_full_layer_lift_smoke",
     "run_stage1_grouped_static_recurrence_smoke",
     "run_stage1_pack_sweep",
+    "run_stage2_learned_sketch_baseline",
     "run_stage2_sketch_seed_sweep",
     "run_stage2_sketch_sweep",
     "run_state_major_checkpoint_chain_tracking",
