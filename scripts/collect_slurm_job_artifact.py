@@ -183,7 +183,13 @@ def _ledger_row(
     )
     status = "Missing"
     if artifact_exists and artifact_valid:
-        status = "Passed" if root_state == "COMPLETED" else f"Recorded {root_state or 'unknown'}"
+        artifact_passed = _success_value(artifact_payload)
+        if root_state == "COMPLETED" and artifact_passed is not False:
+            status = "Passed"
+        elif artifact_passed is False:
+            status = "Recorded failed artifact"
+        else:
+            status = f"Recorded {root_state or 'unknown'}"
     elif artifact_exists:
         status = "Invalid schema"
     return (
