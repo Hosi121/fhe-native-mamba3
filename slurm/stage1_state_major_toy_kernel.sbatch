@@ -18,6 +18,7 @@ PYTHON="${PYTHON:-${PWD}/.venv/bin/python}"
 RUN_NAME="${RUN_NAME:-stage1-state-major-toy-${SLURM_JOB_ID:-manual}}"
 OUTPUT_JSON="${OUTPUT_JSON:-runs/${RUN_NAME}.json}"
 BACKEND="${BACKEND:-openfhe}"
+PROJECTION_MODE="${PROJECTION_MODE:-plaintext-exact}"
 D_MODEL="${D_MODEL:-4}"
 D_MODEL_PAD="${D_MODEL_PAD:-8}"
 MIMO_RANK="${MIMO_RANK:-6}"
@@ -86,6 +87,7 @@ fi
 
 "${PYTHON}" scripts/run_stage1_state_major_toy_kernel.py \
   --backend "${BACKEND}" \
+  --projection-mode "${PROJECTION_MODE}" \
   --d-model "${D_MODEL}" \
   --d-model-pad "${D_MODEL_PAD}" \
   --mimo-rank "${MIMO_RANK}" \

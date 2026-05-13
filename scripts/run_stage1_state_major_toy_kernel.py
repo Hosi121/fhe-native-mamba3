@@ -18,9 +18,9 @@ def main() -> int:
     from fhe_native_mamba3.cli_support import emit_json_payload
     from fhe_native_mamba3.stage1_state_major_kernel import (
         make_state_major_toy_problem,
+        required_state_major_toy_kernel_rotations,
         run_state_major_toy_kernel,
     )
-    from fhe_native_mamba3.stage1_state_major_layout import state_axis_rotation_steps
 
     args = _parse_args()
     problem = make_state_major_toy_problem(
@@ -36,10 +36,9 @@ def main() -> int:
             batch_size=args.rank_pad * args.d_state,
             multiplicative_depth=args.multiplicative_depth,
             scaling_mod_size=args.scaling_mod_size,
-            rotations=state_axis_rotation_steps(
-                rank_pad=args.rank_pad,
-                d_state=args.d_state,
-                sign=1,
+            rotations=required_state_major_toy_kernel_rotations(
+                problem,
+                projection_mode=args.projection_mode,
             ),
             ring_dimension=args.ring_dimension or None,
         )
@@ -75,7 +74,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--backend", choices=["tracking", "openfhe"], default="tracking")
     parser.add_argument(
         "--projection-mode",
-        choices=["plaintext-exact", "tracking-bsgs"],
+        choices=["plaintext-exact", "tracking-bsgs", "slot-bsgs"],
         default="plaintext-exact",
     )
     parser.add_argument("--d-model", type=int, default=4)

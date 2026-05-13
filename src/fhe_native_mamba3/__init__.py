@@ -945,6 +945,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.toy_cutmax",
         "run_toy_cutmax_smoke",
     ),
+    "required_state_major_toy_kernel_rotations": (
+        "fhe_native_mamba3.stage1_state_major_kernel",
+        "required_state_major_toy_kernel_rotations",
+    ),
     "run_state_major_toy_kernel": (
         "fhe_native_mamba3.stage1_state_major_kernel",
         "run_state_major_toy_kernel",
@@ -1202,6 +1206,7 @@ __all__ = [
     "required_backend_srht_rotations",
     "required_full_layer_visible_rotations",
     "required_grouped_full_layer_lift_rotations",
+    "required_state_major_toy_kernel_rotations",
     "required_tiny_mimo_block_rotations",
     "required_toy_cutmax_rotations",
     "resolve_pre_recurrence_shape",

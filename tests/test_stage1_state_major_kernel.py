@@ -4,6 +4,7 @@ import pytest
 
 from fhe_native_mamba3.stage1_state_major_kernel import (
     make_state_major_toy_problem,
+    required_state_major_toy_kernel_rotations,
     run_state_major_toy_kernel,
     state_major_slot,
 )
@@ -50,6 +51,37 @@ def test_state_major_toy_kernel_records_fixed_tracking_bsgs_projection_schedule(
     assert set(result.projection_rotations).issubset(result.required_application_rotations)
     assert result.output_model == pytest.approx(result.expected_output_model)
     assert result.backend_stats["rotation_count"] == 14
+
+
+def test_state_major_toy_kernel_slot_bsgs_projection_computes_ciphertext_values() -> None:
+    problem = make_state_major_toy_problem()
+
+    result = run_state_major_toy_kernel(problem, projection_mode="slot-bsgs")
+
+    assert result.passed is True
+    assert result.max_abs_error == pytest.approx(0.0)
+    assert result.projection_mode == "slot-bsgs"
+    assert result.measurement_scope["slot_bsgs_projection"] is True
+    assert result.projection_rotations == (-16, -8, -6, -4, -2, 1, 2, 3, 4)
+    assert set(result.projection_rotations).issubset(result.required_application_rotations)
+    assert result.required_application_rotations == (-16, -8, -6, -4, -2, 1, 2, 3, 4, 8, 16)
+    assert result.output_model == pytest.approx(result.expected_output_model)
+    assert result.backend_stats["ct_pt_mul_count"] == 99
+    assert result.backend_stats["rotation_count"] == 67
+
+
+def test_required_state_major_toy_kernel_rotations_follow_projection_mode() -> None:
+    problem = make_state_major_toy_problem()
+
+    assert required_state_major_toy_kernel_rotations(problem) == (8, 16)
+    assert required_state_major_toy_kernel_rotations(
+        problem,
+        projection_mode="tracking-bsgs",
+    ) == (-16, -8, 1, 2, 3, 4, 6, 8, 16)
+    assert required_state_major_toy_kernel_rotations(
+        problem,
+        projection_mode="slot-bsgs",
+    ) == (-16, -8, -6, -4, -2, 1, 2, 3, 4, 8, 16)
 
 
 def test_state_major_toy_problem_rejects_non_power_of_two_state() -> None:
