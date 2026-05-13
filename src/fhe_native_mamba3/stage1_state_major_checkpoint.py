@@ -360,6 +360,7 @@ def run_state_major_checkpoint_layer_tracking(
     rotations = required_state_major_checkpoint_layer_rotations(
         config,
         pre_recurrence_mode=pre_recurrence_mode,
+        dt_rank=tensors.dt_rank,
     )
     return StateMajorCheckpointLayerResult(
         stage="stage1-state-major-checkpoint-layer-tracking",
