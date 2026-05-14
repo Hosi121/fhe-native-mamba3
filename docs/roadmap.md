@@ -94,8 +94,9 @@ Current implementation status:
   porting full pre-recurrence. The first gap report attributes the remaining
   work to `922` rotations, `10903` plaintext multiplications, and `30`
   ciphertext multiplications in pre-recurrence/full-layer work. Rank/gate
-  pre-recurrence payload parity is now available natively, so the next slice is
-  encrypted FIDESlib execution for the rank/gate projection boundary.
+  pre-recurrence payload parity is now available natively, and encrypted
+  FIDESlib rank/gate projection passes through Mamba-130M shape. The next slice
+  is encrypted SiLU plus dynamic B/C/decay inside the native kernel.
 
 ## Stage 2
 
