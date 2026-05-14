@@ -118,6 +118,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "EvalRotate(ciphertext" in stage1_rotation_source_text
     assert '\\"requested_rotation_key_count\\"' in stage1_rotation_source_text
     assert '\\"peak_rss_gib\\"' in stage1_rotation_source_text
+    assert "config.multiplicative_depth >= 48" in stage1_rotation_source_text
 
     stage1_bootstrap_slurm_text = stage1_bootstrap_slurm.read_text()
     assert "stage1_bootstrap_probe" in stage1_bootstrap_slurm_text

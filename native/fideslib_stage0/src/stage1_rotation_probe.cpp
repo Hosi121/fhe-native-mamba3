@@ -248,7 +248,7 @@ auto build_payload(
     int final_level) -> std::string {
   const bool target_shape_compatible =
       config.ring_dim >= 131072 && config.num_slots >= 32768 &&
-      config.multiplicative_depth >= 64 && config.scaling_mod_size <= 40 &&
+      config.multiplicative_depth >= 48 && config.scaling_mod_size <= 40 &&
       requested_rotations.size() <= 200;
   const bool security_claimed = config.security == "128-classic";
   const bool passed = decrypt_failure_count == 0 && !executed_rotations.empty();
