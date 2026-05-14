@@ -88,6 +88,20 @@ def test_rank_gate_payload_formula_matches_reference() -> None:
         payload.arrays["reference_skip_update_poly"],
         atol=1e-9,
     )
+    b_vec = payload.arrays["b_weight"] @ rank_poly
+    c_vec = payload.arrays["c_weight"] @ rank_poly
+    np.testing.assert_allclose(b_vec, payload.arrays["reference_b_vec_poly"], atol=1e-9)
+    np.testing.assert_allclose(c_vec, payload.arrays["reference_c_vec_poly"], atol=1e-9)
+    np.testing.assert_allclose(
+        np.repeat(b_vec[:, None], payload.config.mimo_rank, axis=1),
+        payload.arrays["reference_b_state_major_poly"],
+        atol=1e-9,
+    )
+    np.testing.assert_allclose(
+        np.repeat(c_vec[:, None], payload.config.mimo_rank, axis=1),
+        payload.arrays["reference_c_state_major_poly"],
+        atol=1e-9,
+    )
     np.testing.assert_allclose(payload.arrays["polynomial_metadata"], [15.0, 15.0, 8.0])
 
 
@@ -113,6 +127,8 @@ def test_rank_gate_payload_manifest_records_shapes(tmp_path) -> None:
     assert manifest["array_order"] == list(RANK_GATE_PAYLOAD_ARRAY_ORDER)
     assert manifest["arrays"]["effective_rank_weight"]["shape"] == [6, 8]
     assert manifest["arrays"]["gate_weight"]["shape"] == [6, 8]
+    assert manifest["arrays"]["b_weight"]["shape"] == [2, 6]
+    assert manifest["arrays"]["reference_b_state_major_poly"]["shape"] == [2, 6]
     assert manifest["arrays"]["rank_silu_coefficients"]["shape"][0] > 1
     assert manifest["arrays"]["gate_silu_coefficients"]["shape"][0] > 1
     assert manifest["binary"]["size_bytes"] == output_binary.stat().st_size
@@ -175,12 +191,16 @@ def test_export_stage1_rank_gate_payload_script_runs(tmp_path) -> None:
     assert payload["version"] == __version__
     assert payload["stage"] == "stage1-rank-gate-payload-export"
     assert payload["passed"] is True
-    assert payload["measurement_scope"]["pre_recurrence_rank_gate_only"] is True
+    assert payload["measurement_scope"]["pre_recurrence_rank_gate_only"] is False
+    assert payload["measurement_scope"]["pre_recurrence_dynamic_bc"] is True
+    assert payload["measurement_scope"]["pre_recurrence_rank_gate_bc"] is True
     assert payload["measurements"]["array_count"] == len(RANK_GATE_PAYLOAD_ARRAY_ORDER)
     assert payload["parameters"]["polynomial_degree"] == 15
     assert payload["parameters"]["gate_polynomial_degree"] == 9
     assert payload["parameters"]["polynomial_range"] == 8.0
     assert payload["artifact"]["arrays"]["gate_weight"]["shape"] == [6, 8]
+    assert payload["artifact"]["arrays"]["b_weight"]["shape"] == [2, 6]
     assert persisted["artifact"]["binary"]["sha256"] == payload["artifact"]["binary"]["sha256"]
     assert round_trip.arrays["reference_skip_update"].shape == (6,)
     assert round_trip.arrays["reference_skip_update_poly"].shape == (6,)
+    assert round_trip.arrays["reference_b_state_major_poly"].shape == (2, 6)

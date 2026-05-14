@@ -26,7 +26,7 @@ from fhe_native_mamba3.stage1_state_major_fullshape import (
     _validate_config,
 )
 
-RANK_GATE_PAYLOAD_FORMAT_VERSION = 2
+RANK_GATE_PAYLOAD_FORMAT_VERSION = 3
 RANK_GATE_PAYLOAD_MAGIC = b"FHM3RGAT"
 _HEADER = struct.Struct("<I9Id")
 _ARRAY_COUNT = struct.Struct("<I")
@@ -48,6 +48,12 @@ RANK_GATE_PAYLOAD_ARRAY_ORDER = (
     "reference_rank_input_poly",
     "reference_gate_poly",
     "reference_skip_update_poly",
+    "b_weight",
+    "c_weight",
+    "reference_b_vec_poly",
+    "reference_c_vec_poly",
+    "reference_b_state_major_poly",
+    "reference_c_state_major_poly",
     "polynomial_metadata",
 )
 
@@ -56,11 +62,11 @@ RANK_GATE_PAYLOAD_ARRAY_ORDER = (
 class Stage1RankGatePayload:
     """One-layer rank/gate boundary payload for native pre-recurrence parity.
 
-    This payload covers the exact source-boundary values that feed the state-major
+    This payload covers the source-boundary values that feed the state-major
     recurrence tail: RMSNorm output, rank projection after the last causal-conv
-    tap, gate projection, SiLU gates, and skip update.  It deliberately excludes
-    dynamic B/C/decay and the recurrence tail so each native slice has one clear
-    contract.
+    tap, gate projection, polynomial SiLU gates, skip update, and dynamic B/C
+    projections from the polynomial rank input.  It deliberately excludes decay
+    and the recurrence tail so each native slice has one clear contract.
     """
 
     config: StateMajorFullShapeConfig
@@ -196,6 +202,23 @@ def build_stage1_rank_gate_payload(
         )
         d_skip_np = _to_numpy(source.d_skip.to(device=device, dtype=dtype))
         reference_skip_update_poly_np = reference_rank_input_poly_np * d_skip_np
+        if source.x_proj_weight is None:
+            msg = "checkpoint layer must provide x_proj tensors for dynamic B/C"
+            raise ValueError(msg)
+        dt_rank = 0 if source.dt_in_weight is None else int(source.dt_in_weight.shape[0])
+        x_proj_weight = source.x_proj_weight.to(device=device, dtype=dtype)
+        b_weight = x_proj_weight[dt_rank : dt_rank + config.d_state]
+        c_weight = x_proj_weight[dt_rank + config.d_state : dt_rank + 2 * config.d_state]
+        reference_b_vec_poly_np = _to_numpy(b_weight) @ reference_rank_input_poly_np
+        reference_c_vec_poly_np = _to_numpy(c_weight) @ reference_rank_input_poly_np
+        reference_b_state_major_poly_np = _state_major_from_state_vector(
+            reference_b_vec_poly_np,
+            config=config,
+        )
+        reference_c_state_major_poly_np = _state_major_from_state_vector(
+            reference_c_vec_poly_np,
+            config=config,
+        )
         _assert_close_tensor(
             reference_conv_pre,
             stages.causal_conv_pre_silu[0, 0],
@@ -222,6 +245,12 @@ def build_stage1_rank_gate_payload(
         "reference_rank_input_poly": reference_rank_input_poly_np,
         "reference_gate_poly": reference_gate_poly_np,
         "reference_skip_update_poly": reference_skip_update_poly_np,
+        "b_weight": _to_numpy(b_weight),
+        "c_weight": _to_numpy(c_weight),
+        "reference_b_vec_poly": reference_b_vec_poly_np,
+        "reference_c_vec_poly": reference_c_vec_poly_np,
+        "reference_b_state_major_poly": reference_b_state_major_poly_np,
+        "reference_c_state_major_poly": reference_c_state_major_poly_np,
         "polynomial_metadata": np.asarray(
             [
                 float(polynomial_degree),
@@ -397,6 +426,12 @@ def _expected_array_shape(
         "reference_skip_update_poly",
     }:
         return rank_shape
+    if name in {"b_weight", "c_weight"}:
+        return (config.d_state, config.mimo_rank)
+    if name in {"reference_b_vec_poly", "reference_c_vec_poly"}:
+        return (config.d_state,)
+    if name in {"reference_b_state_major_poly", "reference_c_state_major_poly"}:
+        return (config.d_state, config.mimo_rank)
     if name in {"rank_silu_coefficients", "gate_silu_coefficients"}:
         if length is None:
             msg = f"{name} requires an encoded length"
@@ -427,6 +462,15 @@ def _evaluate_power_polynomial_numpy(
     for coefficient in reversed(coefficients[:-1]):
         output = output * values + float(coefficient)
     return output
+
+
+def _state_major_from_state_vector(
+    values: np.ndarray,
+    *,
+    config: StateMajorFullShapeConfig,
+) -> np.ndarray:
+    state_values = np.asarray(values, dtype=np.float64).reshape(config.d_state)
+    return np.repeat(state_values[:, None], config.mimo_rank, axis=1)
 
 
 def _array_sha256(array: np.ndarray) -> str:

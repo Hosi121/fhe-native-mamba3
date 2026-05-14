@@ -11,7 +11,7 @@
 namespace stage1 {
 
 constexpr std::array<char, 8> kRankGatePayloadMagic = {'F', 'H', 'M', '3', 'R', 'G', 'A', 'T'};
-constexpr std::uint32_t kRankGatePayloadFormatVersion = 2;
+constexpr std::uint32_t kRankGatePayloadFormatVersion = 3;
 
 struct RankGatePayloadConfig {
   std::uint32_t d_model = 0;
@@ -63,6 +63,12 @@ inline auto rank_gate_payload_array_order() -> const std::vector<std::string>& {
       "reference_rank_input_poly",
       "reference_gate_poly",
       "reference_skip_update_poly",
+      "b_weight",
+      "c_weight",
+      "reference_b_vec_poly",
+      "reference_c_vec_poly",
+      "reference_b_state_major_poly",
+      "reference_c_state_major_poly",
       "polynomial_metadata",
   };
   return names;
@@ -84,6 +90,15 @@ inline auto rank_gate_payload_expected_shape(
       name == "reference_rank_input_poly" || name == "reference_gate_poly" ||
       name == "reference_skip_update_poly") {
     return {config.mimo_rank};
+  }
+  if (name == "b_weight" || name == "c_weight") {
+    return {config.d_state, config.mimo_rank};
+  }
+  if (name == "reference_b_vec_poly" || name == "reference_c_vec_poly") {
+    return {config.d_state};
+  }
+  if (name == "reference_b_state_major_poly" || name == "reference_c_state_major_poly") {
+    return {config.d_state, config.mimo_rank};
   }
   if (name == "rank_silu_coefficients" || name == "gate_silu_coefficients") {
     return {encoded_length == 0 ? 1 : encoded_length};

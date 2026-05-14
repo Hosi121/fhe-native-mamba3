@@ -104,6 +104,11 @@ void test_read_rank_gate_payload() {
   require_string_equal(payload.arrays.front().name, "rms_input", "first array name");
   require_equal(payload.array("effective_rank_weight").values.size(), 48, "rank weight length");
   require_equal(payload.array("gate_weight").values.size(), 48, "gate weight length");
+  require_equal(payload.array("b_weight").values.size(), 12, "b weight length");
+  require_equal(
+      payload.array("reference_b_state_major_poly").values.size(),
+      12,
+      "B state-major reference length");
 
   std::filesystem::remove(path);
 }

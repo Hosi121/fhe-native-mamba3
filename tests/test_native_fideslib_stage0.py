@@ -142,6 +142,8 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     rank_gate_fideslib_text = stage1_rank_gate_fideslib_source.read_text()
     assert "stage1-rank-gate-fideslib-projection" in rank_gate_fideslib_text
     assert "pre_recurrence_rank_gate_projection" in rank_gate_fideslib_text
+    assert "pre_recurrence_dynamic_bc" in rank_gate_fideslib_text
+    assert "state_vector_to_state_major_ciphertext" in rank_gate_fideslib_text
 
     stage1_bootstrap_slurm_text = stage1_bootstrap_slurm.read_text()
     assert "stage1_bootstrap_probe" in stage1_bootstrap_slurm_text

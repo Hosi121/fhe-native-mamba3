@@ -158,9 +158,42 @@ auto slot_bsgs_rotations(int input_dim, int output_dim, int baby_step) -> std::v
   return {rotations.begin(), rotations.end()};
 }
 
+auto bounded_baby_step(int requested, int input_dim) -> int {
+  return std::max(1, std::min(requested, input_dim));
+}
+
+auto state_vector_to_state_major_rotations(const stage1::RankGatePayloadConfig& config)
+    -> std::vector<int32_t> {
+  std::set<int32_t> rotations;
+  for (std::uint32_t state_index = 0; state_index < config.d_state; ++state_index) {
+    const auto target_slot = static_cast<int>(state_index * config.rank_pad);
+    const auto shift = static_cast<int>(state_index) - target_slot;
+    if (shift != 0) {
+      rotations.insert(static_cast<int32_t>(shift));
+    }
+    for (std::uint32_t step = 1; step < config.rank_pad; step *= 2) {
+      rotations.insert(-static_cast<int32_t>(step));
+    }
+  }
+  return {rotations.begin(), rotations.end()};
+}
+
 auto required_rank_gate_rotations(const stage1::RankGatePayloadConfig& config)
     -> std::vector<int32_t> {
-  return slot_bsgs_rotations(config.d_model, config.mimo_rank, config.model_baby_step);
+  std::set<int32_t> rotations;
+  const auto model_rotations =
+      slot_bsgs_rotations(config.d_model, config.mimo_rank, config.model_baby_step);
+  rotations.insert(model_rotations.begin(), model_rotations.end());
+  const auto bc_rotations = slot_bsgs_rotations(
+      config.mimo_rank,
+      config.d_state,
+      bounded_baby_step(
+          static_cast<int>(config.rank_baby_step),
+          static_cast<int>(config.mimo_rank)));
+  rotations.insert(bc_rotations.begin(), bc_rotations.end());
+  const auto state_rotations = state_vector_to_state_major_rotations(config);
+  rotations.insert(state_rotations.begin(), state_rotations.end());
+  return {rotations.begin(), rotations.end()};
 }
 
 auto pack_block0(
@@ -359,6 +392,62 @@ auto first_values(const std::vector<double>& values, size_t count) -> std::vecto
   return {values.begin(), values.begin() + static_cast<std::ptrdiff_t>(count)};
 }
 
+auto state_major_valid_values(
+    const std::vector<double>& values,
+    const stage1::RankGatePayloadConfig& config) -> std::vector<double> {
+  std::vector<double> output;
+  output.reserve(static_cast<std::size_t>(config.d_state) * config.mimo_rank);
+  for (std::uint32_t state_index = 0; state_index < config.d_state; ++state_index) {
+    const auto base = static_cast<std::size_t>(state_index * config.rank_pad);
+    for (std::uint32_t rank_index = 0; rank_index < config.mimo_rank; ++rank_index) {
+      output.push_back(values[base + rank_index]);
+    }
+  }
+  return output;
+}
+
+auto state_vector_to_state_major_ciphertext(
+    const CryptoContext<DCRTPoly>& cc,
+    const Ciphertext<DCRTPoly>& state_vector_ct,
+    const stage1::RankGatePayloadConfig& config,
+    int batch_size,
+    int& rotations,
+    int& ct_pt_muls,
+    int& adds) -> Ciphertext<DCRTPoly> {
+  Ciphertext<DCRTPoly> output;
+  bool has_output = false;
+  for (std::uint32_t state_index = 0; state_index < config.d_state; ++state_index) {
+    std::vector<double> mask(static_cast<std::size_t>(batch_size), 0.0);
+    mask[static_cast<std::size_t>(state_index)] = 1.0;
+    auto plain = cc->MakeCKKSPackedPlaintext(mask);
+    plain->SetLength(static_cast<std::size_t>(batch_size));
+    auto block = cc->EvalMult(state_vector_ct, plain);
+    ++ct_pt_muls;
+    const auto target_slot = static_cast<int>(state_index * config.rank_pad);
+    const auto shift = static_cast<int>(state_index) - target_slot;
+    if (shift != 0) {
+      block = cc->EvalRotate(block, shift);
+      ++rotations;
+    }
+    for (std::uint32_t step = 1; step < config.rank_pad; step *= 2) {
+      block = cc->EvalAdd(block, cc->EvalRotate(block, -static_cast<int32_t>(step)));
+      ++rotations;
+      ++adds;
+    }
+    if (!has_output) {
+      output = block;
+      has_output = true;
+    } else {
+      output = cc->EvalAdd(output, block);
+      ++adds;
+    }
+  }
+  if (!has_output) {
+    throw std::runtime_error("state-vector broadcast produced no terms");
+  }
+  return output;
+}
+
 auto read_status_kib(const std::string& key) -> long long {
   std::ifstream status("/proc/self/status");
   std::string line;
@@ -541,6 +630,49 @@ auto main(int argc, char* argv[]) -> int {
     auto skip_update_poly_ct = cc->EvalMult(rank_input_poly_ct, d_skip_plain);
     ++ct_pt_muls;
     log_phase("skip update done");
+    const int rank_baby_step = bounded_baby_step(
+        static_cast<int>(payload.config.rank_baby_step),
+        static_cast<int>(payload.config.mimo_rank));
+    auto b_vec_poly_ct = slot_bsgs_linear_block0(
+        cc,
+        rank_input_poly_ct,
+        payload.array("b_weight").values,
+        static_cast<int>(payload.config.mimo_rank),
+        static_cast<int>(payload.config.d_state),
+        rank_baby_step,
+        batch_size,
+        rotations,
+        ct_pt_muls,
+        adds);
+    auto c_vec_poly_ct = slot_bsgs_linear_block0(
+        cc,
+        rank_input_poly_ct,
+        payload.array("c_weight").values,
+        static_cast<int>(payload.config.mimo_rank),
+        static_cast<int>(payload.config.d_state),
+        rank_baby_step,
+        batch_size,
+        rotations,
+        ct_pt_muls,
+        adds);
+    log_phase("dynamic B/C vector projections done");
+    auto b_state_major_poly_ct = state_vector_to_state_major_ciphertext(
+        cc,
+        b_vec_poly_ct,
+        payload.config,
+        batch_size,
+        rotations,
+        ct_pt_muls,
+        adds);
+    auto c_state_major_poly_ct = state_vector_to_state_major_ciphertext(
+        cc,
+        c_vec_poly_ct,
+        payload.config,
+        batch_size,
+        rotations,
+        ct_pt_muls,
+        adds);
+    log_phase("dynamic B/C state-major broadcasts done");
     const double eval_seconds = seconds_since(eval_start);
     log_phase(
         "projection eval done rotations=" + std::to_string(rotations) +
@@ -573,6 +705,26 @@ auto main(int argc, char* argv[]) -> int {
         keys.secretKey,
         skip_update_poly_ct,
         static_cast<size_t>(batch_size));
+    const auto b_vec_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        b_vec_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto c_vec_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        c_vec_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto b_state_major_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        b_state_major_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto c_state_major_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        c_state_major_poly_ct,
+        static_cast<size_t>(batch_size));
     log_phase("decrypt done");
 
     const auto conv_pre = unscaled_values(
@@ -586,6 +738,14 @@ auto main(int argc, char* argv[]) -> int {
         first_values(gate_poly_slots, static_cast<size_t>(payload.config.mimo_rank));
     const auto skip_update_poly =
         first_values(skip_update_poly_slots, static_cast<size_t>(payload.config.mimo_rank));
+    const auto b_vec_poly =
+        first_values(b_vec_poly_slots, static_cast<size_t>(payload.config.d_state));
+    const auto c_vec_poly =
+        first_values(c_vec_poly_slots, static_cast<size_t>(payload.config.d_state));
+    const auto b_state_major_poly =
+        state_major_valid_values(b_state_major_poly_slots, payload.config);
+    const auto c_state_major_poly =
+        state_major_valid_values(c_state_major_poly_slots, payload.config);
     const auto conv_error =
         stage1::max_abs_delta(conv_pre, payload.array("reference_conv_pre").values);
     const auto gate_error =
@@ -596,6 +756,16 @@ auto main(int argc, char* argv[]) -> int {
         stage1::max_abs_delta(gate_poly, payload.array("reference_gate_poly").values);
     const auto skip_poly_error =
         stage1::max_abs_delta(skip_update_poly, payload.array("reference_skip_update_poly").values);
+    const auto b_vec_poly_error =
+        stage1::max_abs_delta(b_vec_poly, payload.array("reference_b_vec_poly").values);
+    const auto c_vec_poly_error =
+        stage1::max_abs_delta(c_vec_poly, payload.array("reference_c_vec_poly").values);
+    const auto b_state_major_poly_error = stage1::max_abs_delta(
+        b_state_major_poly,
+        payload.array("reference_b_state_major_poly").values);
+    const auto c_state_major_poly_error = stage1::max_abs_delta(
+        c_state_major_poly,
+        payload.array("reference_c_state_major_poly").values);
     const auto rank_poly_approx_error = stage1::max_abs_delta(
         payload.array("reference_rank_input_poly").values,
         payload.array("reference_rank_input").values);
@@ -605,8 +775,16 @@ auto main(int argc, char* argv[]) -> int {
     const auto skip_poly_approx_error = stage1::max_abs_delta(
         payload.array("reference_skip_update_poly").values,
         payload.array("reference_skip_update").values);
-    const auto max_error =
-        std::max({conv_error, gate_error, rank_poly_error, gate_poly_error, skip_poly_error});
+    const auto max_error = std::max(
+        {conv_error,
+         gate_error,
+         rank_poly_error,
+         gate_poly_error,
+         skip_poly_error,
+         b_vec_poly_error,
+         c_vec_poly_error,
+         b_state_major_poly_error,
+         c_state_major_poly_error});
     const bool passed = max_error <= args.atol;
     const auto& polynomial_metadata = payload.array("polynomial_metadata").values;
 
@@ -627,6 +805,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
     out << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
     out << "\"model_baby_step\":" << payload.config.model_baby_step;
+    out << ",\"rank_baby_step\":" << payload.config.rank_baby_step;
     out << ",\"rank_projection_scale\":" << args.rank_projection_scale;
     out << ",\"polynomial_degree\":" << polynomial_metadata[0];
     out << ",\"gate_polynomial_degree\":" << polynomial_metadata[1];
@@ -639,6 +818,10 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"rank_input_poly_max_abs_error\":" << rank_poly_error << ",";
     out << "\"gate_poly_max_abs_error\":" << gate_poly_error << ",";
     out << "\"skip_update_poly_max_abs_error\":" << skip_poly_error << ",";
+    out << "\"b_vec_poly_max_abs_error\":" << b_vec_poly_error << ",";
+    out << "\"c_vec_poly_max_abs_error\":" << c_vec_poly_error << ",";
+    out << "\"b_state_major_poly_max_abs_error\":" << b_state_major_poly_error << ",";
+    out << "\"c_state_major_poly_max_abs_error\":" << c_state_major_poly_error << ",";
     out << "\"rank_input_poly_vs_exact_max_abs_error\":" << rank_poly_approx_error << ",";
     out << "\"gate_poly_vs_exact_max_abs_error\":" << gate_poly_approx_error << ",";
     out << "\"skip_update_poly_vs_exact_max_abs_error\":" << skip_poly_approx_error << ",";
@@ -672,6 +855,7 @@ auto main(int argc, char* argv[]) -> int {
         << (args.rank_projection_scale == 1.0 ? "false" : "true") << ",";
     out << "\"pre_recurrence_silu_activation\":true,";
     out << "\"pre_recurrence_skip_update\":true,";
+    out << "\"pre_recurrence_dynamic_bc\":true,";
     out << "\"fideslib_encrypted_execution\":true,";
     out << "\"full_layer_pre_recurrence_computed_in_kernel\":false,";
     out << "\"full_model_correctness_claimed\":false";
