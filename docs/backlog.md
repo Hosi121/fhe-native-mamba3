@@ -112,6 +112,9 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   Nonzero high-degree job `10433` fails during CKKS decode but still emits
   `ckks_levels`; max consumed level is `26` under depth `48`, so the immediate
   blocker is approximation/noise or scale precision, not raw level exhaustion.
+  Follow-up job `10435` passes the same tiny nonzero high-degree path at
+  `scaling_mod_size=45`, so scale tuning is now a concrete candidate before
+  adding bootstrap into the FIDESlib one-layer kernel.
 
 ## Dependency Map
 
