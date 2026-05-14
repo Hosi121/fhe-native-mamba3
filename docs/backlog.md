@@ -115,6 +115,13 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   Follow-up job `10435` passes the same tiny nonzero high-degree path at
   `scaling_mod_size=45`, so scale tuning is now a concrete candidate before
   adding bootstrap into the FIDESlib one-layer kernel.
+- Mamba-130M-shaped nonzero high-degree validation needed more precision:
+  `scaling_mod_size=45` still failed at decrypt in job `10438`, while
+  `scaling_mod_size=50` passed in job `10441` with `ct_ct_mul=31`,
+  `rotations=1036`, eval `924.32s`, peak RSS `81.45 GiB`, and max consumed
+  level `27/48`. This closes the immediate nonzero-state one-layer correctness
+  blocker for the synthetic Mamba-130M-shaped FIDESlib slice; multi-layer
+  chaining and bootstrap scheduling remain open.
 
 ## Dependency Map
 
