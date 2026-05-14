@@ -22,8 +22,8 @@ namespace {
 struct Config {
   int ring_dim = 131072;
   int num_slots = 32768;
-  int multiplicative_depth = 64;
-  int scaling_mod_size = 30;
+  int multiplicative_depth = 48;
+  int scaling_mod_size = 40;
   int first_mod_size = 60;
   int iterations = 1;
   int seed = 0;
@@ -196,6 +196,11 @@ auto peak_rss_gib() -> double {
   return static_cast<double>(read_status_kib("VmHWM")) / (1024.0 * 1024.0);
 }
 
+void log_phase(const std::string& message) {
+  std::cerr << "[stage1_rotation_probe] " << message << " rss_gib=" << rss_gib()
+            << " peak_rss_gib=" << peak_rss_gib() << std::endl;
+}
+
 void write_json_int_vector(std::ostream& out, const std::vector<int32_t>& values) {
   out << "[";
   for (size_t i = 0; i < values.size(); ++i) {
@@ -355,8 +360,12 @@ auto main(int argc, char* argv[]) -> int {
     const std::vector<int32_t> requested_rotations = parse_rotations_csv(config.rotations_csv);
     const std::vector<int32_t> executed_rotations =
         limited_rotations(requested_rotations, config.rotation_limit);
+    log_phase(
+        "parsed rotations requested=" + std::to_string(requested_rotations.size()) +
+        " executed=" + std::to_string(executed_rotations.size()));
     const auto context_start = now();
 
+    log_phase("context setup begin");
     CCParams<CryptoContextCKKSRNS> parameters;
     parameters.SetSecretKeyDist(resolve_secret_key_dist(config.secret_key_dist));
     parameters.SetSecurityLevel(resolve_security(config.security));
@@ -384,16 +393,21 @@ auto main(int argc, char* argv[]) -> int {
     cc->EvalMultKeyGen(keys.secretKey);
     const double context_setup_seconds = seconds_since(context_start);
     const double memory_after_context_gib = rss_gib();
+    log_phase("context setup done");
 
     const auto rotate_keygen_start = now();
+    log_phase("rotate keygen begin");
     cc->EvalRotateKeyGen(keys.secretKey, requested_rotations);
     const double rotate_keygen_seconds = seconds_since(rotate_keygen_start);
     const double memory_after_rotate_keygen_gib = rss_gib();
+    log_phase("rotate keygen done");
 
     const auto load_context_start = now();
+    log_phase("load context begin");
     cc->LoadContext(keys.publicKey);
     const double load_context_seconds = seconds_since(load_context_start);
     const double memory_after_load_context_gib = rss_gib();
+    log_phase("load context done");
 
     const auto input = make_input(config.num_slots, config.seed);
     const auto weights = make_weights(config.num_slots);
@@ -407,6 +421,7 @@ auto main(int argc, char* argv[]) -> int {
     double encrypt_seconds = 0.0;
 
     for (int iteration = 0; iteration < config.iterations; ++iteration) {
+      log_phase("iteration " + std::to_string(iteration) + " encrypt begin");
       const auto encrypt_start = now();
       auto input_plain = cc->MakeCKKSPackedPlaintext(input);
       input_plain->SetLength(static_cast<size_t>(config.num_slots));
@@ -414,6 +429,7 @@ auto main(int argc, char* argv[]) -> int {
       encrypt_seconds += seconds_since(encrypt_start);
 
       const auto eval_start = now();
+      log_phase("iteration " + std::to_string(iteration) + " eval begin");
       Ciphertext<DCRTPoly> accumulator;
       bool has_accumulator = false;
       for (const int32_t rotation : executed_rotations) {
@@ -427,6 +443,7 @@ auto main(int argc, char* argv[]) -> int {
         }
       }
       iteration_latencies.push_back(seconds_since(eval_start));
+      log_phase("iteration " + std::to_string(iteration) + " eval done");
       if (has_accumulator) {
         final_level = static_cast<int>(accumulator->GetLevel());
       }

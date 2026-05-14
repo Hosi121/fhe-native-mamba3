@@ -130,6 +130,8 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "stage1_rotation_probe" in stage1_rotation_slurm_text
     assert "run_fideslib_stage1_rotation_probe.py" in stage1_rotation_slurm_text
     assert "RING_DIM:-131072" in stage1_rotation_slurm_text
+    assert "MULTIPLICATIVE_DEPTH:-48" in stage1_rotation_slurm_text
+    assert "SCALING_MOD_SIZE:-40" in stage1_rotation_slurm_text
     assert "ROTATION_ARTIFACT" in stage1_rotation_slurm_text
     assert "ROTATION_LIMIT" in stage1_rotation_slurm_text
 

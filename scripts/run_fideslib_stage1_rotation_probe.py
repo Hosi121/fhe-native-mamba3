@@ -213,8 +213,8 @@ def _parse_args() -> tuple[argparse.Namespace, list[str]]:
     )
     parser.add_argument("--ring-dimension", type=int, default=131072)
     parser.add_argument("--num-slots", type=int, default=32768)
-    parser.add_argument("--multiplicative-depth", type=int, default=64)
-    parser.add_argument("--scaling-mod-size", type=int, default=30)
+    parser.add_argument("--multiplicative-depth", type=int, default=48)
+    parser.add_argument("--scaling-mod-size", type=int, default=40)
     return parser.parse_known_args()
 
 

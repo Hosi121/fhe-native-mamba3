@@ -24,8 +24,8 @@ class Stage1FideslibRotationProbeConfig:
     layer_index: int = 0
     ring_dimension: int = 131072
     num_slots: int = 32768
-    multiplicative_depth: int = 64
-    scaling_mod_size: int = 30
+    multiplicative_depth: int = 48
+    scaling_mod_size: int = 40
 
     def to_json_dict(self) -> dict[str, Any]:
         return asdict(self)
