@@ -83,9 +83,11 @@ Current implementation status:
   Mamba-130M-shape OpenFHE setup/keygen fits under the explicit memory guard,
   and PBI-S1-041/job `10300` passed the bounded Mamba-130M one-layer OpenFHE
   eval. PBI-S1-042 records that direct multi-layer OpenFHE is runtime-bound, so
-  the next mainline is the FIDESlib/state-major scaling probe in PBI-S1-043.
-  The native rotation/key-memory probe and SLURM entrypoint are implemented;
-  the next evidence is a high/B200 run over the 163-key PBI-S1-041 inventory.
+  PBI-S1-043 tests the FIDESlib/state-major primitive path. The target
+  163-key FIDESlib rotation/key-memory probe passes on B200 with peak RSS
+  about `68.35 GiB` and a representative 163-rotation group at `0.069s`.
+  The next mainline is PBI-S1-044, an op-mix probe matching the one-layer
+  projection/eval counts before attempting a full FIDESlib correctness port.
 
 ## Stage 2
 
@@ -154,9 +156,9 @@ Stage 0 blocker update:
   `runs/stage0-s009-closeout-report-v0394.json`: blocker identification and
   handoff are complete, while full 24-layer encrypted success is explicitly not
   claimed.
-- The next executable blocker is PBI-S1-043: run the FIDESlib state-major
-  rotation/key-memory probe on high/B200, then decide whether to continue the
-  FIDESlib one-layer port or route directly to Stage 2 sketch reduction.
+- The next executable blocker is PBI-S1-044: run a FIDESlib native
+  projection/eval op-mix probe for the Mamba-130M one-layer schedule and compare
+  it directly with the OpenFHE `8694.12s` one-layer artifact.
 
 ## Version Boundary
 
