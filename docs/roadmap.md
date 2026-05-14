@@ -89,9 +89,9 @@ Current implementation status:
   PBI-S1-044 then matches the one-layer projection/eval op mix
   (`rotations=1028`, `ct_pt_mul=13210`, `ct_ct_mul=31`) at `3.61s` eval time.
   PBI-S1-045 is now in progress: a Python-exported checkpoint tail payload,
-  native C++ tail evaluator, and tiny FIDESlib encrypted tail run establish the
-  correctness handoff boundary before scaling the same path to the Mamba-130M
-  payload and then porting full pre-recurrence.
+  native C++ tail evaluator, and FIDESlib encrypted tail runs for both tiny and
+  Mamba-130M-shaped payloads establish the correctness handoff boundary before
+  porting full pre-recurrence.
 
 ## Stage 2
 
@@ -160,9 +160,9 @@ Stage 0 blocker update:
   `runs/stage0-s009-closeout-report-v0394.json`: blocker identification and
   handoff are complete, while full 24-layer encrypted success is explicitly not
   claimed.
-- The next executable blocker is the remaining PBI-S1-045 slice: run the
-  exported Mamba-130M-shape tail payload through the new FIDESlib ciphertext
-  kernel and compare final or boundary decrypts against the existing reference.
+- The next executable blocker is the remaining PBI-S1-045 slice: port
+  pre-recurrence projections into the FIDESlib/native kernel and compare final
+  or boundary decrypts against the existing Mamba-130M-shaped reference.
 
 ## Version Boundary
 

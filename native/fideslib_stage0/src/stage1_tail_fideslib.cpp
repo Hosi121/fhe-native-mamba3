@@ -365,6 +365,11 @@ auto peak_rss_gib() -> double {
   return static_cast<double>(read_status_kib("VmHWM")) / (1024.0 * 1024.0);
 }
 
+void log_phase(const std::string& message) {
+  std::cerr << "[stage1_tail_fideslib] " << message << " rss_gib=" << rss_gib()
+            << " peak_rss_gib=" << peak_rss_gib() << std::endl;
+}
+
 void write_payload(const std::string& output_json, const std::string& payload) {
   if (output_json.empty()) {
     std::cout << payload << std::endl;
@@ -389,8 +394,14 @@ auto main(int argc, char* argv[]) -> int {
     if (batch_size <= 0 || batch_size > args.ring_dim / 2) {
       throw std::runtime_error("payload batch size does not fit ring dimension");
     }
+    log_phase(
+        "payload loaded d_model=" + std::to_string(payload.config.d_model) +
+        " rank=" + std::to_string(payload.config.mimo_rank) +
+        " d_state=" + std::to_string(payload.config.d_state) +
+        " rotations=" + std::to_string(required_rotations.size()));
 
     const auto setup_start = now();
+    log_phase("context setup begin");
     CCParams<CryptoContextCKKSRNS> parameters;
     parameters.SetSecretKeyDist(resolve_secret_key_dist(args.secret_key_dist));
     parameters.SetSecurityLevel(resolve_security(args.security));
@@ -415,12 +426,17 @@ auto main(int argc, char* argv[]) -> int {
     cc->Enable(LEVELEDSHE);
     auto keys = cc->KeyGen();
     cc->EvalMultKeyGen(keys.secretKey);
+    log_phase("context setup done");
     const auto keygen_start = now();
+    log_phase("rotation keygen begin");
     cc->EvalRotateKeyGen(keys.secretKey, required_rotations);
     const double rotate_keygen_seconds = seconds_since(keygen_start);
+    log_phase("rotation keygen done");
     const auto load_start = now();
+    log_phase("load context begin");
     cc->LoadContext(keys.publicKey);
     const double load_context_seconds = seconds_since(load_start);
+    log_phase("load context done");
     const double setup_seconds = seconds_since(setup_start);
 
     auto make_plain = [&](const std::vector<double>& values) {
@@ -434,6 +450,7 @@ auto main(int argc, char* argv[]) -> int {
     };
 
     const auto eval_start = now();
+    log_phase("encrypt/eval begin");
     int rotations = 0;
     int ct_pt_muls = 0;
     int ct_ct_muls = 0;
@@ -499,11 +516,17 @@ auto main(int argc, char* argv[]) -> int {
     ++adds;
 
     const double eval_seconds = seconds_since(eval_start);
+    log_phase(
+        "eval done rotations=" + std::to_string(rotations) +
+        " ct_pt=" + std::to_string(ct_pt_muls) +
+        " ct_ct=" + std::to_string(ct_ct_muls));
+    log_phase("decrypt begin");
     const auto output_slots = decrypt_slots(
         cc,
         keys.secretKey,
         output_ct,
         static_cast<size_t>(batch_size));
+    log_phase("decrypt done");
     const auto output_model =
         first_values(output_slots, static_cast<size_t>(payload.config.d_model));
     const auto output_error =
