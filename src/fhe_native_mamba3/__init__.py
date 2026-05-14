@@ -370,6 +370,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_composite_rotation_report",
         "Stage1CompositeRotationRow",
     ),
+    "Stage1TailGapReport": (
+        "fhe_native_mamba3.stage1_tail_gap_report",
+        "Stage1TailGapReport",
+    ),
     "StateMajorLayoutPlan": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "StateMajorLayoutPlan",
@@ -711,6 +715,10 @@ _LAZY_IMPORTS = {
         "checkpoint_monolithic_gate_rotation_steps",
     ),
     "build_stage1_plan": ("fhe_native_mamba3.stage1_plan", "build_stage1_plan"),
+    "build_stage1_tail_gap_report": (
+        "fhe_native_mamba3.stage1_tail_gap_report",
+        "build_stage1_tail_gap_report",
+    ),
     "build_fixed_bsgs_schedule": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "build_fixed_bsgs_schedule",
@@ -977,6 +985,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_report",
         "stage1_comparison_markdown",
     ),
+    "stage1_tail_gap_markdown": (
+        "fhe_native_mamba3.stage1_tail_gap_report",
+        "stage1_tail_gap_markdown",
+    ),
     "stage1_checkpoint_cost_markdown": (
         "fhe_native_mamba3.stage1_checkpoint_cost_report",
         "stage1_checkpoint_cost_markdown",
@@ -1195,6 +1207,7 @@ __all__ = [
     "Stage1PackSweepRow",
     "Stage1Plan",
     "Stage1ProfileHints",
+    "Stage1TailGapReport",
     "Stage2LearnedSketchBaselineResult",
     "Stage2LearnedSketchBaselineRow",
     "Stage2SketchSeedSample",
@@ -1255,6 +1268,7 @@ __all__ = [
     "build_stage1_composite_rotation_report",
     "build_stage1_grouped_chain_inventory",
     "build_stage1_plan",
+    "build_stage1_tail_gap_report",
     "build_state_major_layout_plan",
     "build_tiny_mimo_block_problem",
     "build_weight_bundle_manifest",
@@ -1386,6 +1400,7 @@ __all__ = [
     "ssd_prefix_scan_prefill",
     "stage1_checkpoint_cost_markdown",
     "stage1_comparison_markdown",
+    "stage1_tail_gap_markdown",
     "state_axis_rotation_steps",
     "state_major_slot",
     "sweep_head_pack_candidates",

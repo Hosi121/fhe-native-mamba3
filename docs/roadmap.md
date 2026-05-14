@@ -91,7 +91,9 @@ Current implementation status:
   PBI-S1-045 is now in progress: a Python-exported checkpoint tail payload,
   native C++ tail evaluator, and FIDESlib encrypted tail runs for both tiny and
   Mamba-130M-shaped payloads establish the correctness handoff boundary before
-  porting full pre-recurrence.
+  porting full pre-recurrence. The first gap report attributes the remaining
+  work to `922` rotations, `10903` plaintext multiplications, and `30`
+  ciphertext multiplications in pre-recurrence/full-layer work.
 
 ## Stage 2
 
