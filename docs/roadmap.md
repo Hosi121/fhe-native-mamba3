@@ -86,8 +86,10 @@ Current implementation status:
   PBI-S1-043 tests the FIDESlib/state-major primitive path. The target
   163-key FIDESlib rotation/key-memory probe passes on B200 with peak RSS
   about `68.35 GiB` and a representative 163-rotation group at `0.069s`.
-  The next mainline is PBI-S1-044, an op-mix probe matching the one-layer
-  projection/eval counts before attempting a full FIDESlib correctness port.
+  PBI-S1-044 then matches the one-layer projection/eval op mix
+  (`rotations=1028`, `ct_pt_mul=13210`, `ct_ct_mul=31`) at `3.61s` eval time.
+  The next mainline is PBI-S1-045, a correctness-carrying FIDESlib/native
+  one-layer checkpoint bridge.
 
 ## Stage 2
 
@@ -156,9 +158,9 @@ Stage 0 blocker update:
   `runs/stage0-s009-closeout-report-v0394.json`: blocker identification and
   handoff are complete, while full 24-layer encrypted success is explicitly not
   claimed.
-- The next executable blocker is PBI-S1-044: run a FIDESlib native
-  projection/eval op-mix probe for the Mamba-130M one-layer schedule and compare
-  it directly with the OpenFHE `8694.12s` one-layer artifact.
+- The next executable blocker is PBI-S1-045: port the Mamba-130M-shape
+  state-major one-layer checkpoint bridge to FIDESlib/native execution with
+  final or boundary decrypt comparison against the existing reference.
 
 ## Version Boundary
 
