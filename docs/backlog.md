@@ -100,6 +100,15 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 | PBI-OPS-004 | DevEx | Done | PBI-OPS-002 | Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection. Evidence: `scripts/submit_safe_slurm_campaign.py` submits/dry-runs only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, and emits manifest/ledger-row templates; `scripts/collect_safe_slurm_campaign.py` validates completed artifacts, emits ledger-row candidates, and now supports `--pull-missing --remote high --remote-dir ~/cipher/fhe-native-mamba3` with `--pull-dry-run` for safe validation. Covered by `tests/test_safe_slurm_campaign_script.py` and `tests/test_safe_slurm_campaign_collect_script.py`, exercised by high jobs `10157`-`10163`. High-memory OpenFHE full-chain jobs remain explicitly excluded from the safe campaign manifest. |
 | PBI-OPS-005 | DevEx | Done | PBI-OPS-002 | Add a single heavy-SLURM-job collection helper for jobs that should not go through the safe campaign runner. Acceptance: poll `sacct`, optionally pull the expected artifact with `rsync`, validate artifact schema when present, and emit a ledger-row candidate without failing on still-running jobs unless requested. Evidence: `scripts/collect_slurm_job_artifact.py`, tests in `tests/test_collect_slurm_job_artifact_script.py`, and live running collection artifact `runs/stage1-s041-running-collection-v0392.json` for job `10300`. Result: the helper reports `root_state=RUNNING`, `collection_complete=false`, and `artifact_exists=false` for the in-flight PBI-S1-041 job, so future polling can collect the final artifact without manual path reconstruction. |
 
+## Recent Diagnostic Notes
+
+- `v0.3.116` adds native FIDESlib `ckks_levels` telemetry plus
+  `scripts/build_stage1_ckks_level_report.py`. Tiny zero-state job `10429`
+  validates the schema and reports max consumed level `21` under depth `48`
+  with margin `27`; because that artifact is zero-state, the next PBI-S1-045
+  evidence should be nonzero-state telemetry before choosing a bootstrap
+  insertion point.
+
 ## Dependency Map
 
 - Real encrypted chain work: PBI-S0-008 -> PBI-S0-009 is complete at the scoped Stage 0 objective: measured smaller proxies and closeout/handoff, not full 24-layer encrypted success.

@@ -643,6 +643,18 @@ void write_payload(const std::string& output_json, const std::string& payload) {
   output << payload << std::endl;
 }
 
+void write_level_field(
+    std::ostringstream& out,
+    std::string_view name,
+    const Ciphertext<DCRTPoly>& ciphertext,
+    bool& first) {
+  if (!first) {
+    out << ",";
+  }
+  first = false;
+  out << "\"" << name << "\":" << ciphertext->GetLevel();
+}
+
 }  // namespace
 
 auto main(int argc, char* argv[]) -> int {
@@ -1242,8 +1254,35 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"plaintext_coefficient_floor\":" << kPlaintextCoefficientFloor << ",";
     out << "\"rank_projection_scaled\":" << (args.rank_projection_scale == 1.0 ? "false" : "true")
         << ",";
+    out << "\"previous_state_nonzero\":" << (previous_state_is_zero ? "false" : "true") << ",";
     out << "\"peak_rss_gib\":" << peak_rss_gib() << ",";
     out << "\"rss_gib\":" << rss_gib();
+    out << "},";
+    out << "\"ckks_levels\":{";
+    bool first_ckks_level = true;
+    write_level_field(out, "rms_input", rms_ct, first_ckks_level);
+    write_level_field(out, "conv_pre", conv_pre_ct, first_ckks_level);
+    write_level_field(out, "conv_pre_for_silu", conv_pre_for_silu_ct, first_ckks_level);
+    write_level_field(out, "gate_pre", gate_pre_ct, first_ckks_level);
+    write_level_field(out, "rank_input_poly", rank_input_poly_ct, first_ckks_level);
+    write_level_field(out, "gate_poly", gate_poly_ct, first_ckks_level);
+    write_level_field(out, "skip_update_poly", skip_update_poly_ct, first_ckks_level);
+    write_level_field(out, "dt_hidden_poly", dt_hidden_poly_ct, first_ckks_level);
+    write_level_field(out, "dt_pre_poly", dt_pre_poly_ct, first_ckks_level);
+    write_level_field(out, "dt_state_major_poly", dt_state_major_poly_ct, first_ckks_level);
+    write_level_field(out, "decay_state_major_poly", decay_state_major_poly_ct, first_ckks_level);
+    write_level_field(out, "b_vec_poly", b_vec_poly_ct, first_ckks_level);
+    write_level_field(out, "c_vec_poly", c_vec_poly_ct, first_ckks_level);
+    write_level_field(out, "b_state_major_poly", b_state_major_poly_ct, first_ckks_level);
+    write_level_field(out, "c_state_major_poly", c_state_major_poly_ct, first_ckks_level);
+    write_level_field(out, "x_state_major_poly", x_state_major_poly_ct, first_ckks_level);
+    write_level_field(out, "input_state_term", input_state_term_ct, first_ckks_level);
+    write_level_field(out, "state_new_poly", state_new_poly_ct, first_ckks_level);
+    write_level_field(out, "readout_poly", readout_poly_ct, first_ckks_level);
+    write_level_field(out, "rank_output_poly", rank_output_poly_ct, first_ckks_level);
+    write_level_field(out, "rank_payload_poly", rank_payload_poly_ct, first_ckks_level);
+    write_level_field(out, "output_delta_poly", output_delta_poly_ct, first_ckks_level);
+    write_level_field(out, "output_model_poly", output_model_poly_ct, first_ckks_level);
     out << "},";
     out << "\"timing\":{";
     out << "\"setup_seconds\":" << setup_seconds << ",";
@@ -1270,6 +1309,9 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"pre_recurrence_dynamic_bc\":true,";
     out << "\"pre_recurrence_decay\":true,";
     out << "\"recurrence_tail_executed\":true,";
+    out << "\"previous_state_nonzero\":"
+        << (previous_state_is_zero ? "false" : "true") << ",";
+    out << "\"ckks_level_telemetry\":true,";
     out << "\"full_one_layer_polynomial_output_checked\":true,";
     out << "\"fideslib_encrypted_execution\":true,";
     out << "\"full_layer_pre_recurrence_computed_in_kernel\":true,";

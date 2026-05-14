@@ -147,6 +147,10 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "recurrence_tail_executed" in rank_gate_fideslib_text
     assert "full_one_layer_polynomial_output_checked" in rank_gate_fideslib_text
     assert "diagnostic_max_abs_error" in rank_gate_fideslib_text
+    assert "ckks_levels" in rank_gate_fideslib_text
+    assert "ckks_level_telemetry" in rank_gate_fideslib_text
+    assert "previous_state_nonzero" in rank_gate_fideslib_text
+    assert "state_new_poly" in rank_gate_fideslib_text
     assert "state_vector_to_state_major_ciphertext" in rank_gate_fideslib_text
 
     stage1_bootstrap_slurm_text = stage1_bootstrap_slurm.read_text()

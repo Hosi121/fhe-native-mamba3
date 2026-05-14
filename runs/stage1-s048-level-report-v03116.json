@@ -1,0 +1,141 @@
+{
+  "boundary_levels": {
+    "decay_state_major_poly": 21,
+    "gate_poly": 8,
+    "input_state_term": 17,
+    "output_model_poly": 21,
+    "rank_input_poly": 14,
+    "rank_payload_poly": 20,
+    "readout_poly": 19,
+    "state_new_poly": 17
+  },
+  "decision_reasons": [
+    "artifact is zero-state; collect nonzero-state telemetry before scheduling",
+    "artifact has no bootstrap; multi-layer scheduling remains open"
+  ],
+  "inputs": {
+    "artifact_json": "runs/stage1-s048-level-telemetry-tiny-zero-v03116.json"
+  },
+  "level_spread": 21,
+  "levels_descending": [
+    {
+      "level": 21,
+      "name": "output_model_poly"
+    },
+    {
+      "level": 21,
+      "name": "output_delta_poly"
+    },
+    {
+      "level": 21,
+      "name": "decay_state_major_poly"
+    },
+    {
+      "level": 20,
+      "name": "rank_payload_poly"
+    },
+    {
+      "level": 19,
+      "name": "readout_poly"
+    },
+    {
+      "level": 19,
+      "name": "rank_output_poly"
+    },
+    {
+      "level": 17,
+      "name": "state_new_poly"
+    },
+    {
+      "level": 17,
+      "name": "input_state_term"
+    },
+    {
+      "level": 16,
+      "name": "x_state_major_poly"
+    },
+    {
+      "level": 16,
+      "name": "dt_state_major_poly"
+    },
+    {
+      "level": 16,
+      "name": "dt_pre_poly"
+    },
+    {
+      "level": 16,
+      "name": "c_state_major_poly"
+    },
+    {
+      "level": 16,
+      "name": "b_state_major_poly"
+    },
+    {
+      "level": 15,
+      "name": "skip_update_poly"
+    },
+    {
+      "level": 15,
+      "name": "dt_hidden_poly"
+    },
+    {
+      "level": 15,
+      "name": "c_vec_poly"
+    },
+    {
+      "level": 15,
+      "name": "b_vec_poly"
+    },
+    {
+      "level": 14,
+      "name": "rank_input_poly"
+    },
+    {
+      "level": 8,
+      "name": "gate_poly"
+    },
+    {
+      "level": 0,
+      "name": "rms_input"
+    },
+    {
+      "level": 0,
+      "name": "gate_pre"
+    },
+    {
+      "level": 0,
+      "name": "conv_pre_for_silu"
+    },
+    {
+      "level": 0,
+      "name": "conv_pre"
+    }
+  ],
+  "max_consumed_level": 21,
+  "max_consumed_level_name": "output_model_poly",
+  "measurement_scope": {
+    "ckks_level_telemetry_available": true,
+    "full_model_correctness_claimed": false,
+    "get_level_semantics": "OpenFHE consumed-level index; larger means less remaining depth",
+    "multi_layer_success_claimed": false,
+    "stage1_ckks_level_report": true
+  },
+  "min_consumed_level": 0,
+  "multiplicative_depth": 48,
+  "operation_counts": {
+    "adds": 101,
+    "bootstraps": 0,
+    "ct_ct_mul": 30,
+    "ct_pt_mul": 75,
+    "rotations": 55,
+    "unity_level_align_muls": 38
+  },
+  "passed": true,
+  "previous_state_nonzero": false,
+  "recommended_action": "run_nonzero_state_level_telemetry",
+  "remaining_level_margin": 27,
+  "repo_commit": "7fe7ca236dd7f6f80dd0281ba3090f4a914d45ec",
+  "stage": "stage1-ckks-level-report",
+  "telemetry_available": true,
+  "version": "0.3.116"
+}
