@@ -113,12 +113,15 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
 
     stage1_rotation_source_text = stage1_rotation_source.read_text()
     assert "fideslib-gpu-stage1-state-major-rotation-probe" in stage1_rotation_source_text
-    assert '\\"input_mode\\":\\"state-major-rotation-probe\\"' in stage1_rotation_source_text
+    assert "state-major-rotation-probe" in stage1_rotation_source_text
+    assert "state-major-opmix-probe" in stage1_rotation_source_text
     assert "EvalRotateKeyGen" in stage1_rotation_source_text
     assert "EvalRotate(ciphertext" in stage1_rotation_source_text
     assert '\\"requested_rotation_key_count\\"' in stage1_rotation_source_text
     assert '\\"peak_rss_gib\\"' in stage1_rotation_source_text
     assert "config.multiplicative_depth >= 48" in stage1_rotation_source_text
+    assert "target_ct_pt_muls" in stage1_rotation_source_text
+    assert "fideslib-gpu-stage1-state-major-opmix-probe" in stage1_rotation_source_text
 
     stage1_bootstrap_slurm_text = stage1_bootstrap_slurm.read_text()
     assert "stage1_bootstrap_probe" in stage1_bootstrap_slurm_text
@@ -135,6 +138,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "SCALING_MOD_SIZE:-40" in stage1_rotation_slurm_text
     assert "ROTATION_ARTIFACT" in stage1_rotation_slurm_text
     assert "ROTATION_LIMIT" in stage1_rotation_slurm_text
+    assert "TARGET_CT_PT_MULS" in stage1_rotation_slurm_text
 
     checkpoint_openfhe_text = checkpoint_openfhe_slurm.read_text()
     assert "mamba-checkpoint-recurrence-smoke" in checkpoint_openfhe_text

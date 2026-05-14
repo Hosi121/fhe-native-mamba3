@@ -28,6 +28,9 @@ struct Config {
   int iterations = 1;
   int seed = 0;
   int rotation_limit = 0;
+  int target_rotations = 0;
+  int target_ct_pt_muls = 0;
+  int target_ct_ct_muls = 0;
   bool skip_decrypt = true;
   std::string security = "128-classic";
   std::string secret_key_dist = "sparse-ternary";
@@ -101,6 +104,12 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.seed = parse_int(arg, value);
     } else if (arg == "--rotation-limit") {
       config.rotation_limit = parse_int(arg, value);
+    } else if (arg == "--target-rotations") {
+      config.target_rotations = parse_int(arg, value);
+    } else if (arg == "--target-ct-pt-muls") {
+      config.target_ct_pt_muls = parse_int(arg, value);
+    } else if (arg == "--target-ct-ct-muls") {
+      config.target_ct_ct_muls = parse_int(arg, value);
     } else if (arg == "--security") {
       config.security = value;
     } else if (arg == "--secret-key-dist") {
@@ -120,9 +129,11 @@ auto parse_args(int argc, char* argv[]) -> Config {
     throw std::invalid_argument("num-slots must be in [1, ring_dim / 2]");
   }
   if (config.multiplicative_depth <= 0 || config.scaling_mod_size <= 0 ||
-      config.first_mod_size <= 0 || config.iterations <= 0 || config.rotation_limit < 0) {
+      config.first_mod_size <= 0 || config.iterations <= 0 || config.rotation_limit < 0 ||
+      config.target_rotations < 0 || config.target_ct_pt_muls < 0 ||
+      config.target_ct_ct_muls < 0) {
     throw std::invalid_argument(
-        "depth, scale, first modulus, iterations, and rotation limit are invalid");
+        "depth, scale, first modulus, iterations, rotation limit, and target op counts are invalid");
   }
   if (config.rotations_csv.empty()) {
     throw std::invalid_argument("rotations-csv is required");
@@ -230,6 +241,22 @@ auto limited_rotations(const std::vector<int32_t>& rotations, int limit) -> std:
   return {rotations.begin(), rotations.begin() + limit};
 }
 
+auto is_opmix_mode(const Config& config) -> bool {
+  return config.target_rotations > 0 || config.target_ct_pt_muls > 0 ||
+         config.target_ct_ct_muls > 0;
+}
+
+auto target_rotation_ops(const Config& config, const std::vector<int32_t>& rotations) -> int {
+  if (config.target_rotations > 0) {
+    return config.target_rotations;
+  }
+  return static_cast<int>(rotations.size());
+}
+
+auto target_ct_pt_ops(const Config& config, int rotation_ops) -> int {
+  return std::max(config.target_ct_pt_muls, rotation_ops);
+}
+
 auto build_payload(
     const Config& config,
     const std::vector<int32_t>& requested_rotations,
@@ -244,8 +271,12 @@ auto build_payload(
     double memory_after_rotate_keygen_gib,
     double memory_after_load_context_gib,
     double memory_after_eval_gib,
+    int rotation_ops,
+    int ct_pt_mul_ops,
+    int ct_ct_mul_ops,
     int decrypt_failure_count,
     int final_level) -> std::string {
+  const bool opmix_mode = is_opmix_mode(config);
   const bool target_shape_compatible =
       config.ring_dim >= 131072 && config.num_slots >= 32768 &&
       config.multiplicative_depth >= 48 && config.scaling_mod_size <= 40 &&
@@ -260,7 +291,10 @@ auto build_payload(
 
   std::ostringstream out;
   out << "{";
-  out << "\"stage\":\"fideslib-gpu-stage1-state-major-rotation-probe\",";
+  out << "\"stage\":\""
+      << (opmix_mode ? "fideslib-gpu-stage1-state-major-opmix-probe"
+                     : "fideslib-gpu-stage1-state-major-rotation-probe")
+      << "\",";
   out << "\"backend\":\"fideslib-gpu\",";
   out << "\"available\":true,";
   out << "\"encrypted\":true,";
@@ -268,7 +302,8 @@ auto build_payload(
   out << "\"ring_dimension\":" << actual_ring_dim << ",";
   out << "\"batch_size\":" << config.num_slots << ",";
   out << "\"config\":{";
-  out << "\"input_mode\":\"state-major-rotation-probe\",";
+  out << "\"input_mode\":\""
+      << (opmix_mode ? "state-major-opmix-probe" : "state-major-rotation-probe") << "\",";
   out << "\"ring_dimension\":" << actual_ring_dim << ",";
   out << "\"num_slots\":" << config.num_slots << ",";
   out << "\"multiplicative_depth\":" << config.multiplicative_depth << ",";
@@ -278,6 +313,9 @@ auto build_payload(
   out << "\"secret_key_dist\":\"" << config.secret_key_dist << "\",";
   out << "\"iterations\":" << config.iterations << ",";
   out << "\"rotation_limit\":" << config.rotation_limit << ",";
+  out << "\"target_rotations\":" << config.target_rotations << ",";
+  out << "\"target_ct_pt_muls\":" << config.target_ct_pt_muls << ",";
+  out << "\"target_ct_ct_muls\":" << config.target_ct_ct_muls << ",";
   out << "\"skip_decrypt\":" << (config.skip_decrypt ? "true" : "false");
   out << "},";
   out << "\"required_application_rotations\":";
@@ -293,6 +331,9 @@ auto build_payload(
   out << "\"measurements\":{";
   out << "\"requested_rotation_key_count\":" << requested_rotations.size() << ",";
   out << "\"executed_rotation_count\":" << executed_rotations.size() << ",";
+  out << "\"rotation_ops\":" << rotation_ops << ",";
+  out << "\"ct_pt_mul_ops\":" << ct_pt_mul_ops << ",";
+  out << "\"ct_ct_mul_ops\":" << ct_ct_mul_ops << ",";
   out << "\"mean_latency_sec\":" << mean_latency << ",";
   out << "\"memory_after_context_gib\":" << memory_after_context_gib << ",";
   out << "\"memory_after_rotate_keygen_gib\":" << memory_after_rotate_keygen_gib << ",";
@@ -311,9 +352,9 @@ auto build_payload(
   out << "},";
   out << "\"operation_counts\":{";
   out << "\"bootstraps\":0,";
-  out << "\"rotations\":" << executed_rotations.size() * static_cast<size_t>(config.iterations) << ",";
-  out << "\"ct_ct_mul\":0,";
-  out << "\"ct_pt_mul\":" << executed_rotations.size() * static_cast<size_t>(config.iterations) << ",";
+  out << "\"rotations\":" << rotation_ops * static_cast<size_t>(config.iterations) << ",";
+  out << "\"ct_ct_mul\":" << ct_ct_mul_ops * static_cast<size_t>(config.iterations) << ",";
+  out << "\"ct_pt_mul\":" << ct_pt_mul_ops * static_cast<size_t>(config.iterations) << ",";
   out << "\"encrypt\":" << config.iterations << ",";
   out << "\"decrypt\":" << (config.skip_decrypt ? 0 : config.iterations - decrypt_failure_count);
   out << "},";
@@ -322,19 +363,28 @@ auto build_payload(
   out << "\"decrypt_failure_count\":" << decrypt_failure_count << ",";
   out << "\"measurement_scope\":{";
   out << "\"stage1_fideslib_rotation_probe\":true,";
+  out << "\"stage1_fideslib_opmix_probe\":" << (opmix_mode ? "true" : "false") << ",";
   out << "\"state_major_layout\":true,";
   out << "\"rank_pack_first\":true,";
   out << "\"gpu_rotations\":true,";
   out << "\"key_memory_probe\":true,";
   out << "\"representative_bsgs_rotation_group\":true,";
+  out << "\"one_layer_opmix_proxy\":" << (opmix_mode ? "true" : "false") << ",";
   out << "\"stage1_state_major_target_compatible\":"
       << (target_shape_compatible && security_claimed ? "true" : "false") << ",";
   out << "\"he_security_claimed\":" << (security_claimed ? "true" : "false") << ",";
   out << "\"full_model_correctness_claimed\":false,";
-  out << "\"claim\":\"FIDESlib GPU probe for the bounded Stage 1 state-major "
-         "rotation inventory. This measures key generation, key loading, and a "
-         "representative rotation plus plaintext-multiply group; it does not claim "
-         "full Mamba checkpoint execution.\"";
+  out << "\"claim\":\"FIDESlib GPU probe for the bounded Stage 1 state-major ";
+  if (opmix_mode) {
+    out << "operation mix. This measures target rotation, plaintext-multiply, and "
+           "ciphertext-multiply counts with synthetic plaintext diagonals; it does not "
+           "claim full Mamba checkpoint correctness.";
+  } else {
+    out << "rotation inventory. This measures key generation, key loading, and a "
+           "representative rotation plus plaintext-multiply group; it does not claim "
+           "full Mamba checkpoint execution.";
+  }
+  out << "\"";
   out << "}";
   out << "}";
   return out.str();
@@ -360,9 +410,15 @@ auto main(int argc, char* argv[]) -> int {
     const std::vector<int32_t> requested_rotations = parse_rotations_csv(config.rotations_csv);
     const std::vector<int32_t> executed_rotations =
         limited_rotations(requested_rotations, config.rotation_limit);
+    const int rotation_ops = target_rotation_ops(config, executed_rotations);
+    const int ct_pt_ops = target_ct_pt_ops(config, rotation_ops);
+    const int ct_ct_ops = config.target_ct_ct_muls;
     log_phase(
         "parsed rotations requested=" + std::to_string(requested_rotations.size()) +
-        " executed=" + std::to_string(executed_rotations.size()));
+        " executed=" + std::to_string(executed_rotations.size()) +
+        " rotation_ops=" + std::to_string(rotation_ops) +
+        " ct_pt_ops=" + std::to_string(ct_pt_ops) +
+        " ct_ct_ops=" + std::to_string(ct_ct_ops));
     const auto context_start = now();
 
     log_phase("context setup begin");
@@ -432,15 +488,27 @@ auto main(int argc, char* argv[]) -> int {
       log_phase("iteration " + std::to_string(iteration) + " eval begin");
       Ciphertext<DCRTPoly> accumulator;
       bool has_accumulator = false;
-      for (const int32_t rotation : executed_rotations) {
+      int ct_pt_done = 0;
+      for (int op = 0; op < rotation_ops; ++op) {
+        const int32_t rotation =
+            executed_rotations[static_cast<size_t>(op) % executed_rotations.size()];
         auto rotated = cc->EvalRotate(ciphertext, rotation);
         auto term = cc->EvalMult(rotated, weight_plain);
+        ++ct_pt_done;
         if (!has_accumulator) {
           accumulator = term;
           has_accumulator = true;
         } else {
-          accumulator = cc->EvalAdd(accumulator, term);
+          accumulator = term;
         }
+      }
+      for (int op = ct_pt_done; op < ct_pt_ops; ++op) {
+        accumulator = cc->EvalMult(ciphertext, weight_plain);
+        has_accumulator = true;
+      }
+      for (int op = 0; op < ct_ct_ops; ++op) {
+        accumulator = cc->EvalMult(ciphertext, ciphertext);
+        has_accumulator = true;
       }
       iteration_latencies.push_back(seconds_since(eval_start));
       log_phase("iteration " + std::to_string(iteration) + " eval done");
@@ -486,6 +554,9 @@ auto main(int argc, char* argv[]) -> int {
             memory_after_rotate_keygen_gib,
             memory_after_load_context_gib,
             memory_after_eval_gib,
+            rotation_ops,
+            ct_pt_ops,
+            ct_ct_ops,
             decrypt_failure_count,
             final_level));
   } catch (const std::exception& exc) {
