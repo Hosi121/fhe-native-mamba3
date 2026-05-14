@@ -390,6 +390,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_state_major_checkpoint",
         "StateMajorCheckpointChainResult",
     ),
+    "Stage1CheckpointTailPayload": (
+        "fhe_native_mamba3.stage1_checkpoint_tail_payload",
+        "Stage1CheckpointTailPayload",
+    ),
     "SlotBsgsSchedule": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "SlotBsgsSchedule",
@@ -682,6 +686,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
         "build_stage1_checkpoint_grouped_gate_inventory",
     ),
+    "build_stage1_checkpoint_tail_payload": (
+        "fhe_native_mamba3.stage1_checkpoint_tail_payload",
+        "build_stage1_checkpoint_tail_payload",
+    ),
     "build_stage1_composite_rotation_report": (
         "fhe_native_mamba3.stage1_composite_rotation_report",
         "build_stage1_composite_rotation_report",
@@ -789,6 +797,10 @@ _LAZY_IMPORTS = {
         "profile_recurrence_traces",
     ),
     "range_loss": ("fhe_native_mamba3.range_finetune", "range_loss"),
+    "read_stage1_checkpoint_tail_payload_binary": (
+        "fhe_native_mamba3.stage1_checkpoint_tail_payload",
+        "read_stage1_checkpoint_tail_payload_binary",
+    ),
     "resolve_pre_recurrence_shape": (
         "fhe_native_mamba3.checkpoint_pre_recurrence",
         "resolve_pre_recurrence_shape",
@@ -1061,6 +1073,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.mamba_checkpoint",
         "save_mamba_checkpoint_bundle",
     ),
+    "write_stage1_checkpoint_tail_payload_binary": (
+        "fhe_native_mamba3.stage1_checkpoint_tail_payload",
+        "write_stage1_checkpoint_tail_payload_binary",
+    ),
 }
 
 __all__ = [
@@ -1164,6 +1180,7 @@ __all__ = [
     "Stage1CheckpointCostRow",
     "Stage1CheckpointGroupedGateInventoryReport",
     "Stage1CheckpointGroupedGateInventoryRow",
+    "Stage1CheckpointTailPayload",
     "Stage1ComparisonReport",
     "Stage1ComparisonRow",
     "Stage1CompositeRotationReport",
@@ -1233,6 +1250,7 @@ __all__ = [
     "build_stage0_status_report",
     "build_stage1_checkpoint_cost_report",
     "build_stage1_checkpoint_grouped_gate_inventory",
+    "build_stage1_checkpoint_tail_payload",
     "build_stage1_comparison_report",
     "build_stage1_composite_rotation_report",
     "build_stage1_grouped_chain_inventory",
@@ -1302,6 +1320,7 @@ __all__ = [
     "profile_model_batch",
     "profile_recurrence_traces",
     "range_loss",
+    "read_stage1_checkpoint_tail_payload_binary",
     "required_backend_srht_rotations",
     "required_full_layer_visible_rotations",
     "required_grouped_full_layer_lift_rotations",
@@ -1372,6 +1391,7 @@ __all__ = [
     "sweep_head_pack_candidates",
     "validate_artifact_file",
     "validate_benchmark_artifact",
+    "write_stage1_checkpoint_tail_payload_binary",
 ]
 
 

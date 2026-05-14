@@ -12,6 +12,12 @@ option(FHE_STAGE0_BUILD_TESTS "Build FIDESlib-free Stage 0 layout tests" OFF)
 add_library(stage0_layout INTERFACE)
 target_include_directories(stage0_layout INTERFACE include)
 
+add_library(stage1_tail_payload INTERFACE)
+target_include_directories(stage1_tail_payload INTERFACE include)
+
+add_executable(stage1_tail_payload_eval src/stage1_tail_payload_eval.cpp)
+target_link_libraries(stage1_tail_payload_eval PRIVATE stage1_tail_payload)
+
 if(FHE_STAGE0_BUILD_KERNEL)
   find_package(fideslib REQUIRED CONFIG)
 
@@ -43,4 +49,8 @@ if(FHE_STAGE0_BUILD_TESTS)
   add_executable(test_stage0_layout tests/test_stage0_layout.cpp)
   target_link_libraries(test_stage0_layout PRIVATE stage0_layout)
   add_test(NAME stage0_layout COMMAND test_stage0_layout)
+
+  add_executable(test_stage1_tail_payload tests/test_stage1_tail_payload.cpp)
+  target_link_libraries(test_stage1_tail_payload PRIVATE stage1_tail_payload)
+  add_test(NAME stage1_tail_payload COMMAND test_stage1_tail_payload)
 endif()
