@@ -124,6 +124,8 @@ def test_collect_slurm_job_artifact_script_allows_running_job_without_require_co
     assert payload["passed"] is False
     assert payload["collection_complete"] is False
     assert payload["artifact_exists"] is False
+    assert "`<unknown>`" in payload["ledger_row"]
+    assert "`<unknow`" not in payload["ledger_row"]
 
 
 def test_collect_slurm_job_artifact_marks_failed_artifact_in_ledger(tmp_path) -> None:

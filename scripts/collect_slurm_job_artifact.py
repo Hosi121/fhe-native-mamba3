@@ -199,7 +199,11 @@ def _ledger_row(
 
 
 def _short_commit(value: Any) -> str:
-    return value[:7] if isinstance(value, str) and value else "<unknown>"
+    if not isinstance(value, str) or not value:
+        return "<unknown>"
+    if value.startswith("<") and value.endswith(">"):
+        return value
+    return value[:7]
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
