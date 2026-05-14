@@ -39,6 +39,9 @@ def main() -> int:
         model_baby_step=args.model_baby_step,
         rank_baby_step=args.rank_baby_step,
         norm_eps=args.norm_eps,
+        polynomial_degree=args.polynomial_degree,
+        gate_polynomial_degree=args.gate_polynomial_degree,
+        polynomial_range=args.polynomial_range,
     )
     output_binary = write_stage1_rank_gate_payload_binary(payload, args.output_binary)
     manifest = {
@@ -73,6 +76,13 @@ def main() -> int:
             "model_baby_step": payload.config.model_baby_step,
             "rank_baby_step": payload.config.rank_baby_step,
             "norm_eps": payload.norm_eps,
+            "polynomial_degree": args.polynomial_degree,
+            "gate_polynomial_degree": (
+                args.polynomial_degree
+                if args.gate_polynomial_degree is None
+                else args.gate_polynomial_degree
+            ),
+            "polynomial_range": args.polynomial_range,
         },
         "measurements": {
             "total_seconds": time.perf_counter() - started,
@@ -98,6 +108,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--model-baby-step", type=int, default=64)
     parser.add_argument("--rank-baby-step", type=int, default=64)
     parser.add_argument("--norm-eps", type=float, default=1e-5)
+    parser.add_argument("--polynomial-degree", type=int, default=15)
+    parser.add_argument("--gate-polynomial-degree", type=int, default=None)
+    parser.add_argument("--polynomial-range", type=float, default=8.0)
     parser.add_argument("--output-binary", required=True)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()

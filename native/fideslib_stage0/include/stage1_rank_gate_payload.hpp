@@ -11,7 +11,7 @@
 namespace stage1 {
 
 constexpr std::array<char, 8> kRankGatePayloadMagic = {'F', 'H', 'M', '3', 'R', 'G', 'A', 'T'};
-constexpr std::uint32_t kRankGatePayloadFormatVersion = 1;
+constexpr std::uint32_t kRankGatePayloadFormatVersion = 2;
 
 struct RankGatePayloadConfig {
   std::uint32_t d_model = 0;
@@ -58,13 +58,20 @@ inline auto rank_gate_payload_array_order() -> const std::vector<std::string>& {
       "reference_gate_pre",
       "reference_gate",
       "reference_skip_update",
+      "rank_silu_coefficients",
+      "gate_silu_coefficients",
+      "reference_rank_input_poly",
+      "reference_gate_poly",
+      "reference_skip_update_poly",
+      "polynomial_metadata",
   };
   return names;
 }
 
 inline auto rank_gate_payload_expected_shape(
     const RankGatePayloadConfig& config,
-    const std::string& name) -> std::vector<std::uint64_t> {
+    const std::string& name,
+    std::uint64_t encoded_length = 0) -> std::vector<std::uint64_t> {
   if (name == "rms_input") {
     return {config.d_model};
   }
@@ -73,8 +80,16 @@ inline auto rank_gate_payload_expected_shape(
   }
   if (name == "conv_bias" || name == "d_skip" || name == "reference_conv_pre" ||
       name == "reference_rank_input" || name == "reference_gate_pre" ||
-      name == "reference_gate" || name == "reference_skip_update") {
+      name == "reference_gate" || name == "reference_skip_update" ||
+      name == "reference_rank_input_poly" || name == "reference_gate_poly" ||
+      name == "reference_skip_update_poly") {
     return {config.mimo_rank};
+  }
+  if (name == "rank_silu_coefficients" || name == "gate_silu_coefficients") {
+    return {encoded_length == 0 ? 1 : encoded_length};
+  }
+  if (name == "polynomial_metadata") {
+    return {3};
   }
   throw std::runtime_error("unknown rank/gate payload array: " + name);
 }
@@ -135,7 +150,7 @@ inline auto read_rank_gate_payload(const std::string& path) -> RankGatePayload {
   payload.arrays.reserve(array_count);
   for (const auto& name : rank_gate_payload_array_order()) {
     const auto length = read_rank_gate_scalar<std::uint64_t>(input, name + "_length");
-    auto shape = rank_gate_payload_expected_shape(payload.config, name);
+    auto shape = rank_gate_payload_expected_shape(payload.config, name, length);
     const auto expected_length = rank_gate_shape_size(shape);
     if (length != expected_length) {
       throw std::runtime_error("rank/gate payload length mismatch for " + name);

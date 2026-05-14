@@ -12,6 +12,10 @@ import numpy as np
 import torch
 from torch.nn import functional
 
+from fhe_native_mamba3.checkpoint_pre_recurrence import (
+    _silu_power_coefficients,
+    _trim_power_coefficients,
+)
 from fhe_native_mamba3.mamba_reference import _build_layer_tensors, _run_source_dynamic_formula
 from fhe_native_mamba3.stage1_state_major_checkpoint import (
     _layer_input_from_prompt_token,
@@ -22,13 +26,13 @@ from fhe_native_mamba3.stage1_state_major_fullshape import (
     _validate_config,
 )
 
-RANK_GATE_PAYLOAD_FORMAT_VERSION = 1
+RANK_GATE_PAYLOAD_FORMAT_VERSION = 2
 RANK_GATE_PAYLOAD_MAGIC = b"FHM3RGAT"
 _HEADER = struct.Struct("<I9Id")
 _ARRAY_COUNT = struct.Struct("<I")
 _ARRAY_LENGTH = struct.Struct("<Q")
 
-RANK_GATE_PAYLOAD_ARRAY_ORDER = (
+RANK_GATE_PAYLOAD_ARRAY_ORDER_V1 = (
     "rms_input",
     "effective_rank_weight",
     "conv_bias",
@@ -39,6 +43,16 @@ RANK_GATE_PAYLOAD_ARRAY_ORDER = (
     "reference_gate_pre",
     "reference_gate",
     "reference_skip_update",
+)
+
+RANK_GATE_PAYLOAD_ARRAY_ORDER = (
+    *RANK_GATE_PAYLOAD_ARRAY_ORDER_V1,
+    "rank_silu_coefficients",
+    "gate_silu_coefficients",
+    "reference_rank_input_poly",
+    "reference_gate_poly",
+    "reference_skip_update_poly",
+    "polynomial_metadata",
 )
 
 
@@ -100,9 +114,24 @@ def build_stage1_rank_gate_payload(
     model_baby_step: int = 64,
     rank_baby_step: int = 64,
     norm_eps: float = 1e-5,
+    polynomial_degree: int = 15,
+    gate_polynomial_degree: int | None = None,
+    polynomial_range: float = 8.0,
 ) -> Stage1RankGatePayload:
     """Build a deterministic rank/gate pre-recurrence payload from a checkpoint."""
 
+    if polynomial_degree <= 0:
+        msg = "polynomial_degree must be positive"
+        raise ValueError(msg)
+    resolved_gate_polynomial_degree = (
+        polynomial_degree if gate_polynomial_degree is None else int(gate_polynomial_degree)
+    )
+    if resolved_gate_polynomial_degree <= 0:
+        msg = "gate_polynomial_degree must be positive"
+        raise ValueError(msg)
+    if polynomial_range <= 0.0:
+        msg = "polynomial_range must be positive"
+        raise ValueError(msg)
     if layer_input is None:
         resolved_layer_input = _layer_input_from_prompt_token(
             state_dict,
@@ -152,9 +181,25 @@ def build_stage1_rank_gate_payload(
             rms_input,
             source.gate_weight.to(device=device, dtype=dtype),
         )
+        rank_silu_coefficients = _trim_power_coefficients(
+            _silu_power_coefficients(polynomial_degree, polynomial_range),
+        )
+        gate_silu_coefficients = _trim_power_coefficients(
+            _silu_power_coefficients(resolved_gate_polynomial_degree, polynomial_range),
+        )
         reference_rank_input = functional.silu(reference_conv_pre)
         reference_gate = functional.silu(reference_gate_pre)
         reference_skip_update = reference_rank_input * source.d_skip.to(device=device, dtype=dtype)
+        reference_rank_input_poly_np = _evaluate_power_polynomial_numpy(
+            _to_numpy(reference_conv_pre),
+            rank_silu_coefficients,
+        )
+        reference_gate_poly_np = _evaluate_power_polynomial_numpy(
+            _to_numpy(reference_gate_pre),
+            gate_silu_coefficients,
+        )
+        d_skip_np = _to_numpy(source.d_skip.to(device=device, dtype=dtype))
+        reference_skip_update_poly_np = reference_rank_input_poly_np * d_skip_np
         _assert_close_tensor(
             reference_conv_pre,
             stages.causal_conv_pre_silu[0, 0],
@@ -176,6 +221,19 @@ def build_stage1_rank_gate_payload(
         "reference_gate_pre": _to_numpy(reference_gate_pre),
         "reference_gate": _to_numpy(reference_gate),
         "reference_skip_update": _to_numpy(reference_skip_update),
+        "rank_silu_coefficients": np.asarray(rank_silu_coefficients, dtype=np.float64),
+        "gate_silu_coefficients": np.asarray(gate_silu_coefficients, dtype=np.float64),
+        "reference_rank_input_poly": reference_rank_input_poly_np,
+        "reference_gate_poly": reference_gate_poly_np,
+        "reference_skip_update_poly": reference_skip_update_poly_np,
+        "polynomial_metadata": np.asarray(
+            [
+                float(polynomial_degree),
+                float(resolved_gate_polynomial_degree),
+                float(polynomial_range),
+            ],
+            dtype=np.float64,
+        ),
     }
     resolved_arrays = {
         name: _as_float64_array(arrays[name]) for name in RANK_GATE_PAYLOAD_ARRAY_ORDER
@@ -282,7 +340,7 @@ def read_stage1_rank_gate_payload_binary(input_path: str | Path) -> Stage1RankGa
             if len(data) != int(length) * 8:
                 msg = f"truncated array data for {name}"
                 raise ValueError(msg)
-            shape = _expected_array_shape(config, name)
+            shape = _expected_array_shape(config, name, length=int(length))
             expected_length = int(np.prod(shape, dtype=np.int64))
             if int(length) != expected_length:
                 msg = f"{name} length {length} does not match expected {expected_length}"
@@ -312,13 +370,18 @@ def _validate_payload_arrays(
         raise ValueError(msg)
     for name in RANK_GATE_PAYLOAD_ARRAY_ORDER:
         array = np.asarray(arrays[name])
-        expected_shape = _expected_array_shape(config, name)
+        expected_shape = _expected_array_shape(config, name, length=array.size)
         if array.shape != expected_shape:
             msg = f"{name} must have shape {expected_shape}, got {array.shape}"
             raise ValueError(msg)
 
 
-def _expected_array_shape(config: StateMajorFullShapeConfig, name: str) -> tuple[int, ...]:
+def _expected_array_shape(
+    config: StateMajorFullShapeConfig,
+    name: str,
+    *,
+    length: int | None = None,
+) -> tuple[int, ...]:
     rank_shape = (config.mimo_rank,)
     model_shape = (config.d_model,)
     if name == "rms_input":
@@ -333,8 +396,18 @@ def _expected_array_shape(config: StateMajorFullShapeConfig, name: str) -> tuple
         "reference_gate_pre",
         "reference_gate",
         "reference_skip_update",
+        "reference_rank_input_poly",
+        "reference_gate_poly",
+        "reference_skip_update_poly",
     }:
         return rank_shape
+    if name in {"rank_silu_coefficients", "gate_silu_coefficients"}:
+        if length is None:
+            msg = f"{name} requires an encoded length"
+            raise ValueError(msg)
+        return (int(length),)
+    if name == "polynomial_metadata":
+        return (3,)
     msg = f"unknown rank/gate payload array {name}"
     raise ValueError(msg)
 
@@ -348,6 +421,16 @@ def _assert_close_tensor(lhs: torch.Tensor, rhs: torch.Tensor, name: str) -> Non
 
 def _as_float64_array(value: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(np.asarray(value, dtype=np.float64))
+
+
+def _evaluate_power_polynomial_numpy(
+    values: np.ndarray,
+    coefficients: tuple[float, ...],
+) -> np.ndarray:
+    output = np.zeros_like(values, dtype=np.float64) + float(coefficients[-1])
+    for coefficient in reversed(coefficients[:-1]):
+        output = output * values + float(coefficient)
+    return output
 
 
 def _array_sha256(array: np.ndarray) -> str:
@@ -382,6 +465,7 @@ def _next_power_of_two(value: int) -> int:
 
 __all__ = [
     "RANK_GATE_PAYLOAD_ARRAY_ORDER",
+    "RANK_GATE_PAYLOAD_ARRAY_ORDER_V1",
     "RANK_GATE_PAYLOAD_FORMAT_VERSION",
     "RANK_GATE_PAYLOAD_MAGIC",
     "Stage1RankGatePayload",

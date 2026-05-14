@@ -132,6 +132,11 @@ auto make_consistent_payload() -> stage1::RankGatePayload {
   std::vector<double> gate_pre(rank, 0.0);
   std::vector<double> gate(rank, 0.0);
   std::vector<double> skip_update(rank, 0.0);
+  std::vector<double> rank_coefficients = {0.0, 0.5, 0.1};
+  std::vector<double> gate_coefficients = {0.0, 0.5, 0.1};
+  std::vector<double> rank_input_poly(rank, 0.0);
+  std::vector<double> gate_poly(rank, 0.0);
+  std::vector<double> skip_update_poly(rank, 0.0);
   for (std::uint32_t rank_index = 0; rank_index < rank; ++rank_index) {
     const auto base = rank_index * d_model;
     conv_pre[rank_index] = conv_bias[rank_index];
@@ -142,12 +147,24 @@ auto make_consistent_payload() -> stage1::RankGatePayload {
     rank_input[rank_index] = stage1::silu(conv_pre[rank_index]);
     gate[rank_index] = stage1::silu(gate_pre[rank_index]);
     skip_update[rank_index] = rank_input[rank_index] * d_skip[rank_index];
+    rank_input_poly[rank_index] =
+        rank_coefficients[0] + rank_coefficients[1] * conv_pre[rank_index] +
+        rank_coefficients[2] * conv_pre[rank_index] * conv_pre[rank_index];
+    gate_poly[rank_index] = gate_coefficients[0] + gate_coefficients[1] * gate_pre[rank_index] +
+                            gate_coefficients[2] * gate_pre[rank_index] * gate_pre[rank_index];
+    skip_update_poly[rank_index] = rank_input_poly[rank_index] * d_skip[rank_index];
   }
 
   auto push = [&](const std::string& name, std::vector<double> values) {
+    std::vector<std::uint64_t> shape;
+    if (name == "rank_silu_coefficients" || name == "gate_silu_coefficients") {
+      shape = {values.size()};
+    } else {
+      shape = stage1::rank_gate_payload_expected_shape(payload.config, name);
+    }
     payload.arrays.push_back(stage1::RankGatePayloadArray{
         .name = name,
-        .shape = stage1::rank_gate_payload_expected_shape(payload.config, name),
+        .shape = std::move(shape),
         .values = std::move(values)});
   };
   push("rms_input", rms_input);
@@ -160,6 +177,12 @@ auto make_consistent_payload() -> stage1::RankGatePayload {
   push("reference_gate_pre", gate_pre);
   push("reference_gate", gate);
   push("reference_skip_update", skip_update);
+  push("rank_silu_coefficients", rank_coefficients);
+  push("gate_silu_coefficients", gate_coefficients);
+  push("reference_rank_input_poly", rank_input_poly);
+  push("reference_gate_poly", gate_poly);
+  push("reference_skip_update_poly", skip_update_poly);
+  push("polynomial_metadata", {2.0, 2.0, 8.0});
   return payload;
 }
 

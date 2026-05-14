@@ -11,6 +11,7 @@ import torch
 from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.stage1_rank_gate_payload import (
     RANK_GATE_PAYLOAD_ARRAY_ORDER,
+    RANK_GATE_PAYLOAD_FORMAT_VERSION,
     build_stage1_rank_gate_payload,
     read_stage1_rank_gate_payload_binary,
     write_stage1_rank_gate_payload_binary,
@@ -66,12 +67,28 @@ def test_rank_gate_payload_formula_matches_reference() -> None:
     gate_pre = payload.arrays["gate_weight"] @ rms
     gate = gate_pre / (1.0 + np.exp(-gate_pre))
     skip = rank_input * payload.arrays["d_skip"]
+    rank_poly = np.polynomial.polynomial.polyval(
+        conv_pre,
+        payload.arrays["rank_silu_coefficients"],
+    )
+    gate_poly = np.polynomial.polynomial.polyval(
+        gate_pre,
+        payload.arrays["gate_silu_coefficients"],
+    )
 
     np.testing.assert_allclose(conv_pre, payload.arrays["reference_conv_pre"], atol=1e-6)
     np.testing.assert_allclose(rank_input, payload.arrays["reference_rank_input"], atol=1e-6)
     np.testing.assert_allclose(gate_pre, payload.arrays["reference_gate_pre"], atol=1e-6)
     np.testing.assert_allclose(gate, payload.arrays["reference_gate"], atol=1e-6)
     np.testing.assert_allclose(skip, payload.arrays["reference_skip_update"], atol=1e-6)
+    np.testing.assert_allclose(rank_poly, payload.arrays["reference_rank_input_poly"], atol=1e-9)
+    np.testing.assert_allclose(gate_poly, payload.arrays["reference_gate_poly"], atol=1e-9)
+    np.testing.assert_allclose(
+        rank_poly * payload.arrays["d_skip"],
+        payload.arrays["reference_skip_update_poly"],
+        atol=1e-9,
+    )
+    np.testing.assert_allclose(payload.arrays["polynomial_metadata"], [15.0, 15.0, 8.0])
 
 
 def test_rank_gate_payload_manifest_records_shapes(tmp_path) -> None:
@@ -91,11 +108,13 @@ def test_rank_gate_payload_manifest_records_shapes(tmp_path) -> None:
 
     manifest = payload.to_manifest_dict(binary_path=output_binary)
 
-    assert manifest["format_version"] == 1
+    assert manifest["format_version"] == RANK_GATE_PAYLOAD_FORMAT_VERSION
     assert manifest["config"]["d_model"] == 8
     assert manifest["array_order"] == list(RANK_GATE_PAYLOAD_ARRAY_ORDER)
     assert manifest["arrays"]["effective_rank_weight"]["shape"] == [6, 8]
     assert manifest["arrays"]["gate_weight"]["shape"] == [6, 8]
+    assert manifest["arrays"]["rank_silu_coefficients"]["shape"][0] > 1
+    assert manifest["arrays"]["gate_silu_coefficients"]["shape"][0] > 1
     assert manifest["binary"]["size_bytes"] == output_binary.stat().st_size
     assert len(manifest["binary"]["sha256"]) == 64
 
@@ -132,6 +151,12 @@ def test_export_stage1_rank_gate_payload_script_runs(tmp_path) -> None:
             "8",
             "--rank-baby-step",
             "4",
+            "--polynomial-degree",
+            "15",
+            "--gate-polynomial-degree",
+            "9",
+            "--polynomial-range",
+            "8.0",
             "--output-binary",
             str(output_binary),
             "--output-json",
@@ -152,6 +177,10 @@ def test_export_stage1_rank_gate_payload_script_runs(tmp_path) -> None:
     assert payload["passed"] is True
     assert payload["measurement_scope"]["pre_recurrence_rank_gate_only"] is True
     assert payload["measurements"]["array_count"] == len(RANK_GATE_PAYLOAD_ARRAY_ORDER)
+    assert payload["parameters"]["polynomial_degree"] == 15
+    assert payload["parameters"]["gate_polynomial_degree"] == 9
+    assert payload["parameters"]["polynomial_range"] == 8.0
     assert payload["artifact"]["arrays"]["gate_weight"]["shape"] == [6, 8]
     assert persisted["artifact"]["binary"]["sha256"] == payload["artifact"]["binary"]["sha256"]
     assert round_trip.arrays["reference_skip_update"].shape == (6,)
+    assert round_trip.arrays["reference_skip_update_poly"].shape == (6,)
