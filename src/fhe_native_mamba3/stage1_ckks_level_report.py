@@ -19,6 +19,8 @@ class Stage1CkksLevelReport:
     multiplicative_depth: int | None
     remaining_level_margin: int | None
     previous_state_nonzero: bool | None
+    decrypt_failure: bool
+    error_message: str | None
     operation_counts: dict[str, int]
     boundary_levels: dict[str, int]
     levels_descending: tuple[dict[str, int | str], ...]
@@ -39,6 +41,8 @@ def build_stage1_ckks_level_report(
     raw_levels = artifact_payload.get("ckks_levels")
     operation_counts = _int_dict(artifact_payload.get("operation_counts"))
     previous_state_nonzero = _previous_state_nonzero(artifact_payload)
+    decrypt_failure = _is_decrypt_failure(artifact_payload)
+    error_message = _optional_string(artifact_payload.get("error_message"))
     multiplicative_depth = _optional_int(
         artifact_payload.get("parameters", {}).get("multiplicative_depth")
     )
@@ -53,6 +57,8 @@ def build_stage1_ckks_level_report(
             multiplicative_depth=multiplicative_depth,
             remaining_level_margin=None,
             previous_state_nonzero=previous_state_nonzero,
+            decrypt_failure=decrypt_failure,
+            error_message=error_message,
             operation_counts=operation_counts,
             boundary_levels={},
             levels_descending=(),
@@ -82,12 +88,20 @@ def build_stage1_ckks_level_report(
     reasons: list[str] = []
     if previous_state_nonzero is False:
         reasons.append("artifact is zero-state; collect nonzero-state telemetry before scheduling")
+    if decrypt_failure:
+        reasons.append(
+            "artifact failed during decrypt; approximation noise/scale is the immediate blocker"
+        )
     if remaining_margin is not None and remaining_margin <= warning_level_margin:
         reasons.append("max consumed level is too close to the configured multiplicative depth")
+    if decrypt_failure and remaining_margin is not None and remaining_margin > warning_level_margin:
+        reasons.append("failure occurred despite level margin, so raw depth is not the only issue")
     if operation_counts.get("bootstraps", 0) == 0:
         reasons.append("artifact has no bootstrap; multi-layer scheduling remains open")
 
-    if remaining_margin is not None and remaining_margin <= warning_level_margin:
+    if decrypt_failure:
+        recommended = "increase_precision_or_bootstrap_before_decrypt_boundary"
+    elif remaining_margin is not None and remaining_margin <= warning_level_margin:
         recommended = "insert_bootstrap_or_lower_polynomial_degree_before_max_level_boundary"
     elif previous_state_nonzero is False:
         recommended = "run_nonzero_state_level_telemetry"
@@ -104,6 +118,8 @@ def build_stage1_ckks_level_report(
         multiplicative_depth=multiplicative_depth,
         remaining_level_margin=remaining_margin,
         previous_state_nonzero=previous_state_nonzero,
+        decrypt_failure=decrypt_failure,
+        error_message=error_message,
         operation_counts=operation_counts,
         boundary_levels=boundary_levels,
         levels_descending=tuple({"name": name, "level": level} for name, level in ordered),
@@ -130,6 +146,13 @@ def _previous_state_nonzero(payload: dict[str, Any]) -> bool | None:
     return None
 
 
+def _is_decrypt_failure(payload: dict[str, Any]) -> bool:
+    if payload.get("failure_phase") == "decrypt":
+        return True
+    scope = payload.get("measurement_scope")
+    return isinstance(scope, dict) and bool(scope.get("decrypt_failure_artifact"))
+
+
 def _int_dict(value: Any) -> dict[str, int]:
     if not isinstance(value, dict):
         return {}
@@ -138,3 +161,7 @@ def _int_dict(value: Any) -> dict[str, int]:
 
 def _optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
+
+
+def _optional_string(value: Any) -> str | None:
+    return None if value is None else str(value)

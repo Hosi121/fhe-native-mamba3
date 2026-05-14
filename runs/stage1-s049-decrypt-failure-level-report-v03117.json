@@ -1,0 +1,144 @@
+{
+  "boundary_levels": {
+    "decay_state_major_poly": 21,
+    "gate_poly": 8,
+    "input_state_term": 22,
+    "output_model_poly": 26,
+    "rank_input_poly": 14,
+    "rank_payload_poly": 25,
+    "readout_poly": 24,
+    "state_new_poly": 22
+  },
+  "decision_reasons": [
+    "artifact failed during decrypt; approximation noise/scale is the immediate blocker",
+    "failure occurred despite level margin, so raw depth is not the only issue",
+    "artifact has no bootstrap; multi-layer scheduling remains open"
+  ],
+  "decrypt_failure": true,
+  "error_message": "/home/asuser30135/fhe-native-mamba3-deps/FIDESlib/deps/openfhe-src/src/pke/lib/encoding/ckkspackedencoding.cpp:l.453:Decode(): The decryption failed because the approximation error is too high. Check the parameters. ",
+  "inputs": {
+    "artifact_json": "runs/stage1-s049-decrypt-failure-json-tiny-prev0125-v03117.json"
+  },
+  "level_spread": 26,
+  "levels_descending": [
+    {
+      "level": 26,
+      "name": "output_model_poly"
+    },
+    {
+      "level": 26,
+      "name": "output_delta_poly"
+    },
+    {
+      "level": 25,
+      "name": "rank_payload_poly"
+    },
+    {
+      "level": 24,
+      "name": "readout_poly"
+    },
+    {
+      "level": 24,
+      "name": "rank_output_poly"
+    },
+    {
+      "level": 22,
+      "name": "state_new_poly"
+    },
+    {
+      "level": 22,
+      "name": "input_state_term"
+    },
+    {
+      "level": 21,
+      "name": "decay_state_major_poly"
+    },
+    {
+      "level": 16,
+      "name": "x_state_major_poly"
+    },
+    {
+      "level": 16,
+      "name": "dt_state_major_poly"
+    },
+    {
+      "level": 16,
+      "name": "dt_pre_poly"
+    },
+    {
+      "level": 16,
+      "name": "c_state_major_poly"
+    },
+    {
+      "level": 16,
+      "name": "b_state_major_poly"
+    },
+    {
+      "level": 15,
+      "name": "skip_update_poly"
+    },
+    {
+      "level": 15,
+      "name": "dt_hidden_poly"
+    },
+    {
+      "level": 15,
+      "name": "c_vec_poly"
+    },
+    {
+      "level": 15,
+      "name": "b_vec_poly"
+    },
+    {
+      "level": 14,
+      "name": "rank_input_poly"
+    },
+    {
+      "level": 8,
+      "name": "gate_poly"
+    },
+    {
+      "level": 0,
+      "name": "rms_input"
+    },
+    {
+      "level": 0,
+      "name": "gate_pre"
+    },
+    {
+      "level": 0,
+      "name": "conv_pre_for_silu"
+    },
+    {
+      "level": 0,
+      "name": "conv_pre"
+    }
+  ],
+  "max_consumed_level": 26,
+  "max_consumed_level_name": "output_model_poly",
+  "measurement_scope": {
+    "ckks_level_telemetry_available": true,
+    "full_model_correctness_claimed": false,
+    "get_level_semantics": "OpenFHE consumed-level index; larger means less remaining depth",
+    "multi_layer_success_claimed": false,
+    "stage1_ckks_level_report": true
+  },
+  "min_consumed_level": 0,
+  "multiplicative_depth": 48,
+  "operation_counts": {
+    "adds": 102,
+    "bootstraps": 0,
+    "ct_ct_mul": 31,
+    "ct_pt_mul": 75,
+    "rotations": 55,
+    "unity_level_align_muls": 59
+  },
+  "passed": true,
+  "previous_state_nonzero": true,
+  "recommended_action": "increase_precision_or_bootstrap_before_decrypt_boundary",
+  "remaining_level_margin": 22,
+  "repo_commit": "bbcd67288b9defef8c2bf8cf4fbf5d442d416ade",
+  "stage": "stage1-ckks-level-report",
+  "telemetry_available": true,
+  "version": "0.3.117"
+}

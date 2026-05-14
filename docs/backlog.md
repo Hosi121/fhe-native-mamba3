@@ -108,6 +108,10 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   with margin `27`; because that artifact is zero-state, the next PBI-S1-045
   evidence should be nonzero-state telemetry before choosing a bootstrap
   insertion point.
+- `v0.3.117` adds decrypt-failure JSON emission around the same telemetry.
+  Nonzero high-degree job `10433` fails during CKKS decode but still emits
+  `ckks_levels`; max consumed level is `26` under depth `48`, so the immediate
+  blocker is approximation/noise or scale precision, not raw level exhaustion.
 
 ## Dependency Map
 

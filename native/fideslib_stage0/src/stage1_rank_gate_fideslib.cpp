@@ -655,6 +655,34 @@ void write_level_field(
   out << "\"" << name << "\":" << ciphertext->GetLevel();
 }
 
+auto json_escape(std::string_view value) -> std::string {
+  std::string output;
+  output.reserve(value.size());
+  for (const char character : value) {
+    switch (character) {
+      case '\\':
+        output += "\\\\";
+        break;
+      case '"':
+        output += "\\\"";
+        break;
+      case '\n':
+        output += "\\n";
+        break;
+      case '\r':
+        output += "\\r";
+        break;
+      case '\t':
+        output += "\\t";
+        break;
+      default:
+        output.push_back(character);
+        break;
+    }
+  }
+  return output;
+}
+
 }  // namespace
 
 auto main(int argc, char* argv[]) -> int {
@@ -984,93 +1012,203 @@ auto main(int argc, char* argv[]) -> int {
         " ct_pt=" + std::to_string(ct_pt_muls) +
         " ct_ct=" + std::to_string(ct_ct_muls));
 
+    auto build_ckks_levels_json = [&]() -> std::string {
+      std::ostringstream levels;
+      levels << "{";
+      bool first_ckks_level = true;
+      write_level_field(levels, "rms_input", rms_ct, first_ckks_level);
+      write_level_field(levels, "conv_pre", conv_pre_ct, first_ckks_level);
+      write_level_field(levels, "conv_pre_for_silu", conv_pre_for_silu_ct, first_ckks_level);
+      write_level_field(levels, "gate_pre", gate_pre_ct, first_ckks_level);
+      write_level_field(levels, "rank_input_poly", rank_input_poly_ct, first_ckks_level);
+      write_level_field(levels, "gate_poly", gate_poly_ct, first_ckks_level);
+      write_level_field(levels, "skip_update_poly", skip_update_poly_ct, first_ckks_level);
+      write_level_field(levels, "dt_hidden_poly", dt_hidden_poly_ct, first_ckks_level);
+      write_level_field(levels, "dt_pre_poly", dt_pre_poly_ct, first_ckks_level);
+      write_level_field(levels, "dt_state_major_poly", dt_state_major_poly_ct, first_ckks_level);
+      write_level_field(levels, "decay_state_major_poly", decay_state_major_poly_ct, first_ckks_level);
+      write_level_field(levels, "b_vec_poly", b_vec_poly_ct, first_ckks_level);
+      write_level_field(levels, "c_vec_poly", c_vec_poly_ct, first_ckks_level);
+      write_level_field(levels, "b_state_major_poly", b_state_major_poly_ct, first_ckks_level);
+      write_level_field(levels, "c_state_major_poly", c_state_major_poly_ct, first_ckks_level);
+      write_level_field(levels, "x_state_major_poly", x_state_major_poly_ct, first_ckks_level);
+      write_level_field(levels, "input_state_term", input_state_term_ct, first_ckks_level);
+      write_level_field(levels, "state_new_poly", state_new_poly_ct, first_ckks_level);
+      write_level_field(levels, "readout_poly", readout_poly_ct, first_ckks_level);
+      write_level_field(levels, "rank_output_poly", rank_output_poly_ct, first_ckks_level);
+      write_level_field(levels, "rank_payload_poly", rank_payload_poly_ct, first_ckks_level);
+      write_level_field(levels, "output_delta_poly", output_delta_poly_ct, first_ckks_level);
+      write_level_field(levels, "output_model_poly", output_model_poly_ct, first_ckks_level);
+      levels << "}";
+      return levels.str();
+    };
+    const auto ckks_levels_json = build_ckks_levels_json();
+    auto write_decrypt_failure_payload = [&](const std::string& message) {
+      std::ostringstream failure;
+      failure << "{";
+      failure << "\"stage\":\"stage1-rank-gate-fideslib-projection\",";
+      failure << "\"backend\":\"fideslib-gpu\",";
+      failure << "\"encrypted\":true,";
+      failure << "\"status\":\"failed\",";
+      failure << "\"passed\":false,";
+      failure << "\"failure_phase\":\"decrypt\",";
+      failure << "\"error_message\":\"" << json_escape(message) << "\",";
+      failure << "\"parameters\":{";
+      failure << "\"d_model\":" << payload.config.d_model << ",";
+      failure << "\"d_state\":" << payload.config.d_state << ",";
+      failure << "\"mimo_rank\":" << payload.config.mimo_rank << ",";
+      failure << "\"rank_pad\":" << payload.config.rank_pad << ",";
+      failure << "\"batch_size\":" << batch_size << ",";
+      failure << "\"ring_dimension\":" << args.ring_dim << ",";
+      failure << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
+      failure << "\"scaling_mod_size\":" << args.scaling_mod_size;
+      failure << "},";
+      failure << "\"measurements\":{";
+      failure << "\"required_application_rotation_key_count\":" << required_rotations.size()
+              << ",";
+      failure << "\"previous_state_nonzero\":"
+              << (previous_state_is_zero ? "false" : "true") << ",";
+      failure << "\"peak_rss_gib\":" << peak_rss_gib() << ",";
+      failure << "\"rss_gib\":" << rss_gib();
+      failure << "},";
+      failure << "\"ckks_levels\":" << ckks_levels_json << ",";
+      failure << "\"timing\":{";
+      failure << "\"setup_seconds\":" << setup_seconds << ",";
+      failure << "\"rotate_keygen_seconds\":" << rotate_keygen_seconds << ",";
+      failure << "\"load_context_seconds\":" << load_context_seconds << ",";
+      failure << "\"eval_seconds\":" << eval_seconds;
+      failure << "},";
+      failure << "\"operation_counts\":{";
+      failure << "\"rotations\":" << rotations << ",";
+      failure << "\"ct_pt_mul\":" << ct_pt_muls << ",";
+      failure << "\"ct_ct_mul\":" << ct_ct_muls << ",";
+      failure << "\"adds\":" << adds << ",";
+      failure << "\"unity_level_align_muls\":" << unity_multiplies << ",";
+      failure << "\"bootstraps\":0";
+      failure << "},";
+      failure << "\"measurement_scope\":{";
+      failure << "\"rank_gate_payload\":true,";
+      failure << "\"state_major_layout\":true,";
+      failure << "\"recurrence_tail_executed\":true,";
+      failure << "\"previous_state_nonzero\":"
+              << (previous_state_is_zero ? "false" : "true") << ",";
+      failure << "\"ckks_level_telemetry\":true,";
+      failure << "\"decrypt_failure_artifact\":true,";
+      failure << "\"full_model_correctness_claimed\":false";
+      failure << "}";
+      failure << "}";
+      write_payload(args.output_json, failure.str());
+    };
+
+    std::vector<double> conv_pre_slots;
+    std::vector<double> gate_pre_slots;
+    std::vector<double> rank_input_poly_slots;
+    std::vector<double> skip_update_poly_slots;
+    std::vector<double> dt_hidden_poly_slots;
+    std::vector<double> dt_pre_poly_slots;
+    std::vector<double> dt_state_major_poly_slots;
+    std::vector<double> decay_state_major_poly_slots;
+    std::vector<double> b_vec_poly_slots;
+    std::vector<double> c_vec_poly_slots;
+    std::vector<double> b_state_major_poly_slots;
+    std::vector<double> c_state_major_poly_slots;
+    std::vector<double> state_new_poly_slots;
+    std::vector<double> readout_poly_slots;
+    std::vector<double> rank_output_poly_slots;
+    std::vector<double> rank_payload_poly_slots;
+    std::vector<double> output_model_poly_slots;
     log_phase("decrypt begin");
-    const auto conv_pre_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        conv_pre_ct,
-        static_cast<size_t>(batch_size));
-    const auto gate_pre_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        gate_pre_ct,
-        static_cast<size_t>(batch_size));
-    const auto rank_input_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        rank_input_poly_ct,
-        static_cast<size_t>(batch_size));
+    try {
+      conv_pre_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          conv_pre_ct,
+          static_cast<size_t>(batch_size));
+      gate_pre_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          gate_pre_ct,
+          static_cast<size_t>(batch_size));
+      rank_input_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          rank_input_poly_ct,
+          static_cast<size_t>(batch_size));
+      skip_update_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          skip_update_poly_ct,
+          static_cast<size_t>(batch_size));
+      dt_hidden_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          dt_hidden_poly_ct,
+          static_cast<size_t>(batch_size));
+      dt_pre_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          dt_pre_poly_ct,
+          static_cast<size_t>(batch_size));
+      dt_state_major_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          dt_state_major_poly_ct,
+          static_cast<size_t>(batch_size));
+      decay_state_major_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          decay_state_major_poly_ct,
+          static_cast<size_t>(batch_size));
+      b_vec_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          b_vec_poly_ct,
+          static_cast<size_t>(batch_size));
+      c_vec_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          c_vec_poly_ct,
+          static_cast<size_t>(batch_size));
+      b_state_major_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          b_state_major_poly_ct,
+          static_cast<size_t>(batch_size));
+      c_state_major_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          c_state_major_poly_ct,
+          static_cast<size_t>(batch_size));
+      state_new_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          state_new_poly_ct,
+          static_cast<size_t>(batch_size));
+      readout_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          readout_poly_ct,
+          static_cast<size_t>(batch_size));
+      rank_output_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          rank_output_poly_ct,
+          static_cast<size_t>(batch_size));
+      rank_payload_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          rank_payload_poly_ct,
+          static_cast<size_t>(batch_size));
+      output_model_poly_slots = decrypt_slots(
+          cc,
+          keys.secretKey,
+          output_model_poly_ct,
+          static_cast<size_t>(batch_size));
+    } catch (const std::exception& exc) {
+      write_decrypt_failure_payload(exc.what());
+      throw;
+    }
     const auto gate_poly_slots = gate_poly_slots_for_error;
-    const auto skip_update_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        skip_update_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto dt_hidden_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        dt_hidden_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto dt_pre_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        dt_pre_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto dt_state_major_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        dt_state_major_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto decay_state_major_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        decay_state_major_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto b_vec_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        b_vec_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto c_vec_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        c_vec_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto b_state_major_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        b_state_major_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto c_state_major_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        c_state_major_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto state_new_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        state_new_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto readout_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        readout_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto rank_output_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        rank_output_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto rank_payload_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        rank_payload_poly_ct,
-        static_cast<size_t>(batch_size));
-    const auto output_model_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        output_model_poly_ct,
-        static_cast<size_t>(batch_size));
     log_phase("decrypt done");
 
     const auto conv_pre = unscaled_values(
@@ -1258,32 +1396,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"peak_rss_gib\":" << peak_rss_gib() << ",";
     out << "\"rss_gib\":" << rss_gib();
     out << "},";
-    out << "\"ckks_levels\":{";
-    bool first_ckks_level = true;
-    write_level_field(out, "rms_input", rms_ct, first_ckks_level);
-    write_level_field(out, "conv_pre", conv_pre_ct, first_ckks_level);
-    write_level_field(out, "conv_pre_for_silu", conv_pre_for_silu_ct, first_ckks_level);
-    write_level_field(out, "gate_pre", gate_pre_ct, first_ckks_level);
-    write_level_field(out, "rank_input_poly", rank_input_poly_ct, first_ckks_level);
-    write_level_field(out, "gate_poly", gate_poly_ct, first_ckks_level);
-    write_level_field(out, "skip_update_poly", skip_update_poly_ct, first_ckks_level);
-    write_level_field(out, "dt_hidden_poly", dt_hidden_poly_ct, first_ckks_level);
-    write_level_field(out, "dt_pre_poly", dt_pre_poly_ct, first_ckks_level);
-    write_level_field(out, "dt_state_major_poly", dt_state_major_poly_ct, first_ckks_level);
-    write_level_field(out, "decay_state_major_poly", decay_state_major_poly_ct, first_ckks_level);
-    write_level_field(out, "b_vec_poly", b_vec_poly_ct, first_ckks_level);
-    write_level_field(out, "c_vec_poly", c_vec_poly_ct, first_ckks_level);
-    write_level_field(out, "b_state_major_poly", b_state_major_poly_ct, first_ckks_level);
-    write_level_field(out, "c_state_major_poly", c_state_major_poly_ct, first_ckks_level);
-    write_level_field(out, "x_state_major_poly", x_state_major_poly_ct, first_ckks_level);
-    write_level_field(out, "input_state_term", input_state_term_ct, first_ckks_level);
-    write_level_field(out, "state_new_poly", state_new_poly_ct, first_ckks_level);
-    write_level_field(out, "readout_poly", readout_poly_ct, first_ckks_level);
-    write_level_field(out, "rank_output_poly", rank_output_poly_ct, first_ckks_level);
-    write_level_field(out, "rank_payload_poly", rank_payload_poly_ct, first_ckks_level);
-    write_level_field(out, "output_delta_poly", output_delta_poly_ct, first_ckks_level);
-    write_level_field(out, "output_model_poly", output_model_poly_ct, first_ckks_level);
-    out << "},";
+    out << "\"ckks_levels\":" << ckks_levels_json << ",";
     out << "\"timing\":{";
     out << "\"setup_seconds\":" << setup_seconds << ",";
     out << "\"rotate_keygen_seconds\":" << rotate_keygen_seconds << ",";
