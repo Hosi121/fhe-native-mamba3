@@ -32,7 +32,7 @@ _HEADER = struct.Struct("<I9Id")
 _ARRAY_COUNT = struct.Struct("<I")
 _ARRAY_LENGTH = struct.Struct("<Q")
 
-RANK_GATE_PAYLOAD_ARRAY_ORDER_V1 = (
+RANK_GATE_PAYLOAD_ARRAY_ORDER = (
     "rms_input",
     "effective_rank_weight",
     "conv_bias",
@@ -43,10 +43,6 @@ RANK_GATE_PAYLOAD_ARRAY_ORDER_V1 = (
     "reference_gate_pre",
     "reference_gate",
     "reference_skip_update",
-)
-
-RANK_GATE_PAYLOAD_ARRAY_ORDER = (
-    *RANK_GATE_PAYLOAD_ARRAY_ORDER_V1,
     "rank_silu_coefficients",
     "gate_silu_coefficients",
     "reference_rank_input_poly",
@@ -465,7 +461,6 @@ def _next_power_of_two(value: int) -> int:
 
 __all__ = [
     "RANK_GATE_PAYLOAD_ARRAY_ORDER",
-    "RANK_GATE_PAYLOAD_ARRAY_ORDER_V1",
     "RANK_GATE_PAYLOAD_FORMAT_VERSION",
     "RANK_GATE_PAYLOAD_MAGIC",
     "Stage1RankGatePayload",

@@ -163,15 +163,7 @@ auto required_rank_gate_rotations(const stage1::RankGatePayloadConfig& config)
   return slot_bsgs_rotations(config.d_model, config.mimo_rank, config.model_baby_step);
 }
 
-auto pack_model_block0(
-    const std::vector<double>& values,
-    const stage1::RankGatePayloadConfig& config) -> std::vector<double> {
-  std::vector<double> slots(static_cast<size_t>(config.rank_pad) * config.d_state, 0.0);
-  std::copy(values.begin(), values.end(), slots.begin());
-  return slots;
-}
-
-auto pack_rank_block0(
+auto pack_block0(
     const std::vector<double>& values,
     const stage1::RankGatePayloadConfig& config) -> std::vector<double> {
   std::vector<double> slots(static_cast<size_t>(config.rank_pad) * config.d_state, 0.0);
@@ -304,7 +296,7 @@ auto evaluate_power_polynomial_block0(
   }
   auto make_constant_ct = [&](double coefficient) {
     auto plain = cc->MakeCKKSPackedPlaintext(
-        pack_rank_block0(repeated_rank_values(coefficient, config), config));
+        pack_block0(repeated_rank_values(coefficient, config), config));
     plain->SetLength(static_cast<std::size_t>(batch_size));
     return cc->Encrypt(public_key, plain);
   };
@@ -481,7 +473,7 @@ auto main(int argc, char* argv[]) -> int {
     int unity_multiplies = 0;
     int adds = 0;
 
-    auto rms_ct = encrypt_values(pack_model_block0(payload.array("rms_input").values, payload.config));
+    auto rms_ct = encrypt_values(pack_block0(payload.array("rms_input").values, payload.config));
     auto conv_pre_ct = slot_bsgs_linear_block0(
         cc,
         rms_ct,
@@ -494,7 +486,7 @@ auto main(int argc, char* argv[]) -> int {
         ct_pt_muls,
         adds);
     auto conv_bias_ct =
-        encrypt_values(pack_rank_block0(
+        encrypt_values(pack_block0(
             scaled_values(payload.array("conv_bias").values, args.rank_projection_scale),
             payload.config));
     align_levels(cc, conv_pre_ct, conv_bias_ct, unity_multiplies);
@@ -504,7 +496,7 @@ auto main(int argc, char* argv[]) -> int {
     auto conv_pre_for_silu_ct = conv_pre_ct;
     if (args.rank_projection_scale != 1.0) {
       auto unscale_plain = make_plain(
-          pack_rank_block0(
+          pack_block0(
               repeated_rank_values(1.0 / args.rank_projection_scale, payload.config),
               payload.config));
       conv_pre_for_silu_ct = cc->EvalMult(conv_pre_ct, unscale_plain);
@@ -545,7 +537,7 @@ auto main(int argc, char* argv[]) -> int {
         adds,
         unity_multiplies);
     log_phase("gate SiLU polynomial done");
-    auto d_skip_plain = make_plain(pack_rank_block0(payload.array("d_skip").values, payload.config));
+    auto d_skip_plain = make_plain(pack_block0(payload.array("d_skip").values, payload.config));
     auto skip_update_poly_ct = cc->EvalMult(rank_input_poly_ct, d_skip_plain);
     ++ct_pt_muls;
     log_phase("skip update done");
