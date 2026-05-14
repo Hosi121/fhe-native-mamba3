@@ -84,6 +84,8 @@ Current implementation status:
   and PBI-S1-041/job `10300` passed the bounded Mamba-130M one-layer OpenFHE
   eval. PBI-S1-042 records that direct multi-layer OpenFHE is runtime-bound, so
   the next mainline is the FIDESlib/state-major scaling probe in PBI-S1-043.
+  The native rotation/key-memory probe and SLURM entrypoint are implemented;
+  the next evidence is a high/B200 run over the 163-key PBI-S1-041 inventory.
 
 ## Stage 2
 
@@ -152,9 +154,9 @@ Stage 0 blocker update:
   `runs/stage0-s009-closeout-report-v0394.json`: blocker identification and
   handoff are complete, while full 24-layer encrypted success is explicitly not
   claimed.
-- The next executable blocker is PBI-S1-043: test whether FIDESlib/state-major
-  primitives can reduce the measured `8694.12s` one-layer OpenFHE runtime before
-  submitting direct multi-layer OpenFHE jobs.
+- The next executable blocker is PBI-S1-043: run the FIDESlib state-major
+  rotation/key-memory probe on high/B200, then decide whether to continue the
+  FIDESlib one-layer port or route directly to Stage 2 sketch reduction.
 
 ## Version Boundary
 

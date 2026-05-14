@@ -33,6 +33,9 @@ if(FHE_STAGE0_BUILD_KERNEL)
 
   add_executable(stage1_bootstrap_probe src/stage1_bootstrap_probe.cpp)
   target_link_libraries(stage1_bootstrap_probe PRIVATE fideslib::fideslib)
+
+  add_executable(stage1_rotation_probe src/stage1_rotation_probe.cpp)
+  target_link_libraries(stage1_rotation_probe PRIVATE fideslib::fideslib)
 endif()
 
 if(FHE_STAGE0_BUILD_TESTS)

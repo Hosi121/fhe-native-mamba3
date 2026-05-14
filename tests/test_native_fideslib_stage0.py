@@ -8,10 +8,14 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     stage1_bootstrap_source = (
         ROOT / "native" / "fideslib_stage0" / "src" / "stage1_bootstrap_probe.cpp"
     )
+    stage1_rotation_source = (
+        ROOT / "native" / "fideslib_stage0" / "src" / "stage1_rotation_probe.cpp"
+    )
     cmake = ROOT / "native" / "fideslib_stage0" / "CMakeLists.txt"
     slurm = ROOT / "slurm" / "fideslib_stage0.sbatch"
     sweep_slurm = ROOT / "slurm" / "fideslib_stage0_sweep.sbatch"
     stage1_bootstrap_slurm = ROOT / "slurm" / "fideslib_stage1_bootstrap_probe.sbatch"
+    stage1_rotation_slurm = ROOT / "slurm" / "fideslib_stage1_rotation_probe.sbatch"
     checkpoint_openfhe_slurm = ROOT / "slurm" / "mamba_checkpoint_openfhe_smoke.sbatch"
     bootstrap_openfhe_slurm = ROOT / "slurm" / "openfhe_bootstrap_latency.sbatch"
     segment_openfhe_slurm = ROOT / "slurm" / "openfhe_segment_samples.sbatch"
@@ -46,10 +50,12 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
 
     assert source.exists()
     assert stage1_bootstrap_source.exists()
+    assert stage1_rotation_source.exists()
     assert cmake.exists()
     assert slurm.exists()
     assert sweep_slurm.exists()
     assert stage1_bootstrap_slurm.exists()
+    assert stage1_rotation_slurm.exists()
     assert checkpoint_openfhe_slurm.exists()
     assert bootstrap_openfhe_slurm.exists()
     assert segment_openfhe_slurm.exists()
@@ -96,6 +102,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
 
     cmake_text = cmake.read_text()
     assert "add_executable(stage1_bootstrap_probe" in cmake_text
+    assert "add_executable(stage1_rotation_probe" in cmake_text
 
     stage1_bootstrap_source_text = stage1_bootstrap_source.read_text()
     assert "fideslib-gpu-stage1-bootstrap-latency" in stage1_bootstrap_source_text
@@ -104,12 +111,27 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert '\\"ring_dimension\\"' in stage1_bootstrap_source_text
     assert '\\"batch_size\\"' in stage1_bootstrap_source_text
 
+    stage1_rotation_source_text = stage1_rotation_source.read_text()
+    assert "fideslib-gpu-stage1-state-major-rotation-probe" in stage1_rotation_source_text
+    assert '\\"input_mode\\":\\"state-major-rotation-probe\\"' in stage1_rotation_source_text
+    assert "EvalRotateKeyGen" in stage1_rotation_source_text
+    assert "EvalRotate(ciphertext" in stage1_rotation_source_text
+    assert '\\"requested_rotation_key_count\\"' in stage1_rotation_source_text
+    assert '\\"peak_rss_gib\\"' in stage1_rotation_source_text
+
     stage1_bootstrap_slurm_text = stage1_bootstrap_slurm.read_text()
     assert "stage1_bootstrap_probe" in stage1_bootstrap_slurm_text
     assert "run_fideslib_stage1_bootstrap_probe.py" in stage1_bootstrap_slurm_text
     assert "RING_DIM:-65536" in stage1_bootstrap_slurm_text
     assert "NUM_SLOTS:-32768" in stage1_bootstrap_slurm_text
     assert "export OUTPUT_JSON" in stage1_bootstrap_slurm_text
+
+    stage1_rotation_slurm_text = stage1_rotation_slurm.read_text()
+    assert "stage1_rotation_probe" in stage1_rotation_slurm_text
+    assert "run_fideslib_stage1_rotation_probe.py" in stage1_rotation_slurm_text
+    assert "RING_DIM:-131072" in stage1_rotation_slurm_text
+    assert "ROTATION_ARTIFACT" in stage1_rotation_slurm_text
+    assert "ROTATION_LIMIT" in stage1_rotation_slurm_text
 
     checkpoint_openfhe_text = checkpoint_openfhe_slurm.read_text()
     assert "mamba-checkpoint-recurrence-smoke" in checkpoint_openfhe_text
