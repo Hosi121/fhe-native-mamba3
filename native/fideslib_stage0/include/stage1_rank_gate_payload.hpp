@@ -11,7 +11,7 @@
 namespace stage1 {
 
 constexpr std::array<char, 8> kRankGatePayloadMagic = {'F', 'H', 'M', '3', 'R', 'G', 'A', 'T'};
-constexpr std::uint32_t kRankGatePayloadFormatVersion = 3;
+constexpr std::uint32_t kRankGatePayloadFormatVersion = 5;
 
 struct RankGatePayloadConfig {
   std::uint32_t d_model = 0;
@@ -69,9 +69,38 @@ inline auto rank_gate_payload_array_order() -> const std::vector<std::string>& {
       "reference_c_vec_poly",
       "reference_b_state_major_poly",
       "reference_c_state_major_poly",
+      "dt_in_weight",
+      "dt_proj_weight",
+      "dt_proj_bias",
+      "reference_dt_hidden_poly",
+      "reference_dt_pre_poly",
+      "reference_dt_state_major_poly",
+      "decay_coefficients",
+      "reference_decay_state_major_poly",
+      "reference_decay_state_major_exact",
+      "decay_metadata",
+      "residual_input",
+      "previous_state",
+      "w_out",
+      "reference_state_new_poly",
+      "reference_readout_rank_poly",
+      "reference_rank_output_poly",
+      "reference_rank_payload_poly",
+      "reference_output_model_poly",
+      "reference_output_model_exact",
+      "tail_metadata",
       "polynomial_metadata",
   };
   return names;
+}
+
+inline void require_rank_gate_divisible(
+    std::uint64_t value,
+    std::uint64_t divisor,
+    const std::string& name) {
+  if (divisor == 0 || value % divisor != 0) {
+    throw std::runtime_error("rank/gate payload length is not divisible for " + name);
+  }
 }
 
 inline auto rank_gate_payload_expected_shape(
@@ -99,6 +128,59 @@ inline auto rank_gate_payload_expected_shape(
   }
   if (name == "reference_b_state_major_poly" || name == "reference_c_state_major_poly") {
     return {config.d_state, config.mimo_rank};
+  }
+  if (name == "dt_in_weight") {
+    if (encoded_length == 0) {
+      return {1, config.mimo_rank};
+    }
+    require_rank_gate_divisible(encoded_length, config.mimo_rank, name);
+    return {encoded_length / config.mimo_rank, config.mimo_rank};
+  }
+  if (name == "dt_proj_weight") {
+    if (encoded_length == 0) {
+      return {config.mimo_rank, 1};
+    }
+    require_rank_gate_divisible(encoded_length, config.mimo_rank, name);
+    return {config.mimo_rank, encoded_length / config.mimo_rank};
+  }
+  if (name == "dt_proj_bias" || name == "reference_dt_pre_poly") {
+    return {config.mimo_rank};
+  }
+  if (name == "reference_dt_hidden_poly") {
+    return {encoded_length == 0 ? 1 : encoded_length};
+  }
+  if (name == "reference_dt_state_major_poly" ||
+      name == "reference_decay_state_major_poly" ||
+      name == "reference_decay_state_major_exact") {
+    return {config.d_state, config.mimo_rank};
+  }
+  if (name == "decay_coefficients") {
+    const auto state_rank = static_cast<std::uint64_t>(config.d_state) * config.mimo_rank;
+    if (encoded_length == 0) {
+      return {1, config.d_state, config.mimo_rank};
+    }
+    require_rank_gate_divisible(encoded_length, state_rank, name);
+    return {encoded_length / state_rank, config.d_state, config.mimo_rank};
+  }
+  if (name == "decay_metadata") {
+    return {4};
+  }
+  if (name == "residual_input" || name == "reference_output_model_poly" ||
+      name == "reference_output_model_exact") {
+    return {config.d_model};
+  }
+  if (name == "previous_state" || name == "reference_state_new_poly") {
+    return {config.d_state, config.mimo_rank};
+  }
+  if (name == "w_out") {
+    return {config.d_model, config.mimo_rank};
+  }
+  if (name == "reference_readout_rank_poly" || name == "reference_rank_output_poly" ||
+      name == "reference_rank_payload_poly") {
+    return {config.mimo_rank};
+  }
+  if (name == "tail_metadata") {
+    return {2};
   }
   if (name == "rank_silu_coefficients" || name == "gate_silu_coefficients") {
     return {encoded_length == 0 ? 1 : encoded_length};

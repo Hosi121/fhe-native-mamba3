@@ -42,6 +42,11 @@ LAYER_INDEX="${LAYER_INDEX:-0}"
 POLYNOMIAL_DEGREE="${POLYNOMIAL_DEGREE:-15}"
 GATE_POLYNOMIAL_DEGREE="${GATE_POLYNOMIAL_DEGREE:-9}"
 POLYNOMIAL_RANGE="${POLYNOMIAL_RANGE:-8.0}"
+DECAY_POLYNOMIAL_DEGREE="${DECAY_POLYNOMIAL_DEGREE:-5}"
+DECAY_POLYNOMIAL_RANGE_LOWER="${DECAY_POLYNOMIAL_RANGE_LOWER:--0.5}"
+DECAY_POLYNOMIAL_RANGE_UPPER="${DECAY_POLYNOMIAL_RANGE_UPPER:-0.5}"
+PREVIOUS_STATE_SCALE="${PREVIOUS_STATE_SCALE:-0.0}"
+PREVIOUS_STATE_SEED="${PREVIOUS_STATE_SEED:-0}"
 
 RING_DIM="${RING_DIM:-4096}"
 MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-24}"
@@ -49,6 +54,7 @@ SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-40}"
 FIRST_MOD_SIZE="${FIRST_MOD_SIZE:-60}"
 ATOL="${ATOL:-1e-4}"
 RANK_PROJECTION_SCALE="${RANK_PROJECTION_SCALE:-1.0}"
+DT_PROJECTION_SCALE="${DT_PROJECTION_SCALE:-1.0}"
 SECURITY="${SECURITY:-not-set}"
 SECRET_KEY_DIST="${SECRET_KEY_DIST:-uniform-ternary}"
 
@@ -103,6 +109,10 @@ fi
   --polynomial-degree "${POLYNOMIAL_DEGREE}" \
   --gate-polynomial-degree "${GATE_POLYNOMIAL_DEGREE}" \
   --polynomial-range "${POLYNOMIAL_RANGE}" \
+  --decay-polynomial-degree "${DECAY_POLYNOMIAL_DEGREE}" \
+  --decay-polynomial-range "${DECAY_POLYNOMIAL_RANGE_LOWER}" "${DECAY_POLYNOMIAL_RANGE_UPPER}" \
+  --previous-state-scale "${PREVIOUS_STATE_SCALE}" \
+  --previous-state-seed "${PREVIOUS_STATE_SEED}" \
   --output-binary "${RANK_GATE_BINARY}" \
   --output-json "${RANK_GATE_MANIFEST}"
 
@@ -117,7 +127,13 @@ section "Run FIDESlib rank/gate projection"
   --secret-key-dist "${SECRET_KEY_DIST}" \
   --atol "${ATOL}" \
   --rank-projection-scale "${RANK_PROJECTION_SCALE}" \
+  --dt-projection-scale "${DT_PROJECTION_SCALE}" \
   --output-json "${OUTPUT_JSON}"
+
+if [[ ! -s "${OUTPUT_JSON}" ]]; then
+  echo "missing output_json=${OUTPUT_JSON}" >&2
+  exit 1
+fi
 
 section "Artifact summary"
 "${PYTHON}" - <<'PY'

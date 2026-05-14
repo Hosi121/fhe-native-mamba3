@@ -15,6 +15,7 @@ rsync -az --delete \
   --exclude '*.egg-info/' \
   --exclude 'build/' \
   --exclude 'dist/' \
+  --exclude 'tmp/' \
   --exclude 'checkpoints/' \
   --exclude 'runs/' \
   --exclude 'logs/' \

@@ -42,6 +42,10 @@ def main() -> int:
         polynomial_degree=args.polynomial_degree,
         gate_polynomial_degree=args.gate_polynomial_degree,
         polynomial_range=args.polynomial_range,
+        decay_polynomial_degree=args.decay_polynomial_degree,
+        decay_polynomial_range=tuple(args.decay_polynomial_range),
+        previous_state_scale=args.previous_state_scale,
+        previous_state_seed=args.previous_state_seed,
     )
     output_binary = write_stage1_rank_gate_payload_binary(payload, args.output_binary)
     manifest = {
@@ -63,6 +67,8 @@ def main() -> int:
             "pre_recurrence_rank_gate_only": False,
             "pre_recurrence_dynamic_bc": True,
             "pre_recurrence_rank_gate_bc": True,
+            "pre_recurrence_decay": True,
+            "recurrence_tail_inputs_present": True,
             "recurrence_tail_executed": False,
             "full_layer_executed": False,
             "full_model_correctness_claimed": False,
@@ -85,6 +91,10 @@ def main() -> int:
                 else args.gate_polynomial_degree
             ),
             "polynomial_range": args.polynomial_range,
+            "decay_polynomial_degree": args.decay_polynomial_degree,
+            "decay_polynomial_range": list(args.decay_polynomial_range),
+            "previous_state_scale": args.previous_state_scale,
+            "previous_state_seed": args.previous_state_seed,
         },
         "measurements": {
             "total_seconds": time.perf_counter() - started,
@@ -113,6 +123,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--polynomial-degree", type=int, default=15)
     parser.add_argument("--gate-polynomial-degree", type=int, default=None)
     parser.add_argument("--polynomial-range", type=float, default=8.0)
+    parser.add_argument("--decay-polynomial-degree", type=int, default=5)
+    parser.add_argument(
+        "--decay-polynomial-range",
+        type=float,
+        nargs=2,
+        metavar=("LOWER", "UPPER"),
+        default=(-0.5, 0.5),
+    )
+    parser.add_argument("--previous-state-scale", type=float, default=0.0)
+    parser.add_argument("--previous-state-seed", type=int, default=0)
     parser.add_argument("--output-binary", required=True)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()

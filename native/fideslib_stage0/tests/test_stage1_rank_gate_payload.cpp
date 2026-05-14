@@ -109,6 +109,20 @@ void test_read_rank_gate_payload() {
       payload.array("reference_b_state_major_poly").values.size(),
       12,
       "B state-major reference length");
+  require_equal(payload.array("dt_in_weight").values.size(), 6, "dt input weight length");
+  require_equal(payload.array("dt_proj_weight").values.size(), 6, "dt projection weight length");
+  require_equal(payload.array("decay_coefficients").values.size(), 12, "decay coefficient length");
+  require_equal(
+      payload.array("reference_decay_state_major_poly").values.size(),
+      12,
+      "decay state-major reference length");
+  require_equal(payload.array("residual_input").values.size(), 8, "residual input length");
+  require_equal(payload.array("previous_state").values.size(), 12, "previous state length");
+  require_equal(payload.array("w_out").values.size(), 48, "output weight length");
+  require_equal(
+      payload.array("reference_output_model_poly").values.size(),
+      8,
+      "output model reference length");
 
   std::filesystem::remove(path);
 }

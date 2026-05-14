@@ -143,6 +143,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "stage1-rank-gate-fideslib-projection" in rank_gate_fideslib_text
     assert "pre_recurrence_rank_gate_projection" in rank_gate_fideslib_text
     assert "pre_recurrence_dynamic_bc" in rank_gate_fideslib_text
+    assert "pre_recurrence_decay" in rank_gate_fideslib_text
+    assert "recurrence_tail_executed" in rank_gate_fideslib_text
+    assert "full_one_layer_polynomial_output_checked" in rank_gate_fideslib_text
     assert "state_vector_to_state_major_ciphertext" in rank_gate_fideslib_text
 
     stage1_bootstrap_slurm_text = stage1_bootstrap_slurm.read_text()
@@ -165,6 +168,10 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     stage1_rank_gate_slurm_text = stage1_rank_gate_slurm.read_text()
     assert "stage1_rank_gate_fideslib" in stage1_rank_gate_slurm_text
     assert "export_stage1_rank_gate_payload.py" in stage1_rank_gate_slurm_text
+    assert "DECAY_POLYNOMIAL_DEGREE" in stage1_rank_gate_slurm_text
+    assert "DT_PROJECTION_SCALE" in stage1_rank_gate_slurm_text
+    assert "PREVIOUS_STATE_SCALE" in stage1_rank_gate_slurm_text
+    assert "--previous-state-scale" in stage1_rank_gate_slurm_text
 
     checkpoint_openfhe_text = checkpoint_openfhe_slurm.read_text()
     assert "mamba-checkpoint-recurrence-smoke" in checkpoint_openfhe_text

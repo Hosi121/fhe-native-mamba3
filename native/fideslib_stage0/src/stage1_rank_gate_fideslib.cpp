@@ -31,6 +31,7 @@ struct Config {
   int first_mod_size = 60;
   double atol = 1e-5;
   double rank_projection_scale = 1.0;
+  double dt_projection_scale = 1.0;
   std::string security = "128-classic";
   std::string secret_key_dist = "sparse-ternary";
 };
@@ -83,6 +84,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.atol = parse_double(arg, value);
     } else if (arg == "--rank-projection-scale") {
       config.rank_projection_scale = parse_double(arg, value);
+    } else if (arg == "--dt-projection-scale") {
+      config.dt_projection_scale = parse_double(arg, value);
     } else if (arg == "--security") {
       config.security = value;
     } else if (arg == "--secret-key-dist") {
@@ -98,7 +101,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
     throw std::invalid_argument("ring-dim must be a positive power of two");
   }
   if (config.multiplicative_depth <= 0 || config.scaling_mod_size <= 0 ||
-      config.first_mod_size <= 0 || config.atol < 0.0 || config.rank_projection_scale <= 0.0) {
+      config.first_mod_size <= 0 || config.atol < 0.0 || config.rank_projection_scale <= 0.0 ||
+      config.dt_projection_scale <= 0.0) {
     throw std::invalid_argument("invalid CKKS parameters");
   }
   if (config.security != "not-set" && config.security != "128-classic") {
@@ -178,8 +182,27 @@ auto state_vector_to_state_major_rotations(const stage1::RankGatePayloadConfig& 
   return {rotations.begin(), rotations.end()};
 }
 
-auto required_rank_gate_rotations(const stage1::RankGatePayloadConfig& config)
+auto rank_block0_to_state_major_rotations(const stage1::RankGatePayloadConfig& config)
     -> std::vector<int32_t> {
+  std::set<int32_t> rotations;
+  for (std::uint32_t step = 1; step < config.d_state; step *= 2) {
+    rotations.insert(-static_cast<int32_t>(step * config.rank_pad));
+  }
+  return {rotations.begin(), rotations.end()};
+}
+
+auto state_major_to_rank_block0_rotations(const stage1::RankGatePayloadConfig& config)
+    -> std::vector<int32_t> {
+  std::set<int32_t> rotations;
+  for (std::uint32_t step = 1; step < config.d_state; step *= 2) {
+    rotations.insert(static_cast<int32_t>(step * config.rank_pad));
+  }
+  return {rotations.begin(), rotations.end()};
+}
+
+auto required_rank_gate_rotations(const stage1::RankGatePayload& payload)
+    -> std::vector<int32_t> {
+  const auto& config = payload.config;
   std::set<int32_t> rotations;
   const auto model_rotations =
       slot_bsgs_rotations(config.d_model, config.mimo_rank, config.model_baby_step);
@@ -191,8 +214,32 @@ auto required_rank_gate_rotations(const stage1::RankGatePayloadConfig& config)
           static_cast<int>(config.rank_baby_step),
           static_cast<int>(config.mimo_rank)));
   rotations.insert(bc_rotations.begin(), bc_rotations.end());
+  const int dt_rank = static_cast<int>(payload.array("dt_in_weight").shape.at(0));
+  const auto dt_hidden_rotations = slot_bsgs_rotations(
+      config.mimo_rank,
+      dt_rank,
+      bounded_baby_step(
+          static_cast<int>(config.rank_baby_step),
+          static_cast<int>(config.mimo_rank)));
+  rotations.insert(dt_hidden_rotations.begin(), dt_hidden_rotations.end());
+  const auto dt_project_rotations = slot_bsgs_rotations(
+      dt_rank,
+      config.mimo_rank,
+      bounded_baby_step(static_cast<int>(config.rank_baby_step), dt_rank));
+  rotations.insert(dt_project_rotations.begin(), dt_project_rotations.end());
   const auto state_rotations = state_vector_to_state_major_rotations(config);
   rotations.insert(state_rotations.begin(), state_rotations.end());
+  const auto rank_broadcast_rotations = rank_block0_to_state_major_rotations(config);
+  rotations.insert(rank_broadcast_rotations.begin(), rank_broadcast_rotations.end());
+  const auto rank_reduce_rotations = state_major_to_rank_block0_rotations(config);
+  rotations.insert(rank_reduce_rotations.begin(), rank_reduce_rotations.end());
+  const auto out_rotations = slot_bsgs_rotations(
+      config.mimo_rank,
+      config.d_model,
+      bounded_baby_step(
+          static_cast<int>(config.rank_baby_step),
+          static_cast<int>(config.mimo_rank)));
+  rotations.insert(out_rotations.begin(), out_rotations.end());
   return {rotations.begin(), rotations.end()};
 }
 
@@ -220,9 +267,61 @@ auto unscaled_values(const std::vector<double>& values, double scale) -> std::ve
   return output;
 }
 
+auto scaled_decay_coefficients(
+    const std::vector<double>& coefficients,
+    const stage1::RankGatePayloadConfig& config,
+    double input_scale) -> std::vector<double> {
+  const auto state_rank = static_cast<std::size_t>(config.d_state) * config.mimo_rank;
+  if (state_rank == 0 || coefficients.empty() || coefficients.size() % state_rank != 0) {
+    throw std::runtime_error("decay coefficient vector has invalid size");
+  }
+  std::vector<double> output(coefficients.size(), 0.0);
+  double denominator = 1.0;
+  const auto degree_count = coefficients.size() / state_rank;
+  for (std::size_t degree = 0; degree < degree_count; ++degree) {
+    for (std::size_t index = 0; index < state_rank; ++index) {
+      const double value = coefficients[degree * state_rank + index] / denominator;
+      output[degree * state_rank + index] =
+          std::abs(value) < kPlaintextCoefficientFloor ? 0.0 : value;
+    }
+    denominator *= input_scale;
+  }
+  return output;
+}
+
 auto repeated_rank_values(double value, const stage1::RankGatePayloadConfig& config)
     -> std::vector<double> {
   return std::vector<double>(static_cast<std::size_t>(config.mimo_rank), value);
+}
+
+auto pack_state_major_values(
+    const std::vector<double>& values,
+    const stage1::RankGatePayloadConfig& config) -> std::vector<double> {
+  const auto expected = static_cast<std::size_t>(config.d_state) * config.mimo_rank;
+  if (values.size() != expected) {
+    throw std::runtime_error("state-major values length mismatch");
+  }
+  std::vector<double> slots(static_cast<size_t>(config.rank_pad) * config.d_state, 0.0);
+  std::size_t index = 0;
+  for (std::uint32_t state_index = 0; state_index < config.d_state; ++state_index) {
+    const auto base = static_cast<std::size_t>(state_index * config.rank_pad);
+    for (std::uint32_t rank_index = 0; rank_index < config.mimo_rank; ++rank_index) {
+      slots[base + rank_index] = values[index++];
+    }
+  }
+  return slots;
+}
+
+auto rank_valid_mask(const stage1::RankGatePayloadConfig& config) -> std::vector<double> {
+  std::vector<double> mask(static_cast<size_t>(config.rank_pad) * config.d_state, 0.0);
+  std::fill(mask.begin(), mask.begin() + static_cast<std::ptrdiff_t>(config.mimo_rank), 1.0);
+  return mask;
+}
+
+auto is_near_zero_vector(const std::vector<double>& values) -> bool {
+  return std::all_of(values.begin(), values.end(), [](double value) {
+    return std::abs(value) < 1e-15;
+  });
 }
 
 auto slot_bsgs_pre_mask(
@@ -352,6 +451,46 @@ auto evaluate_power_polynomial_block0(
   return result;
 }
 
+auto evaluate_state_major_vector_power_polynomial(
+    const CryptoContext<DCRTPoly>& cc,
+    const PublicKey<DCRTPoly>& public_key,
+    Ciphertext<DCRTPoly> input_ct,
+    const std::vector<double>& coefficients,
+    const stage1::RankGatePayloadConfig& config,
+    int batch_size,
+    int& ct_ct_muls,
+    int& adds,
+    int& unity_multiplies) -> Ciphertext<DCRTPoly> {
+  const auto state_rank = static_cast<std::size_t>(config.d_state) * config.mimo_rank;
+  if (state_rank == 0 || coefficients.empty() || coefficients.size() % state_rank != 0) {
+    throw std::runtime_error("decay coefficient vector has invalid size");
+  }
+  const auto degree_count = coefficients.size() / state_rank;
+  auto make_constant_ct = [&](std::size_t coefficient_index) {
+    const auto begin = coefficients.begin() +
+                       static_cast<std::ptrdiff_t>(coefficient_index * state_rank);
+    const auto end = begin + static_cast<std::ptrdiff_t>(state_rank);
+    auto plain = cc->MakeCKKSPackedPlaintext(
+        pack_state_major_values(std::vector<double>(begin, end), config));
+    plain->SetLength(static_cast<std::size_t>(batch_size));
+    return cc->Encrypt(public_key, plain);
+  };
+
+  auto result = make_constant_ct(degree_count - 1);
+  if (degree_count == 1) {
+    return result;
+  }
+  for (std::size_t index = degree_count - 1; index-- > 0;) {
+    result = cc->EvalMult(result, input_ct);
+    ++ct_ct_muls;
+    auto constant_ct = make_constant_ct(index);
+    align_levels(cc, result, constant_ct, unity_multiplies);
+    result = cc->EvalAdd(result, constant_ct);
+    ++adds;
+  }
+  return result;
+}
+
 void align_levels(
     const CryptoContext<DCRTPoly>& cc,
     Ciphertext<DCRTPoly>& lhs,
@@ -448,6 +587,23 @@ auto state_vector_to_state_major_ciphertext(
   return output;
 }
 
+auto rank_block0_to_state_major_ciphertext(
+    const CryptoContext<DCRTPoly>& cc,
+    const Ciphertext<DCRTPoly>& rank_ct,
+    const stage1::RankGatePayloadConfig& config,
+    int& rotations,
+    int& adds) -> Ciphertext<DCRTPoly> {
+  auto output = rank_ct;
+  for (std::uint32_t step = 1; step < config.d_state; step *= 2) {
+    output = cc->EvalAdd(
+        output,
+        cc->EvalRotate(output, -static_cast<int32_t>(step * config.rank_pad)));
+    ++rotations;
+    ++adds;
+  }
+  return output;
+}
+
 auto read_status_kib(const std::string& key) -> long long {
   std::ifstream status("/proc/self/status");
   std::string line;
@@ -494,7 +650,7 @@ auto main(int argc, char* argv[]) -> int {
     const auto args = parse_args(argc, argv);
     const auto payload = stage1::read_rank_gate_payload(args.input);
     const auto reference = stage1::evaluate_rank_gate_payload(payload);
-    const auto required_rotations = required_rank_gate_rotations(payload.config);
+    const auto required_rotations = required_rank_gate_rotations(payload);
     const auto batch_size = static_cast<int>(payload.config.rank_pad * payload.config.d_state);
     if (batch_size <= 0 || batch_size > args.ring_dim / 2) {
       throw std::runtime_error("payload batch size does not fit ring dimension");
@@ -633,6 +789,63 @@ auto main(int argc, char* argv[]) -> int {
     const int rank_baby_step = bounded_baby_step(
         static_cast<int>(payload.config.rank_baby_step),
         static_cast<int>(payload.config.mimo_rank));
+    const int dt_rank = static_cast<int>(payload.array("dt_in_weight").shape.at(0));
+    auto dt_hidden_poly_ct = slot_bsgs_linear_block0(
+        cc,
+        rank_input_poly_ct,
+        scaled_values(payload.array("dt_in_weight").values, args.dt_projection_scale),
+        static_cast<int>(payload.config.mimo_rank),
+        dt_rank,
+        rank_baby_step,
+        batch_size,
+        rotations,
+        ct_pt_muls,
+        adds);
+    log_phase("dt hidden projection done");
+    const int dt_baby_step = bounded_baby_step(
+        static_cast<int>(payload.config.rank_baby_step),
+        dt_rank);
+    auto dt_pre_poly_ct = slot_bsgs_linear_block0(
+        cc,
+        dt_hidden_poly_ct,
+        payload.array("dt_proj_weight").values,
+        dt_rank,
+        static_cast<int>(payload.config.mimo_rank),
+        dt_baby_step,
+        batch_size,
+        rotations,
+        ct_pt_muls,
+        adds);
+    log_phase("dt rank projection done");
+    auto dt_bias_ct = encrypt_values(
+        pack_block0(
+            scaled_values(payload.array("dt_proj_bias").values, args.dt_projection_scale),
+            payload.config));
+    align_levels(cc, dt_pre_poly_ct, dt_bias_ct, unity_multiplies);
+    dt_pre_poly_ct = cc->EvalAdd(dt_pre_poly_ct, dt_bias_ct);
+    ++adds;
+    log_phase("dt bias add done");
+    auto dt_state_major_poly_ct = rank_block0_to_state_major_ciphertext(
+        cc,
+        dt_pre_poly_ct,
+        payload.config,
+        rotations,
+        adds);
+    log_phase("dt state-major broadcast done");
+    auto decay_state_major_poly_ct = evaluate_state_major_vector_power_polynomial(
+        cc,
+        keys.publicKey,
+        dt_state_major_poly_ct,
+        scaled_decay_coefficients(
+            payload.array("decay_coefficients").values,
+            payload.config,
+            args.dt_projection_scale),
+        payload.config,
+        batch_size,
+        ct_ct_muls,
+        adds,
+        unity_multiplies);
+    log_phase("dynamic decay projection/polynomial done");
     auto b_vec_poly_ct = slot_bsgs_linear_block0(
         cc,
         rank_input_poly_ct,
@@ -673,6 +886,86 @@ auto main(int argc, char* argv[]) -> int {
         ct_pt_muls,
         adds);
     log_phase("dynamic B/C state-major broadcasts done");
+    const auto gate_poly_slots_for_error = decrypt_slots(
+        cc,
+        keys.secretKey,
+        gate_poly_ct,
+        static_cast<size_t>(batch_size));
+    log_phase("gate polynomial diagnostic decrypt done");
+    auto x_state_major_poly_ct = rank_block0_to_state_major_ciphertext(
+        cc,
+        rank_input_poly_ct,
+        payload.config,
+        rotations,
+        adds);
+    log_phase("rank input state-major broadcast done");
+    Ciphertext<DCRTPoly> b_state_major_aligned_ct = b_state_major_poly_ct->Clone();
+    align_levels(cc, b_state_major_aligned_ct, x_state_major_poly_ct, unity_multiplies);
+    auto input_state_term_ct = cc->EvalMult(b_state_major_aligned_ct, x_state_major_poly_ct);
+    ++ct_ct_muls;
+    log_phase("input state term done");
+
+    Ciphertext<DCRTPoly> state_new_poly_ct;
+    const bool previous_state_is_zero = is_near_zero_vector(payload.array("previous_state").values);
+    if (previous_state_is_zero) {
+      state_new_poly_ct = input_state_term_ct;
+      log_phase("zero previous-state decay term skipped");
+    } else {
+      auto previous_state_ct = encrypt_values(
+          pack_state_major_values(payload.array("previous_state").values, payload.config));
+      log_phase("previous state encrypt done");
+      Ciphertext<DCRTPoly> decay_state_major_aligned_ct = decay_state_major_poly_ct->Clone();
+      align_levels(cc, decay_state_major_aligned_ct, previous_state_ct, unity_multiplies);
+      auto decay_state_term_ct = cc->EvalMult(decay_state_major_aligned_ct, previous_state_ct);
+      ++ct_ct_muls;
+      log_phase("decay state term done");
+      align_levels(cc, decay_state_term_ct, input_state_term_ct, unity_multiplies);
+      state_new_poly_ct = cc->EvalAdd(decay_state_term_ct, input_state_term_ct);
+      ++adds;
+      log_phase("state update add done");
+    }
+    Ciphertext<DCRTPoly> c_state_major_aligned_ct = c_state_major_poly_ct->Clone();
+    auto state_new_for_readout_ct = state_new_poly_ct->Clone();
+    align_levels(cc, c_state_major_aligned_ct, state_new_for_readout_ct, unity_multiplies);
+    auto readout_poly_ct = cc->EvalMult(c_state_major_aligned_ct, state_new_for_readout_ct);
+    ++ct_ct_muls;
+    for (const auto step : state_major_to_rank_block0_rotations(payload.config)) {
+      readout_poly_ct = cc->EvalAdd(readout_poly_ct, cc->EvalRotate(readout_poly_ct, step));
+      ++rotations;
+      ++adds;
+    }
+    auto rank_mask_plain = make_plain(rank_valid_mask(payload.config));
+    readout_poly_ct = cc->EvalMult(readout_poly_ct, rank_mask_plain);
+    ++ct_pt_muls;
+    auto readout_for_rank_output_ct = readout_poly_ct->Clone();
+    auto skip_for_rank_output_ct = skip_update_poly_ct->Clone();
+    align_levels(cc, readout_for_rank_output_ct, skip_for_rank_output_ct, unity_multiplies);
+    auto rank_output_poly_ct = cc->EvalAdd(readout_for_rank_output_ct, skip_for_rank_output_ct);
+    ++adds;
+    auto rank_output_for_gate_ct = rank_output_poly_ct->Clone();
+    auto gate_for_tail_ct = gate_poly_ct->Clone();
+    align_levels(cc, rank_output_for_gate_ct, gate_for_tail_ct, unity_multiplies);
+    auto rank_payload_poly_ct = cc->EvalMult(rank_output_for_gate_ct, gate_for_tail_ct);
+    ++ct_ct_muls;
+    const int out_baby_step = bounded_baby_step(
+        static_cast<int>(payload.config.rank_baby_step),
+        static_cast<int>(payload.config.mimo_rank));
+    auto output_delta_poly_ct = slot_bsgs_linear_block0(
+        cc,
+        rank_payload_poly_ct,
+        payload.array("w_out").values,
+        static_cast<int>(payload.config.mimo_rank),
+        static_cast<int>(payload.config.d_model),
+        out_baby_step,
+        batch_size,
+        rotations,
+        ct_pt_muls,
+        adds);
+    auto residual_ct = encrypt_values(pack_block0(payload.array("residual_input").values, payload.config));
+    align_levels(cc, output_delta_poly_ct, residual_ct, unity_multiplies);
+    auto output_model_poly_ct = cc->EvalAdd(output_delta_poly_ct, residual_ct);
+    ++adds;
+    log_phase("polynomial recurrence/readout/output tail done");
     const double eval_seconds = seconds_since(eval_start);
     log_phase(
         "projection eval done rotations=" + std::to_string(rotations) +
@@ -695,15 +988,31 @@ auto main(int argc, char* argv[]) -> int {
         keys.secretKey,
         rank_input_poly_ct,
         static_cast<size_t>(batch_size));
-    const auto gate_poly_slots = decrypt_slots(
-        cc,
-        keys.secretKey,
-        gate_poly_ct,
-        static_cast<size_t>(batch_size));
+    const auto gate_poly_slots = gate_poly_slots_for_error;
     const auto skip_update_poly_slots = decrypt_slots(
         cc,
         keys.secretKey,
         skip_update_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto dt_hidden_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        dt_hidden_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto dt_pre_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        dt_pre_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto dt_state_major_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        dt_state_major_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto decay_state_major_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        decay_state_major_poly_ct,
         static_cast<size_t>(batch_size));
     const auto b_vec_poly_slots = decrypt_slots(
         cc,
@@ -725,6 +1034,31 @@ auto main(int argc, char* argv[]) -> int {
         keys.secretKey,
         c_state_major_poly_ct,
         static_cast<size_t>(batch_size));
+    const auto state_new_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        state_new_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto readout_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        readout_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto rank_output_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        rank_output_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto rank_payload_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        rank_payload_poly_ct,
+        static_cast<size_t>(batch_size));
+    const auto output_model_poly_slots = decrypt_slots(
+        cc,
+        keys.secretKey,
+        output_model_poly_ct,
+        static_cast<size_t>(batch_size));
     log_phase("decrypt done");
 
     const auto conv_pre = unscaled_values(
@@ -738,6 +1072,18 @@ auto main(int argc, char* argv[]) -> int {
         first_values(gate_poly_slots, static_cast<size_t>(payload.config.mimo_rank));
     const auto skip_update_poly =
         first_values(skip_update_poly_slots, static_cast<size_t>(payload.config.mimo_rank));
+    const auto dt_hidden_poly =
+        unscaled_values(first_values(dt_hidden_poly_slots, static_cast<size_t>(dt_rank)),
+                        args.dt_projection_scale);
+    const auto dt_pre_poly =
+        unscaled_values(
+            first_values(dt_pre_poly_slots, static_cast<size_t>(payload.config.mimo_rank)),
+            args.dt_projection_scale);
+    const auto dt_state_major_poly = unscaled_values(
+        state_major_valid_values(dt_state_major_poly_slots, payload.config),
+        args.dt_projection_scale);
+    const auto decay_state_major_poly =
+        state_major_valid_values(decay_state_major_poly_slots, payload.config);
     const auto b_vec_poly =
         first_values(b_vec_poly_slots, static_cast<size_t>(payload.config.d_state));
     const auto c_vec_poly =
@@ -746,6 +1092,15 @@ auto main(int argc, char* argv[]) -> int {
         state_major_valid_values(b_state_major_poly_slots, payload.config);
     const auto c_state_major_poly =
         state_major_valid_values(c_state_major_poly_slots, payload.config);
+    const auto state_new_poly = state_major_valid_values(state_new_poly_slots, payload.config);
+    const auto readout_poly =
+        first_values(readout_poly_slots, static_cast<size_t>(payload.config.mimo_rank));
+    const auto rank_output_poly =
+        first_values(rank_output_poly_slots, static_cast<size_t>(payload.config.mimo_rank));
+    const auto rank_payload_poly =
+        first_values(rank_payload_poly_slots, static_cast<size_t>(payload.config.mimo_rank));
+    const auto output_model_poly =
+        first_values(output_model_poly_slots, static_cast<size_t>(payload.config.d_model));
     const auto conv_error =
         stage1::max_abs_delta(conv_pre, payload.array("reference_conv_pre").values);
     const auto gate_error =
@@ -756,6 +1111,16 @@ auto main(int argc, char* argv[]) -> int {
         stage1::max_abs_delta(gate_poly, payload.array("reference_gate_poly").values);
     const auto skip_poly_error =
         stage1::max_abs_delta(skip_update_poly, payload.array("reference_skip_update_poly").values);
+    const auto dt_hidden_poly_error =
+        stage1::max_abs_delta(dt_hidden_poly, payload.array("reference_dt_hidden_poly").values);
+    const auto dt_pre_poly_error =
+        stage1::max_abs_delta(dt_pre_poly, payload.array("reference_dt_pre_poly").values);
+    const auto dt_state_major_poly_error = stage1::max_abs_delta(
+        dt_state_major_poly,
+        payload.array("reference_dt_state_major_poly").values);
+    const auto decay_state_major_poly_error = stage1::max_abs_delta(
+        decay_state_major_poly,
+        payload.array("reference_decay_state_major_poly").values);
     const auto b_vec_poly_error =
         stage1::max_abs_delta(b_vec_poly, payload.array("reference_b_vec_poly").values);
     const auto c_vec_poly_error =
@@ -766,6 +1131,18 @@ auto main(int argc, char* argv[]) -> int {
     const auto c_state_major_poly_error = stage1::max_abs_delta(
         c_state_major_poly,
         payload.array("reference_c_state_major_poly").values);
+    const auto state_new_poly_error =
+        stage1::max_abs_delta(state_new_poly, payload.array("reference_state_new_poly").values);
+    const auto readout_poly_error =
+        stage1::max_abs_delta(readout_poly, payload.array("reference_readout_rank_poly").values);
+    const auto rank_output_poly_error =
+        stage1::max_abs_delta(rank_output_poly, payload.array("reference_rank_output_poly").values);
+    const auto rank_payload_poly_error = stage1::max_abs_delta(
+        rank_payload_poly,
+        payload.array("reference_rank_payload_poly").values);
+    const auto output_model_poly_error = stage1::max_abs_delta(
+        output_model_poly,
+        payload.array("reference_output_model_poly").values);
     const auto rank_poly_approx_error = stage1::max_abs_delta(
         payload.array("reference_rank_input_poly").values,
         payload.array("reference_rank_input").values);
@@ -775,16 +1152,32 @@ auto main(int argc, char* argv[]) -> int {
     const auto skip_poly_approx_error = stage1::max_abs_delta(
         payload.array("reference_skip_update_poly").values,
         payload.array("reference_skip_update").values);
-    const auto max_error = std::max(
+    const auto decay_poly_approx_error = stage1::max_abs_delta(
+        payload.array("reference_decay_state_major_poly").values,
+        payload.array("reference_decay_state_major_exact").values);
+    const auto output_model_poly_vs_exact_error = stage1::max_abs_delta(
+        payload.array("reference_output_model_poly").values,
+        payload.array("reference_output_model_exact").values);
+    const auto diagnostic_max_error = std::max(
         {conv_error,
          gate_error,
          rank_poly_error,
          gate_poly_error,
          skip_poly_error,
+         dt_hidden_poly_error,
+         dt_pre_poly_error,
+         dt_state_major_poly_error,
+         decay_state_major_poly_error,
          b_vec_poly_error,
          c_vec_poly_error,
          b_state_major_poly_error,
-         c_state_major_poly_error});
+         c_state_major_poly_error,
+         state_new_poly_error,
+         readout_poly_error,
+         rank_output_poly_error,
+         rank_payload_poly_error,
+         output_model_poly_error});
+    const auto max_error = output_model_poly_error;
     const bool passed = max_error <= args.atol;
     const auto& polynomial_metadata = payload.array("polynomial_metadata").values;
 
@@ -807,24 +1200,43 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"model_baby_step\":" << payload.config.model_baby_step;
     out << ",\"rank_baby_step\":" << payload.config.rank_baby_step;
     out << ",\"rank_projection_scale\":" << args.rank_projection_scale;
+    out << ",\"dt_projection_scale\":" << args.dt_projection_scale;
     out << ",\"polynomial_degree\":" << polynomial_metadata[0];
     out << ",\"gate_polynomial_degree\":" << polynomial_metadata[1];
     out << ",\"polynomial_range\":" << polynomial_metadata[2];
+    const auto& decay_metadata = payload.array("decay_metadata").values;
+    out << ",\"dt_rank\":" << decay_metadata[0];
+    out << ",\"decay_polynomial_degree\":" << decay_metadata[1];
+    out << ",\"decay_polynomial_range_lower\":" << decay_metadata[2];
+    out << ",\"decay_polynomial_range_upper\":" << decay_metadata[3];
     out << "},";
     out << "\"measurements\":{";
     out << "\"max_abs_error\":" << max_error << ",";
+    out << "\"diagnostic_max_abs_error\":" << diagnostic_max_error << ",";
     out << "\"conv_pre_max_abs_error\":" << conv_error << ",";
     out << "\"gate_pre_max_abs_error\":" << gate_error << ",";
     out << "\"rank_input_poly_max_abs_error\":" << rank_poly_error << ",";
     out << "\"gate_poly_max_abs_error\":" << gate_poly_error << ",";
     out << "\"skip_update_poly_max_abs_error\":" << skip_poly_error << ",";
+    out << "\"dt_hidden_poly_max_abs_error\":" << dt_hidden_poly_error << ",";
+    out << "\"dt_pre_poly_max_abs_error\":" << dt_pre_poly_error << ",";
+    out << "\"dt_state_major_poly_max_abs_error\":" << dt_state_major_poly_error << ",";
+    out << "\"decay_state_major_poly_max_abs_error\":" << decay_state_major_poly_error << ",";
     out << "\"b_vec_poly_max_abs_error\":" << b_vec_poly_error << ",";
     out << "\"c_vec_poly_max_abs_error\":" << c_vec_poly_error << ",";
     out << "\"b_state_major_poly_max_abs_error\":" << b_state_major_poly_error << ",";
     out << "\"c_state_major_poly_max_abs_error\":" << c_state_major_poly_error << ",";
+    out << "\"state_new_poly_max_abs_error\":" << state_new_poly_error << ",";
+    out << "\"readout_rank_poly_max_abs_error\":" << readout_poly_error << ",";
+    out << "\"rank_output_poly_max_abs_error\":" << rank_output_poly_error << ",";
+    out << "\"rank_payload_poly_max_abs_error\":" << rank_payload_poly_error << ",";
+    out << "\"output_model_poly_max_abs_error\":" << output_model_poly_error << ",";
     out << "\"rank_input_poly_vs_exact_max_abs_error\":" << rank_poly_approx_error << ",";
     out << "\"gate_poly_vs_exact_max_abs_error\":" << gate_poly_approx_error << ",";
     out << "\"skip_update_poly_vs_exact_max_abs_error\":" << skip_poly_approx_error << ",";
+    out << "\"decay_poly_vs_exact_max_abs_error\":" << decay_poly_approx_error << ",";
+    out << "\"output_model_poly_vs_exact_max_abs_error\":" << output_model_poly_vs_exact_error
+        << ",";
     out << "\"native_plaintext_reference_max_abs_error\":" << reference.max_abs_error << ",";
     out << "\"required_application_rotation_key_count\":" << required_rotations.size() << ",";
     out << "\"plaintext_coefficient_floor\":" << kPlaintextCoefficientFloor << ",";
@@ -856,8 +1268,11 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"pre_recurrence_silu_activation\":true,";
     out << "\"pre_recurrence_skip_update\":true,";
     out << "\"pre_recurrence_dynamic_bc\":true,";
+    out << "\"pre_recurrence_decay\":true,";
+    out << "\"recurrence_tail_executed\":true,";
+    out << "\"full_one_layer_polynomial_output_checked\":true,";
     out << "\"fideslib_encrypted_execution\":true,";
-    out << "\"full_layer_pre_recurrence_computed_in_kernel\":false,";
+    out << "\"full_layer_pre_recurrence_computed_in_kernel\":true,";
     out << "\"full_model_correctness_claimed\":false";
     out << "}";
     out << "}";

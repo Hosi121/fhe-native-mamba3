@@ -13,6 +13,7 @@ import torch
 from torch.nn import functional
 
 from fhe_native_mamba3.checkpoint_pre_recurrence import (
+    _decay_polynomial_coefficient_vectors,
     _silu_power_coefficients,
     _trim_power_coefficients,
 )
@@ -26,7 +27,7 @@ from fhe_native_mamba3.stage1_state_major_fullshape import (
     _validate_config,
 )
 
-RANK_GATE_PAYLOAD_FORMAT_VERSION = 3
+RANK_GATE_PAYLOAD_FORMAT_VERSION = 5
 RANK_GATE_PAYLOAD_MAGIC = b"FHM3RGAT"
 _HEADER = struct.Struct("<I9Id")
 _ARRAY_COUNT = struct.Struct("<I")
@@ -54,6 +55,26 @@ RANK_GATE_PAYLOAD_ARRAY_ORDER = (
     "reference_c_vec_poly",
     "reference_b_state_major_poly",
     "reference_c_state_major_poly",
+    "dt_in_weight",
+    "dt_proj_weight",
+    "dt_proj_bias",
+    "reference_dt_hidden_poly",
+    "reference_dt_pre_poly",
+    "reference_dt_state_major_poly",
+    "decay_coefficients",
+    "reference_decay_state_major_poly",
+    "reference_decay_state_major_exact",
+    "decay_metadata",
+    "residual_input",
+    "previous_state",
+    "w_out",
+    "reference_state_new_poly",
+    "reference_readout_rank_poly",
+    "reference_rank_output_poly",
+    "reference_rank_payload_poly",
+    "reference_output_model_poly",
+    "reference_output_model_exact",
+    "tail_metadata",
     "polynomial_metadata",
 )
 
@@ -64,9 +85,10 @@ class Stage1RankGatePayload:
 
     This payload covers the source-boundary values that feed the state-major
     recurrence tail: RMSNorm output, rank projection after the last causal-conv
-    tap, gate projection, polynomial SiLU gates, skip update, and dynamic B/C
-    projections from the polynomial rank input.  It deliberately excludes decay
-    and the recurrence tail so each native slice has one clear contract.
+    tap, gate projection, polynomial SiLU gates, skip update, dynamic B/C
+    projections from the polynomial rank input, and token-dependent state-major
+    decay. It deliberately excludes the recurrent state update/readout so each
+    native slice has one clear contract.
     """
 
     config: StateMajorFullShapeConfig
@@ -119,6 +141,11 @@ def build_stage1_rank_gate_payload(
     polynomial_degree: int = 15,
     gate_polynomial_degree: int | None = None,
     polynomial_range: float = 8.0,
+    decay_polynomial_degree: int = 5,
+    decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
+    previous_state: np.ndarray | torch.Tensor | None = None,
+    previous_state_scale: float = 0.0,
+    previous_state_seed: int = 0,
 ) -> Stage1RankGatePayload:
     """Build a deterministic rank/gate pre-recurrence payload from a checkpoint."""
 
@@ -133,6 +160,16 @@ def build_stage1_rank_gate_payload(
         raise ValueError(msg)
     if polynomial_range <= 0.0:
         msg = "polynomial_range must be positive"
+        raise ValueError(msg)
+    if decay_polynomial_degree <= 0:
+        msg = "decay_polynomial_degree must be positive"
+        raise ValueError(msg)
+    decay_range_lower, decay_range_upper = decay_polynomial_range
+    if decay_range_lower >= decay_range_upper:
+        msg = "decay_polynomial_range lower bound must be smaller than upper bound"
+        raise ValueError(msg)
+    if previous_state_scale < 0.0:
+        msg = "previous_state_scale must be non-negative"
         raise ValueError(msg)
     if layer_input is None:
         resolved_layer_input = _layer_input_from_prompt_token(
@@ -164,6 +201,9 @@ def build_stage1_rank_gate_payload(
     )
     if source.gate_weight is None:
         msg = "checkpoint layer must provide gate tensors"
+        raise ValueError(msg)
+    if source.out_rank_weight is None:
+        msg = "checkpoint layer must provide output projection weights"
         raise ValueError(msg)
     dtype = resolved_layer_input.dtype
     device = resolved_layer_input.device
@@ -205,7 +245,15 @@ def build_stage1_rank_gate_payload(
         if source.x_proj_weight is None:
             msg = "checkpoint layer must provide x_proj tensors for dynamic B/C"
             raise ValueError(msg)
-        dt_rank = 0 if source.dt_in_weight is None else int(source.dt_in_weight.shape[0])
+        if (
+            source.dt_in_weight is None
+            or source.dt_proj_weight is None
+            or source.dt_proj_bias is None
+            or stages.decay_by_token is None
+        ):
+            msg = "checkpoint layer must provide token-dependent dt/decay tensors"
+            raise ValueError(msg)
+        dt_rank = int(source.dt_in_weight.shape[0])
         x_proj_weight = source.x_proj_weight.to(device=device, dtype=dtype)
         b_weight = x_proj_weight[dt_rank : dt_rank + config.d_state]
         c_weight = x_proj_weight[dt_rank + config.d_state : dt_rank + 2 * config.d_state]
@@ -218,6 +266,59 @@ def build_stage1_rank_gate_payload(
         reference_c_state_major_poly_np = _state_major_from_state_vector(
             reference_c_vec_poly_np,
             config=config,
+        )
+        dt_in_weight = source.dt_in_weight.to(device=device, dtype=dtype)
+        dt_proj_weight = source.dt_proj_weight.to(device=device, dtype=dtype)
+        dt_proj_bias = source.dt_proj_bias.to(device=device, dtype=dtype)
+        reference_dt_hidden_poly_np = _to_numpy(dt_in_weight) @ reference_rank_input_poly_np
+        reference_dt_pre_poly_np = _to_numpy(
+            dt_proj_weight
+        ) @ reference_dt_hidden_poly_np + _to_numpy(dt_proj_bias)
+        reference_dt_state_major_poly_np = _state_major_from_rank_vector(
+            reference_dt_pre_poly_np,
+            config=config,
+        )
+        decay_coefficients_np = _decay_coefficients_state_major(
+            source.a_log,
+            config=config,
+            degree=decay_polynomial_degree,
+            approximation_range=(decay_range_lower, decay_range_upper),
+        )
+        reference_decay_state_major_poly_np = _evaluate_state_major_polynomial_numpy(
+            reference_dt_state_major_poly_np,
+            decay_coefficients_np,
+        )
+        reference_decay_state_major_exact_np = (
+            _to_numpy(stages.decay_by_token[0, 0]).reshape(config.mimo_rank, config.d_state).T
+        )
+        residual_input_np = _to_numpy(resolved_layer_input[0, 0])
+        previous_state_np = _previous_state_matrix(
+            previous_state,
+            config=config,
+            scale=previous_state_scale,
+            seed=previous_state_seed,
+        )
+        w_out_np = _to_numpy(source.out_rank_weight.to(device=device, dtype=dtype))
+        reference_state_new_poly_np = (
+            reference_decay_state_major_poly_np * previous_state_np
+            + reference_b_state_major_poly_np
+            * _state_major_from_rank_vector(reference_rank_input_poly_np, config=config)
+        )
+        reference_readout_rank_poly_np = np.sum(
+            reference_c_state_major_poly_np * reference_state_new_poly_np,
+            axis=0,
+        )
+        reference_rank_output_poly_np = (
+            reference_readout_rank_poly_np + reference_skip_update_poly_np
+        )
+        reference_rank_payload_poly_np = reference_rank_output_poly_np * reference_gate_poly_np
+        reference_output_model_poly_np = (
+            residual_input_np + w_out_np @ reference_rank_payload_poly_np
+        )
+        reference_output_model_exact_np = (
+            _to_numpy(stages.final_block_output[0, 0])
+            if stages.final_block_output is not None
+            else np.zeros_like(residual_input_np)
         )
         _assert_close_tensor(
             reference_conv_pre,
@@ -251,6 +352,37 @@ def build_stage1_rank_gate_payload(
         "reference_c_vec_poly": reference_c_vec_poly_np,
         "reference_b_state_major_poly": reference_b_state_major_poly_np,
         "reference_c_state_major_poly": reference_c_state_major_poly_np,
+        "dt_in_weight": _to_numpy(dt_in_weight),
+        "dt_proj_weight": _to_numpy(dt_proj_weight),
+        "dt_proj_bias": _to_numpy(dt_proj_bias),
+        "reference_dt_hidden_poly": reference_dt_hidden_poly_np,
+        "reference_dt_pre_poly": reference_dt_pre_poly_np,
+        "reference_dt_state_major_poly": reference_dt_state_major_poly_np,
+        "decay_coefficients": decay_coefficients_np,
+        "reference_decay_state_major_poly": reference_decay_state_major_poly_np,
+        "reference_decay_state_major_exact": reference_decay_state_major_exact_np,
+        "decay_metadata": np.asarray(
+            [
+                float(dt_rank),
+                float(decay_polynomial_degree),
+                float(decay_range_lower),
+                float(decay_range_upper),
+            ],
+            dtype=np.float64,
+        ),
+        "residual_input": residual_input_np,
+        "previous_state": previous_state_np,
+        "w_out": w_out_np,
+        "reference_state_new_poly": reference_state_new_poly_np,
+        "reference_readout_rank_poly": reference_readout_rank_poly_np,
+        "reference_rank_output_poly": reference_rank_output_poly_np,
+        "reference_rank_payload_poly": reference_rank_payload_poly_np,
+        "reference_output_model_poly": reference_output_model_poly_np,
+        "reference_output_model_exact": reference_output_model_exact_np,
+        "tail_metadata": np.asarray(
+            [float(previous_state_scale), float(previous_state_seed)],
+            dtype=np.float64,
+        ),
         "polynomial_metadata": np.asarray(
             [
                 float(polynomial_degree),
@@ -432,6 +564,54 @@ def _expected_array_shape(
         return (config.d_state,)
     if name in {"reference_b_state_major_poly", "reference_c_state_major_poly"}:
         return (config.d_state, config.mimo_rank)
+    if name == "dt_in_weight":
+        if length is None:
+            msg = f"{name} requires an encoded length"
+            raise ValueError(msg)
+        _require_divisible(length, config.mimo_rank, name)
+        return (int(length) // config.mimo_rank, config.mimo_rank)
+    if name == "dt_proj_weight":
+        if length is None:
+            msg = f"{name} requires an encoded length"
+            raise ValueError(msg)
+        _require_divisible(length, config.mimo_rank, name)
+        return (config.mimo_rank, int(length) // config.mimo_rank)
+    if name in {"dt_proj_bias", "reference_dt_pre_poly"}:
+        return rank_shape
+    if name == "reference_dt_hidden_poly":
+        if length is None:
+            msg = f"{name} requires an encoded length"
+            raise ValueError(msg)
+        return (int(length),)
+    if name in {
+        "reference_dt_state_major_poly",
+        "reference_decay_state_major_poly",
+        "reference_decay_state_major_exact",
+    }:
+        return (config.d_state, config.mimo_rank)
+    if name in {"residual_input", "reference_output_model_poly", "reference_output_model_exact"}:
+        return model_shape
+    if name == "previous_state" or name == "reference_state_new_poly":
+        return (config.d_state, config.mimo_rank)
+    if name == "w_out":
+        return (config.d_model, config.mimo_rank)
+    if name in {
+        "reference_readout_rank_poly",
+        "reference_rank_output_poly",
+        "reference_rank_payload_poly",
+    }:
+        return rank_shape
+    if name == "tail_metadata":
+        return (2,)
+    if name == "decay_coefficients":
+        if length is None:
+            msg = f"{name} requires an encoded length"
+            raise ValueError(msg)
+        denominator = config.d_state * config.mimo_rank
+        _require_divisible(length, denominator, name)
+        return (int(length) // denominator, config.d_state, config.mimo_rank)
+    if name == "decay_metadata":
+        return (4,)
     if name in {"rank_silu_coefficients", "gate_silu_coefficients"}:
         if length is None:
             msg = f"{name} requires an encoded length"
@@ -471,6 +651,75 @@ def _state_major_from_state_vector(
 ) -> np.ndarray:
     state_values = np.asarray(values, dtype=np.float64).reshape(config.d_state)
     return np.repeat(state_values[:, None], config.mimo_rank, axis=1)
+
+
+def _state_major_from_rank_vector(
+    values: np.ndarray,
+    *,
+    config: StateMajorFullShapeConfig,
+) -> np.ndarray:
+    rank_values = np.asarray(values, dtype=np.float64).reshape(config.mimo_rank)
+    return np.repeat(rank_values[None, :], config.d_state, axis=0)
+
+
+def _decay_coefficients_state_major(
+    a_log: torch.Tensor,
+    *,
+    config: StateMajorFullShapeConfig,
+    degree: int,
+    approximation_range: tuple[float, float],
+) -> np.ndarray:
+    coefficient_vectors = _decay_polynomial_coefficient_vectors(
+        a_log,
+        d_state=config.d_state,
+        mimo_rank=config.mimo_rank,
+        degree=degree,
+        approximation_range=approximation_range,
+    )
+    coefficient_arrays = [
+        np.asarray(vector, dtype=np.float64).reshape(config.mimo_rank, config.d_state).T
+        for vector in coefficient_vectors
+    ]
+    return np.stack(coefficient_arrays, axis=0)
+
+
+def _evaluate_state_major_polynomial_numpy(
+    values: np.ndarray,
+    coefficients: np.ndarray,
+) -> np.ndarray:
+    coefficient_array = np.asarray(coefficients, dtype=np.float64)
+    output = np.zeros_like(values, dtype=np.float64) + coefficient_array[-1]
+    for coefficient in reversed(coefficient_array[:-1]):
+        output = output * values + coefficient
+    return output
+
+
+def _previous_state_matrix(
+    previous_state: np.ndarray | torch.Tensor | None,
+    *,
+    config: StateMajorFullShapeConfig,
+    scale: float,
+    seed: int,
+) -> np.ndarray:
+    if previous_state is None:
+        if scale == 0.0:
+            return np.zeros((config.d_state, config.mimo_rank), dtype=np.float64)
+        rng = np.random.default_rng(int(seed))
+        return rng.standard_normal((config.d_state, config.mimo_rank)).astype(np.float64) * float(
+            scale
+        )
+    if isinstance(previous_state, torch.Tensor):
+        values = _to_numpy(previous_state)
+    else:
+        values = np.asarray(previous_state, dtype=np.float64)
+    output = np.asarray(values, dtype=np.float64).reshape(config.d_state, config.mimo_rank)
+    return np.ascontiguousarray(output)
+
+
+def _require_divisible(value: int, divisor: int, name: str) -> None:
+    if divisor <= 0 or int(value) % int(divisor) != 0:
+        msg = f"{name} length {value} is not divisible by {divisor}"
+        raise ValueError(msg)
 
 
 def _array_sha256(array: np.ndarray) -> str:
