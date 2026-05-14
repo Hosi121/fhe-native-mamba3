@@ -35,6 +35,8 @@ def test_fideslib_stage1_rotation_probe_wrapper_adds_metadata(tmp_path: Path) ->
     assert payload["version"]
     assert payload["repo_commit"]
     assert payload["native_returncode"] == 0
+    assert "--ring-dim" in payload["native_command"]
+    assert "131072" in payload["native_command"]
     assert payload["required_application_rotations"] == [-1, 2]
     assert payload["required_application_rotation_key_count"] == 2
     assert payload["measurement_scope"]["stage1_state_major_target_compatible"] is True

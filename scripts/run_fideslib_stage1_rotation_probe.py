@@ -38,6 +38,14 @@ def main() -> int:
         native_output = Path(tmpdir) / "native-fideslib-rotation.json"
         command = [
             args.binary,
+            "--ring-dim",
+            str(args.ring_dimension),
+            "--num-slots",
+            str(args.num_slots),
+            "--multiplicative-depth",
+            str(args.multiplicative_depth),
+            "--scaling-mod-size",
+            str(args.scaling_mod_size),
             *native_args,
             "--rotations-csv",
             rotations_to_csv(rotations),
@@ -182,7 +190,8 @@ def _parse_args() -> tuple[argparse.Namespace, list[str]]:
         description=(
             "Wrap native/fideslib_stage0 stage1_rotation_probe output with "
             "version/git metadata and a Stage 1 state-major rotation inventory."
-        )
+        ),
+        allow_abbrev=False,
     )
     parser.add_argument(
         "--binary",
