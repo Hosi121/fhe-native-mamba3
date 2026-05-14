@@ -81,8 +81,9 @@ Current implementation status:
 - The current Stage 1 mainline is the state-major rank-pack-first checkpoint
   bridge. Small and medium synthetic checkpoint OpenFHE one-layer bridges pass,
   Mamba-130M-shape OpenFHE setup/keygen fits under the explicit memory guard,
-  and PBI-S1-041/job `10300` is collecting the bounded Mamba-130M one-layer
-  eval/no-go artifact.
+  and PBI-S1-041/job `10300` passed the bounded Mamba-130M one-layer OpenFHE
+  eval. PBI-S1-042 records that direct multi-layer OpenFHE is runtime-bound, so
+  the next mainline is the FIDESlib/state-major scaling probe in PBI-S1-043.
 
 ## Stage 2
 
@@ -143,7 +144,7 @@ Next executable PBIs:
   under PBI-S1-007.
 - PBI-S2-015 currently gates PBI-S2-009: existing deterministic calibration and
   learned-sketch evidence pass the configured thresholds, so LoRA is deferred
-  unless PBI-S1-041 or a later multi-layer chain exposes a new failure.
+  unless a later multi-layer chain exposes a new failure.
 
 Stage 0 blocker update:
 
@@ -151,8 +152,9 @@ Stage 0 blocker update:
   `runs/stage0-s009-closeout-report-v0394.json`: blocker identification and
   handoff are complete, while full 24-layer encrypted success is explicitly not
   claimed.
-- The next executable blocker is PBI-S1-041: collect the Mamba-130M-shape
-  one-layer OpenFHE eval/no-go artifact from job `10300`.
+- The next executable blocker is PBI-S1-043: test whether FIDESlib/state-major
+  primitives can reduce the measured `8694.12s` one-layer OpenFHE runtime before
+  submitting direct multi-layer OpenFHE jobs.
 
 ## Version Boundary
 
