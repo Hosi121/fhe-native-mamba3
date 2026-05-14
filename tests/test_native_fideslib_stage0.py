@@ -11,6 +11,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     stage1_rotation_source = (
         ROOT / "native" / "fideslib_stage0" / "src" / "stage1_rotation_probe.cpp"
     )
+    stage1_rank_gate_payload_eval_source = (
+        ROOT / "native" / "fideslib_stage0" / "src" / "stage1_rank_gate_payload_eval.cpp"
+    )
     cmake = ROOT / "native" / "fideslib_stage0" / "CMakeLists.txt"
     slurm = ROOT / "slurm" / "fideslib_stage0.sbatch"
     sweep_slurm = ROOT / "slurm" / "fideslib_stage0_sweep.sbatch"
@@ -51,6 +54,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert source.exists()
     assert stage1_bootstrap_source.exists()
     assert stage1_rotation_source.exists()
+    assert stage1_rank_gate_payload_eval_source.exists()
     assert cmake.exists()
     assert slurm.exists()
     assert sweep_slurm.exists()
@@ -103,6 +107,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     cmake_text = cmake.read_text()
     assert "add_executable(stage1_bootstrap_probe" in cmake_text
     assert "add_executable(stage1_rotation_probe" in cmake_text
+    assert "add_executable(stage1_rank_gate_payload_eval" in cmake_text
 
     stage1_bootstrap_source_text = stage1_bootstrap_source.read_text()
     assert "fideslib-gpu-stage1-bootstrap-latency" in stage1_bootstrap_source_text
@@ -122,6 +127,10 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "config.multiplicative_depth >= 48" in stage1_rotation_source_text
     assert "target_ct_pt_muls" in stage1_rotation_source_text
     assert "fideslib-gpu-stage1-state-major-opmix-probe" in stage1_rotation_source_text
+
+    rank_gate_payload_eval_text = stage1_rank_gate_payload_eval_source.read_text()
+    assert "stage1-rank-gate-payload-native-eval" in rank_gate_payload_eval_text
+    assert "pre_recurrence_rank_gate_only" in rank_gate_payload_eval_text
 
     stage1_bootstrap_slurm_text = stage1_bootstrap_slurm.read_text()
     assert "stage1_bootstrap_probe" in stage1_bootstrap_slurm_text

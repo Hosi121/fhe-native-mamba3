@@ -18,6 +18,13 @@ target_include_directories(stage1_tail_payload INTERFACE include)
 add_executable(stage1_tail_payload_eval src/stage1_tail_payload_eval.cpp)
 target_link_libraries(stage1_tail_payload_eval PRIVATE stage1_tail_payload)
 
+add_library(stage1_rank_gate_payload INTERFACE)
+target_include_directories(stage1_rank_gate_payload INTERFACE include)
+
+add_executable(stage1_rank_gate_payload_eval src/stage1_rank_gate_payload_eval.cpp)
+target_link_libraries(
+  stage1_rank_gate_payload_eval PRIVATE stage1_rank_gate_payload stage1_tail_payload)
+
 if(FHE_STAGE0_BUILD_KERNEL)
   find_package(fideslib REQUIRED CONFIG)
 
@@ -56,4 +63,9 @@ if(FHE_STAGE0_BUILD_TESTS)
   add_executable(test_stage1_tail_payload tests/test_stage1_tail_payload.cpp)
   target_link_libraries(test_stage1_tail_payload PRIVATE stage1_tail_payload)
   add_test(NAME stage1_tail_payload COMMAND test_stage1_tail_payload)
+
+  add_executable(test_stage1_rank_gate_payload tests/test_stage1_rank_gate_payload.cpp)
+  target_link_libraries(
+    test_stage1_rank_gate_payload PRIVATE stage1_rank_gate_payload stage1_tail_payload)
+  add_test(NAME stage1_rank_gate_payload COMMAND test_stage1_rank_gate_payload)
 endif()

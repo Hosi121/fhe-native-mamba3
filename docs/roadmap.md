@@ -93,7 +93,9 @@ Current implementation status:
   Mamba-130M-shaped payloads establish the correctness handoff boundary before
   porting full pre-recurrence. The first gap report attributes the remaining
   work to `922` rotations, `10903` plaintext multiplications, and `30`
-  ciphertext multiplications in pre-recurrence/full-layer work.
+  ciphertext multiplications in pre-recurrence/full-layer work. Rank/gate
+  pre-recurrence payload parity is now available natively, so the next slice is
+  encrypted FIDESlib execution for the rank/gate projection boundary.
 
 ## Stage 2
 

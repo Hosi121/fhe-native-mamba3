@@ -398,6 +398,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_checkpoint_tail_payload",
         "Stage1CheckpointTailPayload",
     ),
+    "Stage1RankGatePayload": (
+        "fhe_native_mamba3.stage1_rank_gate_payload",
+        "Stage1RankGatePayload",
+    ),
     "SlotBsgsSchedule": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "SlotBsgsSchedule",
@@ -694,6 +698,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_checkpoint_tail_payload",
         "build_stage1_checkpoint_tail_payload",
     ),
+    "build_stage1_rank_gate_payload": (
+        "fhe_native_mamba3.stage1_rank_gate_payload",
+        "build_stage1_rank_gate_payload",
+    ),
     "build_stage1_composite_rotation_report": (
         "fhe_native_mamba3.stage1_composite_rotation_report",
         "build_stage1_composite_rotation_report",
@@ -808,6 +816,10 @@ _LAZY_IMPORTS = {
     "read_stage1_checkpoint_tail_payload_binary": (
         "fhe_native_mamba3.stage1_checkpoint_tail_payload",
         "read_stage1_checkpoint_tail_payload_binary",
+    ),
+    "read_stage1_rank_gate_payload_binary": (
+        "fhe_native_mamba3.stage1_rank_gate_payload",
+        "read_stage1_rank_gate_payload_binary",
     ),
     "resolve_pre_recurrence_shape": (
         "fhe_native_mamba3.checkpoint_pre_recurrence",
@@ -1089,6 +1101,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_checkpoint_tail_payload",
         "write_stage1_checkpoint_tail_payload_binary",
     ),
+    "write_stage1_rank_gate_payload_binary": (
+        "fhe_native_mamba3.stage1_rank_gate_payload",
+        "write_stage1_rank_gate_payload_binary",
+    ),
 }
 
 __all__ = [
@@ -1207,6 +1223,7 @@ __all__ = [
     "Stage1PackSweepRow",
     "Stage1Plan",
     "Stage1ProfileHints",
+    "Stage1RankGatePayload",
     "Stage1TailGapReport",
     "Stage2LearnedSketchBaselineResult",
     "Stage2LearnedSketchBaselineRow",
@@ -1268,6 +1285,7 @@ __all__ = [
     "build_stage1_composite_rotation_report",
     "build_stage1_grouped_chain_inventory",
     "build_stage1_plan",
+    "build_stage1_rank_gate_payload",
     "build_stage1_tail_gap_report",
     "build_state_major_layout_plan",
     "build_tiny_mimo_block_problem",
@@ -1335,6 +1353,7 @@ __all__ = [
     "profile_recurrence_traces",
     "range_loss",
     "read_stage1_checkpoint_tail_payload_binary",
+    "read_stage1_rank_gate_payload_binary",
     "required_backend_srht_rotations",
     "required_full_layer_visible_rotations",
     "required_grouped_full_layer_lift_rotations",
@@ -1407,6 +1426,7 @@ __all__ = [
     "validate_artifact_file",
     "validate_benchmark_artifact",
     "write_stage1_checkpoint_tail_payload_binary",
+    "write_stage1_rank_gate_payload_binary",
 ]
 
 
