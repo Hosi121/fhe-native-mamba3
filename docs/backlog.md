@@ -258,6 +258,16 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   even though the broader diagnostic max is `4.50`; this keeps the artifact
   useful for engineering regression checks while still avoiding any claim about
   language-model quality.
+- `v0.3.136`/`v0.3.137` start PBI-S2-009 with an actual LoRA range-tuning
+  smoke over rank/gate payload binaries. The first CUDA attempt exposed and
+  fixed a real adapter placement bug: newly created LoRA matrices now inherit
+  the wrapped base linear layer's device/dtype. After the fix, B200 job
+  `10569` trains a rank-8 adapter for 200 steps on the Mamba-130M-shaped
+  layer-0 payload and reduces `gate_pre_max_abs` from `7.33` to `6.51`, range
+  loss from `0.881` to `0.131`, and total loss from `0.881` to `0.146`. This is
+  still plaintext projection-boundary tuning; the next PBI-S2-009 slices are
+  a seed/step sweep and then re-exporting a LoRA-merged payload for encrypted
+  comparison.
 
 ## Near-Term Parallel Slices
 
