@@ -293,13 +293,25 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   clamps the gate preactivation to the target range while preserving the
   encrypted polynomial reference, but it does not materially change the Stage 1
   runtime bottleneck; dense projection cost remains the next target.
+- `v0.3.142`-`v0.3.146` add native FIDESlib phase telemetry and a targeted B/C
+  projection optimization. Baseline job `10587` passes the LoRA-merged
+  Mamba-130M-shaped layer-0 payload with `eval_seconds=994.84`, and the phase
+  report shows dense ct-pt projections dominate: output `182.19s`, conv
+  `158.32s`, gate `155.15s`, dt-rank `122.05s`, dynamic C `120.30s`,
+  dt-hidden `120.22s`, and dynamic B `120.09s`. Baby-rotation caching job
+  `10588` reduces rotations `1036 -> 879` but is slower (`1036.86s`), so it is
+  not the main path. Rank-reduce B/C job `10590` passes with `max_abs_error=0`,
+  reduces ct-pt multiplications `13211 -> 10173`, collapses dynamic B/C
+  projections to `1.19s` / `1.18s`, and lowers eval to `753.84s` (`1.32x`).
+  The remaining Stage 1 bottleneck is now conv/gate/output/dt dense projection,
+  not B/C, recurrence, or polynomial nonlinearities.
 
 ## Near-Term Parallel Slices
 
 - Mainline A: continue PBI-S1-045 by adding model-layout layer-to-layer handoff
-  execution on top of the new chain payload export and the FIDESlib
-  recurrent-state chain, then validate bootstrap placement at the projected
-  recurrent boundary.
+  execution on top of the B/C rank-reduce FIDESlib kernel, then reduce the
+  remaining conv/gate/output/dt dense projection cost before attempting broader
+  24-layer scheduling.
 - Stage 2 B: PBI-S2-009 now has a complete LoRA range-tuning -> payload merge
   -> encrypted replay slice for Mamba-130M layer 0. Continue only if later
   layers or real checkpoints expose range failures; otherwise prioritize Stage 1
