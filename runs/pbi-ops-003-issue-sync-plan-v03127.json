@@ -1,0 +1,406 @@
+{
+  "action_counts": {
+    "close": 1,
+    "create": 0,
+    "noop": 14,
+    "reopen": 0,
+    "update": 2
+  },
+  "backlog": "docs/backlog.md",
+  "dry_run": true,
+  "existing_issue_count": 51,
+  "include_statuses": [
+    "Open",
+    "Blocked"
+  ],
+  "measurement_scope": {
+    "claim": "deterministic GitHub Issue sync plan generated from docs/backlog.md",
+    "devex_only": true,
+    "full_model_correctness_claimed": false,
+    "github_issue_sync": false,
+    "github_project_sync": false,
+    "network_access": true
+  },
+  "passed": true,
+  "pbi_count": 75,
+  "plans": [
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S0-009`\n- Stage: `Stage 0`\n- Status: `Done`\n- Depends on: `PBI-S0-008`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nScale the measured full-layer ciphertext handoff chain to the scheduled 24-layer recurrence plan or document a smaller proxy when cost is prohibitive; include encode/encrypt/eval/bootstrap/decrypt profiler breakdown. Evidence: `src/fhe_native_mamba3/stage0_closeout.py`, `scripts/build_stage0_closeout_report.py`, tests in `tests/test_stage0_closeout.py` / `tests/test_stage0_closeout_script.py`, and artifact `runs/stage0-s009-closeout-report-v0394.json`. Result: Stage 0 is closed at the current scoped objective as a blocker-identification/handoff stage, not as full 24-layer encrypted success. The closeout report records `close_current_stage0_scope=true`, `full_24_layer_success_claimed=false`, Mamba-130M setup rotations `163`, projected one-layer OpenFHE runtime about `9054.61s` by weighted ops, and hands execution to PBI-S1-041 plus later Stage 1/2 reductions.\n\n## Dependency Notes\n\n- Depends on `PBI-S0-008`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S0-008"
+      ],
+      "issue_number": 35,
+      "labels": [
+        "PBI",
+        "stage-0",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S0-009",
+      "stage": "Stage 0",
+      "status": "Done",
+      "title": "PBI-S0-009: Scale the measured full-layer ciphertext handoff chain to the scheduled 24-layer recurrence...",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-035`\n- Stage: `Stage 1`\n- Status: `Done`\n- Depends on: `PBI-S1-032, PBI-S1-034`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nRecover higher-accuracy OpenFHE polynomial settings for the state-major checkpoint bridge. Acceptance: either make degree-13/15 decrypt successfully with a justified CKKS parameter/scheduling change, or document a lower-degree/range-calibrated path with measured error improvement over degree-11; artifacts must include failure JSON for rejected configurations and a successful OpenFHE JSON for the chosen path. Evidence: local tracking artifact `runs/stage1-s035-mixed-gate-degree-tracking-v0370.json`, high failure artifact `runs/stage1-s035-mixed-rank15-gate11-openfhe-v0371.json` from job `10286`, and high success artifact `runs/stage1-s035-mixed-rank15-gate9-openfhe-v0371.json` from job `10287`. Result: rank polynomial degree `15` with gate degree `9` passes OpenFHE at scale `40`, depth `48`, ring `131072`, `max_abs_error=6.59e-02`, `ct_ct_mul=31`, runtime rotations `55`, required application rotations `10`, SLURM elapsed `00:03:09`, MaxRSS `6724628K`. The rejected rank-15/gate-11 OpenFHE row decrypted but exceeded `atol=8e-2` with `max_abs_error=1.07e-01`, so the accepted path is the lower-depth mixed-degree gate calibration.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-032`.\n- Depends on `PBI-S1-034`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-032",
+        "PBI-S1-034"
+      ],
+      "issue_number": 36,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-035",
+      "stage": "Stage 1",
+      "status": "Done",
+      "title": "PBI-S1-035: Recover higher-accuracy OpenFHE polynomial settings for the state-major checkpoint bridge",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-036`\n- Stage: `Stage 1`\n- Status: `Done`\n- Depends on: `PBI-S1-033, PBI-S1-035`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nRun a tiny OpenFHE chain over the mixed-degree state-major checkpoint bridge. Acceptance: execute at least a 2-layer chain using rank degree `15` and gate degree `9`, keep inter-layer handoff in model layout, emit layer-wise errors and operation counts, and explicitly mark whether pre-recurrence is fully encrypted or still uses reference inputs at each boundary. Evidence: script/backend support in `v0.3.73` and high/B200 job `10288`, artifact `runs/stage1-s036-mixed-chain-openfhe-v0373.json`. Result: 2-layer tiny OpenFHE chain passes with rank degree `15`, gate degree `9`, scale `40`, depth `48`, ring `131072`, layer errors `(6.61e-02, 1.17e-01)`, `max_abs_error=1.17e-01`, `ct_ct_mul=62`, runtime rotations `110`, required application rotations `10`, SLURM elapsed `00:05:55`, MaxRSS `6724912K`. The artifact explicitly marks `pre_recurrence_plaintext_reference_input=true`; full encrypted pre-recurrence chain correctness is not claimed.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-033`.\n- Depends on `PBI-S1-035`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-033",
+        "PBI-S1-035"
+      ],
+      "issue_number": 42,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-036",
+      "stage": "Stage 1",
+      "status": "Done",
+      "title": "PBI-S1-036: Run a tiny OpenFHE chain over the mixed-degree state-major checkpoint bridge",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-037`\n- Stage: `Stage 1`\n- Status: `Done`\n- Depends on: `PBI-S1-036, PBI-S1-025`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nAdd a guarded OpenFHE scale sweep for the mixed-degree state-major checkpoint bridge. Acceptance: run or dry-run a shape ladder beyond the tiny `d_model=8/rank=6/d_state=2` case, record planned rotation keys, estimated key memory, actual peak memory for completed jobs, and stop before any configuration exceeds the memory guard. Evidence: `src/fhe_native_mamba3/stage1_openfhe_scale_sweep.py`, `scripts/build_stage1_openfhe_scale_sweep.py`, tests in `tests/test_stage1_openfhe_scale_sweep.py`, and artifact `runs/stage1-s037-openfhe-scale-sweep-v0378.json`. Result: dry-run ladder covers tiny/small/medium/mamba130m including `dt_proj` rotations; checkpoint application rotation keys are `10/42/68/163`, estimated total key memory is `13.48/19.73/24.80/43.36 GiB`, all rows pass the guard, and the tiny completed row imports job `10288` with MaxRSS `6724912K`.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-036`.\n- Depends on `PBI-S1-025`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-036",
+        "PBI-S1-025"
+      ],
+      "issue_number": 43,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-037",
+      "stage": "Stage 1",
+      "status": "Done",
+      "title": "PBI-S1-037: Add a guarded OpenFHE scale sweep for the mixed-degree state-major checkpoint bridge",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-038`\n- Stage: `Stage 1`\n- Status: `Done`\n- Depends on: `PBI-S1-037`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nExecute the first guarded small-shape OpenFHE checkpoint bridge. Acceptance: prepare or generate a checkpoint-shaped artifact for the `small` scale-sweep row (`d_model=64`, `mimo_rank=96`, `rank_pad=128`, `d_state=4`), run at least a 1-layer mixed-degree OpenFHE bridge, record error/runtime/MaxRSS, and compare observed memory against the PBI-S1-037 estimate. Evidence: synthetic checkpoint builder in `v0.3.76`, dt-rotation inventory fixes in `v0.3.78`/`v0.3.79`, high diagnostic failure `10295`, and high/B200 success job `10297`, artifact `runs/stage1-s038-small-layer-openfhe-v0379.json`. Result: small 1-layer OpenFHE bridge passes with `d_model=64`, `mimo_rank=96`, `rank_pad=128`, `d_state=4`, `dt_rank=8`, rank degree `15`, gate degree `9`, scale `40`, depth `48`, ring `131072`, `max_abs_error=5.06e-02`, required application rotations `42`, runtime rotations `222`, `ct_pt_mul=890`, `ct_ct_mul=31`, SLURM elapsed `00:13:34`, MaxRSS `19705908K`. Observed MaxRSS is about `18.8 GiB`, close to the PBI-S1-037 small estimate `19.73 GiB`.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-037`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-037"
+      ],
+      "issue_number": 44,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-038",
+      "stage": "Stage 1",
+      "status": "Done",
+      "title": "PBI-S1-038: Execute the first guarded small-shape OpenFHE checkpoint bridge",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-039`\n- Stage: `Stage 1`\n- Status: `Done`\n- Depends on: `PBI-S1-038`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nExecute the guarded medium-shape OpenFHE checkpoint bridge or produce a bounded failure artifact. Acceptance: prepare the `medium` scale-sweep checkpoint (`d_model=128`, `mimo_rank=192`, `rank_pad=256`, `d_state=8`, `dt_rank=16`), run a 1-layer mixed-degree OpenFHE bridge under the memory guard, and record pass/fail, elapsed time, MaxRSS, and whether the observed memory tracks the PBI-S1-037 estimate. Evidence: high/B200 job `10298`, artifact `runs/stage1-s039-medium-layer-openfhe-v0380.json`. Result: medium 1-layer OpenFHE bridge passes with `d_model=128`, `mimo_rank=192`, `rank_pad=256`, `d_state=8`, `dt_rank=16`, rank degree `15`, gate degree `9`, scale `40`, depth `48`, ring `131072`, `max_abs_error=5.06e-02`, required application rotations `68`, runtime rotations `397`, `ct_pt_mul=1786`, `ct_ct_mul=31`, SLURM elapsed `00:25:07`, MaxRSS `30444564K`. Observed MaxRSS is about `29.0 GiB`, moderately above the PBI-S1-037 medium estimate `24.80 GiB` but still safely under the `128G` request.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-038`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-038"
+      ],
+      "issue_number": 45,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-039",
+      "stage": "Stage 1",
+      "status": "Done",
+      "title": "PBI-S1-039: Execute the guarded medium-shape OpenFHE checkpoint bridge or produce a bounded failure art...",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-040`\n- Stage: `Stage 1`\n- Status: `Done`\n- Depends on: `PBI-S1-039`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nAttempt the guarded Mamba-130M-shape OpenFHE checkpoint bridge or produce a bounded failure artifact. Acceptance: prepare the `mamba130m` scale-sweep checkpoint (`d_model=768`, `mimo_rank=1536`, `rank_pad=2048`, `d_state=16`, `dt_rank=48`), run at least a setup/keygen or one-layer mixed-degree OpenFHE bridge under an explicit memory/time guard, and record pass/fail, elapsed time, MaxRSS, required rotations, and whether observed memory follows the PBI-S1-037 estimate. Evidence: high/B200 job `10299`, artifact `runs/stage1-s040-mamba130m-setup-openfhe-v0382.json`, plus local tracking artifact `runs/stage1-s040-mamba130m-layer-tracking-v0381.json`. Result: setup/keygen-only OpenFHE probe passes with `d_model=768`, `mimo_rank=1536`, `rank_pad=2048`, `d_state=16`, `dt_rank=48`, scale `40`, depth `48`, ring `131072`, required application rotations `163`, backend batch size `32768`, setup `242.53s`, SLURM elapsed `00:04:08`, MaxRSS `63342248K` (about `60.4 GiB`). This is above the PBI-S1-037 estimate `43.36 GiB` but under the explicit `128G` guard; no layer evaluation or full-model correctness is claimed.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-039`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-039"
+      ],
+      "issue_number": 46,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-040",
+      "stage": "Stage 1",
+      "status": "Done",
+      "title": "PBI-S1-040: Attempt the guarded Mamba-130M-shape OpenFHE checkpoint bridge or produce a bounded failure...",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-041`\n- Stage: `Stage 1`\n- Status: `Done`\n- Depends on: `PBI-S1-040`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nAttempt a bounded Mamba-130M-shape one-layer OpenFHE evaluation or record an explicit runtime/memory stop condition. Evidence: high/B200 job `10300`, artifact `runs/stage1-s041-mamba130m-layer-openfhe-v0384.json`, collection artifact `runs/stage1-s041-collection-v0396.json`, and local runtime projection `runs/stage1-s041-runtime-projection-v0385.json`. Result: the Mamba-130M-shape synthetic checkpoint one-layer OpenFHE path passes with `d_model=768`, `mimo_rank=1536`, `rank_pad=2048`, `d_state=16`, `dt_rank=48`, rank degree `15`, gate degree `9`, scale `40`, depth `48`, ring `131072`, `max_abs_error=5.06e-02`, required application rotations `163`, runtime rotations `1028`, `ct_pt_mul=13210`, `ct_ct_mul=31`, total runtime `8694.12s`, SLURM elapsed `02:25:01`, and MaxRSS `70890876K` (about `67.6 GiB`). This validates one encrypted checkpoint-shaped layer and model-layout output handoff; full 24-layer or multi-layer Mamba-130M success remains unclaimed.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-040`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-040"
+      ],
+      "issue_number": 47,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-041",
+      "stage": "Stage 1",
+      "status": "Done",
+      "title": "PBI-S1-041: Attempt a bounded Mamba-130M-shape one-layer OpenFHE evaluation or record an explicit runti...",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-043`\n- Stage: `Stage 1`\n- Status: `Done`\n- Depends on: `PBI-S1-042, PBI-S1-007`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nStart the FIDESlib/state-major scaling path before direct multi-layer OpenFHE. Acceptance: implement a bounded FIDESlib/native or FIDESlib-compatible probe for the state-major Mamba-130M one-layer schedule, starting with the 163-key rotation inventory and a representative BSGS projection/rotation group; record key memory, runtime, and whether the OpenFHE 8694s one-layer bottleneck is plausibly reducible. Evidence: `native/fideslib_stage0/src/stage1_rotation_probe.cpp`, `scripts/run_fideslib_stage1_rotation_probe.py`, `slurm/fideslib_stage1_rotation_probe.sbatch`, helper module `src/fhe_native_mamba3/stage1_fideslib_rotation_probe.py`, tests in `tests/test_stage1_fideslib_rotation_probe.py` / `tests/test_fideslib_stage1_rotation_probe_script.py`, high/B200 target job `10331`, artifact `runs/stage1-s043-fideslib-rotation-target-v03101.json`, and collection `runs/stage1-s043-target-collection-v03101.json`. Result: the target `ring=131072`, `slots=32768`, depth `48`, scale `40`, 163-key FIDESlib rotation/key-memory probe passed with `stage1_state_major_target_compatible=true`, rotate-keygen `58.28s`, context load `84.65s`, representative 163-rotation plus plaintext-multiply group `0.069s`, peak RSS `68.35 GiB`, and SLURM MaxRSS `71674360K`. Diagnostics also passed for 1-key ring65536/depth28 (`10328`, peak `1.99 GiB`) and 163-key ring65536/depth28 (`10330`, peak `20.06 GiB`). This proves the FIDESlib primitive path is viable; full one-layer Mamba checkpoint execution is not yet claimed.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-042`.\n- Depends on `PBI-S1-007`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-042",
+        "PBI-S1-007"
+      ],
+      "issue_number": 49,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-043",
+      "stage": "Stage 1",
+      "status": "Done",
+      "title": "PBI-S1-043: Start the FIDESlib/state-major scaling path before direct multi-layer OpenFHE",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-044`\n- Stage: `Stage 1`\n- Status: `Done`\n- Depends on: `PBI-S1-043, PBI-S1-041`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nMeasure the FIDESlib native projection/eval op mix for the Mamba-130M one-layer state-major bridge before porting full correctness. Acceptance: implement a bounded native/FIDESlib projection-cost probe that exercises the same class and approximate count of operations as PBI-S1-041 (`rotations ~= 1028`, `ct_pt_mul ~= 13210`, `ct_ct_mul=31`, no bootstrap) using synthetic plaintext diagonals and state-major layouts; emit runtime/memory/error-scope JSON and compare the observed cost to the OpenFHE `8694.12s` one-layer artifact. Evidence: op-mix mode in `native/fideslib_stage0/src/stage1_rotation_probe.cpp`, SLURM job `10334`, artifact `runs/stage1-s044-fideslib-opmix-v03103.json`, and collection `runs/stage1-s044-opmix-collection-v03103.json`. Result: target-compatible FIDESlib op-mix proxy passed with `rotations=1028`, `ct_pt_mul=13210`, `ct_ct_mul=31`, no bootstrap, eval time `3.61s`, rotate keygen `62.70s`, context load `87.23s`, peak RSS `68.35 GiB`, SLURM MaxRSS `71674376K`, and elapsed `00:02:49`. Compared with OpenFHE PBI-S1-041 one-layer runtime `8694.12s`, this strongly supports continuing to a FIDESlib correctness port rather than routing immediately to Stage 2 sketch reduction.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-043`.\n- Depends on `PBI-S1-041`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-043",
+        "PBI-S1-041"
+      ],
+      "issue_number": 50,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-044",
+      "stage": "Stage 1",
+      "status": "Done",
+      "title": "PBI-S1-044: Measure the FIDESlib native projection/eval op mix for the Mamba-130M one-layer state-major...",
+      "title_changed": false
+    },
+    {
+      "action": "close",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S1-045`\n- Stage: `Stage 1`\n- Status: `In Progress`\n- Depends on: `PBI-S1-044, PBI-S1-041`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nPort the Mamba-130M-shape state-major one-layer checkpoint bridge to a correctness-carrying FIDESlib/native path. Acceptance: consume the same synthetic checkpoint-shaped tensors and 163-key state-major inventory as PBI-S1-041, execute the one-layer recurrence/readout/gate/out-projection path natively or through a thin FIDESlib wrapper, and emit JSON with final or boundary decrypt comparison against the existing tracking/OpenFHE reference. The artifact must explicitly separate full one-layer correctness from full 24-layer or full-model claims. Current slice: Python exports deterministic checkpoint tail payloads (`scripts/export_stage1_checkpoint_tail_payload.py`), native C++ parses/evaluates the tail, tiny FIDESlib encrypted tail job `10340` passed, and Mamba-130M-shaped encrypted tail job `10341` passed with `max_abs_error=0`, `eval_seconds=242.85`, `ct_pt_mul=2307`, `ct_ct_mul=1`, and MaxRSS about `48.0 GiB`; the gap report leaves `922` rotations, `10903` plaintext multiplications, and `30` ciphertext multiplications in pre-recurrence/full-layer work. Version `0.3.109` adds a rank/gate pre-recurrence payload/native eval slice (`scripts/export_stage1_rank_gate_payload.py`) with Mamba-130M-shaped native parity `max_abs_error=5.46e-07`. Version `0.3.110` adds encrypted FIDESlib rank/gate projection: small shape job `10360` passes in `4.34s` eval, and Mamba-130M-shaped job `10358` passes with `102` keys, `ct_pt_mul=4606`, eval `326.20s`, peak `46.56 GiB`, and `max_abs_error=2.44e-07`; the Mamba row uses a documented rank-projection scale for tiny synthetic coefficients. Version `0.3.111` adds encrypted polynomial SiLU and skip update to the rank/gate FIDESlib slice; small shape job `10364` passes with `ct_ct_mul=22`, eval `26.46s`, peak `18.65 GiB`, and encrypted-vs-polynomial-reference `max_abs_error=6.55e-08`; Mamba-130M-shaped job `10365` passes with `102` keys, `ct_pt_mul=4608`, `ct_ct_mul=22`, eval `327.17s`, peak `46.55 GiB`, and `max_abs_error=1.19e-06` against the polynomial reference. Version `0.3.113` extends the payload/native kernel to dynamic `B/C` from polynomial rank input and state-major B/C broadcast; tiny job `10376` passes with `9` keys, `ct_pt_mul=45`, `ct_ct_mul=22`, eval `13.72s`, peak `13.29 GiB`, and `max_abs_error=0`; small96 job `10380` passes with `47` keys, `ct_pt_mul=525`, eval `42.19s`, peak `26.87 GiB`, and `max_abs_error=1.41e-07`; Mamba-130M-shaped job `10378` passes with `165` keys, `ct_pt_mul=7742`, `ct_ct_mul=22`, eval `536.61s`, peak `69.08 GiB`, and `max_abs_error=3.59e-06`. Version `0.3.114` adds encrypted `dt` projection and state-major decay polynomial to the same slice, with `dt_projection_scale=100` and tiny-coefficient floor handling; tiny job `10402` passes with `9` keys, `ct_pt_mul=61`, `ct_ct_mul=27`, eval `18.94s`, peak `13.29 GiB`, `max_abs_error=0`, and `decay_poly_vs_exact_max_abs_error=4.04e-05`; small96 job `10404` passes with `54` keys, `ct_pt_mul=731`, `ct_ct_mul=27`, eval `59.48s`, peak `29.38 GiB`, and `max_abs_error=1.27e-07`. Mamba-130M decay job `10405` passes with `185` keys, `ct_pt_mul=10908`, `ct_ct_mul=27`, setup `165.28s`, eval `776.73s`, peak `76.23 GiB`, `max_abs_error=1.66e-06`, and `decay_poly_vs_exact_max_abs_error=3.74e-05`. Version `0.3.115` starts recurrence/readout/out-projection tail integration inside the same FIDESlib kernel; zero-state tiny job `10419` passes final polynomial output with `max_abs_error=0`, `ct_ct_mul=30`, `rotations=55`, eval `21.10s`, and peak `13.64 GiB`; small96 job `10421` passes with `max_abs_error=0`, `ct_ct_mul=30`, `rotations=222`, eval `70.04s`, and peak `25.09 GiB`. Nonzero-state tiny job `10416` reaches the recurrence/readout/output tail but fails CKKS decrypt with approximation error too high after `ct_ct_mul=31`; low-depth nonzero retry `10424` passes with rank/gate/decay degrees `13/7/3`, `ct_ct_mul=25`, eval `19.45s`, and `max_abs_error=0`; small96 low-depth nonzero job `10425` also passes with `ct_ct_mul=25`, eval `70.37s`, peak `25.13 GiB`, and `max_abs_error=0`, so encrypted previous-state handoff is formula-correct but needs depth/bootstrap scheduling at the higher-accuracy polynomial setting. Mamba-130M zero-state full-tail job `10423` passes with `189` keys, `rotations=1036`, `ct_pt_mul=13212`, `ct_ct_mul=30`, setup `170.64s`, eval `1033.71s`, peak `77.67 GiB`, and final `max_abs_error=0`; remaining Stage 1 blockers are high-degree nonzero-state handoff, bootstrap/level scheduling, and multi-layer chaining.\n\n## Dependency Notes\n\n- Depends on `PBI-S1-044`.\n- Depends on `PBI-S1-041`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S1-044",
+        "PBI-S1-041"
+      ],
+      "issue_number": 51,
+      "labels": [
+        "PBI",
+        "stage-1",
+        "status-in-progress",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S1-045",
+      "stage": "Stage 1",
+      "status": "In Progress",
+      "title": "PBI-S1-045: Port the Mamba-130M-shape state-major one-layer checkpoint bridge to a correctness-carrying...",
+      "title_changed": false
+    },
+    {
+      "action": "update",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S2-002`\n- Stage: `Stage 2`\n- Status: `Open`\n- Depends on: `PBI-S0-010, PBI-S1-005`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nPrototype lazy bootstrap/range-aware training policy with measured range contraction and bootstrap schedule impact. This is an umbrella PBI; the executable slices are PBI-S2-008 and PBI-S2-009.\n\n## Dependency Notes\n\n- Depends on `PBI-S0-010`.\n- Depends on `PBI-S1-005`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": true,
+      "depends_on": [
+        "PBI-S0-010",
+        "PBI-S1-005"
+      ],
+      "issue_number": 37,
+      "labels": [
+        "PBI",
+        "stage-2",
+        "status-open",
+        "P2",
+        "dependency"
+      ],
+      "missing_labels": [
+        "status-open"
+      ],
+      "pbi_id": "PBI-S2-002",
+      "stage": "Stage 2",
+      "status": "Open",
+      "title": "PBI-S2-002: Prototype lazy bootstrap/range-aware training policy with measured range contraction and bo...",
+      "title_changed": true
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S2-005`\n- Stage: `Stage 2`\n- Status: `Done`\n- Depends on: `PBI-S2-001`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nImplement learned or data-dependent sketch baselines (PCA/SVD or trainable projection) against the same checkpoint trace format. Acceptance requires before/after comparison versus SRHT on the same trace artifacts and explicit metadata marking plaintext/offline training only. Evidence: `src/fhe_native_mamba3/stage2_learned_sketch_baseline.py`, `scripts/run_stage2_learned_sketch_baseline.py`, tests in `tests/test_stage2_learned_sketch_baseline.py`, and artifact `runs/stage2-s005a-learned-sketch-baseline-v0386.json`. Result: offline PCA/SVD baseline on checkpoint trace `runs/checkpoint-source-sketch-trace-mamba130m-l0-20260512-081037.json` passes at sketch sizes `4/8/16`; size `4` has pairnorm L2 error `2.11e-02`, size `8` has `4.98e-03`, while matched SRHT needs size `16` to pass all seeds. Payload explicitly marks plaintext/offline training, data-dependent projection, no encrypted execution, and no full-model correctness claim.\n\n## Dependency Notes\n\n- Depends on `PBI-S2-001`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S2-001"
+      ],
+      "issue_number": 38,
+      "labels": [
+        "PBI",
+        "stage-2",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S2-005",
+      "stage": "Stage 2",
+      "status": "Done",
+      "title": "PBI-S2-005: Implement learned or data-dependent sketch baselines (PCA/SVD or trainable projection) agai...",
+      "title_changed": false
+    },
+    {
+      "action": "update",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S2-009`\n- Stage: `Stage 2`\n- Status: `Open`\n- Depends on: `PBI-S0-010, PBI-S2-004`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nRun range-aware calibration or LoRA only where profile/trace artifacts show sketch or polynomial-range failure. Acceptance requires before/after profile JSON, seed-sweep JSON, and unchanged correctness smoke results.\n\n## Dependency Notes\n\n- Depends on `PBI-S0-010`.\n- Depends on `PBI-S2-004`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": true,
+      "depends_on": [
+        "PBI-S0-010",
+        "PBI-S2-004"
+      ],
+      "issue_number": 39,
+      "labels": [
+        "PBI",
+        "stage-2",
+        "status-open",
+        "P1",
+        "parallelizable",
+        "dependency"
+      ],
+      "missing_labels": [
+        "status-open"
+      ],
+      "pbi_id": "PBI-S2-009",
+      "stage": "Stage 2",
+      "status": "Open",
+      "title": "PBI-S2-009: Run range-aware calibration or LoRA only where profile/trace artifacts show sketch or polyn...",
+      "title_changed": true
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-S2-014`\n- Stage: `Stage 2`\n- Status: `Done`\n- Depends on: `PBI-S2-005, PBI-S2-013`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nExpand learned sketch baselines from a single trace to the checkpoint sketch matrix. Acceptance: run PCA/SVD learned rows over the same layer/prompt/rank-strategy grid used by PBI-S2-013, emit a compact learned-vs-SRHT report, and keep metadata explicit that projection training is plaintext/offline and data-dependent. Evidence: `src/fhe_native_mamba3/checkpoint_learned_sketch_matrix.py`, `src/fhe_native_mamba3/learned_sketch_report.py`, scripts `run_checkpoint_learned_sketch_matrix.py` and `build_stage2_learned_sketch_report.py`, tests in `tests/test_checkpoint_learned_sketch_matrix.py` / `tests/test_learned_sketch_report.py`, matrix artifact `runs/stage2-s014-learned-sketch-matrix-v0387.json`, and report artifact `runs/stage2-s014-learned-sketch-report-v0388.json`. Result: over the PBI-S2-013 grid (layers `0/12/23`, prompts `short/repeat`, rank strategies `first:8` and `stride:8:64`), learned PCA/SVD recommends sketch size `4` for `12/12` rows with worst pairnorm L2 error `3.06e-02`; matched SRHT recommends size `16` for `11/12` rows and size `8` for `1/12`. Scope remains plaintext/offline and data-dependent; no encrypted execution or perplexity claim.\n\n## Dependency Notes\n\n- Depends on `PBI-S2-005`.\n- Depends on `PBI-S2-013`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-S2-005",
+        "PBI-S2-013"
+      ],
+      "issue_number": 48,
+      "labels": [
+        "PBI",
+        "stage-2",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-S2-014",
+      "stage": "Stage 2",
+      "status": "Done",
+      "title": "PBI-S2-014: Expand learned sketch baselines from a single trace to the checkpoint sketch matrix",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-OPS-003`\n- Stage: `DevEx`\n- Status: `Done`\n- Depends on: `PBI-OPS-002`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nExport backlog PBIs to GitHub issues when repository permissions are available; Project board item movement is out of scope for this slice. Acceptance requires issue titles, dependencies, and status labels generated from `docs/backlog.md` without hand-copying. Evidence: `src/fhe_native_mamba3/backlog_issues.py`, `scripts/sync_backlog_issues.py`, tests in `tests/test_backlog_issues.py` / `tests/test_backlog_issue_sync_script.py`, dry-run artifact `runs/pbi-ops-003-issue-sync-plan-v0390.json`, and refreshed dry-run artifact `runs/pbi-ops-003-issue-sync-plan-v03127.json`. Result: the latest dry run parses `75` backlog PBIs, tracks `17` existing GitHub issues by PBI ID, and emits deterministic action counts `close=1`, `update=2`, `noop=14`, `create=0`, `reopen=0`; it does not apply changes to GitHub.\n\n## Dependency Notes\n\n- Depends on `PBI-OPS-002`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-OPS-002"
+      ],
+      "issue_number": 40,
+      "labels": [
+        "PBI",
+        "devex",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-OPS-003",
+      "stage": "DevEx",
+      "status": "Done",
+      "title": "PBI-OPS-003: Export backlog PBIs to GitHub issues when repository permissions are available; Project boa...",
+      "title_changed": false
+    },
+    {
+      "action": "noop",
+      "body": "<!-- generated-from: docs/backlog.md; do not hand-edit canonical PBI data -->\n\n## PBI\n\n- ID: `PBI-OPS-004`\n- Stage: `DevEx`\n- Status: `Done`\n- Depends on: `PBI-OPS-002`\n- Source: `docs/backlog.md`\n\n## Acceptance Criteria\n\nAdd a safe parallel SLURM campaign runner for low/medium-risk evidence collection. Evidence: `scripts/submit_safe_slurm_campaign.py` submits/dry-runs only whitelisted small jobs, assigns unique `RUN_NAME`s, records job IDs, and emits manifest/ledger-row templates; `scripts/collect_safe_slurm_campaign.py` validates completed artifacts, emits ledger-row candidates, and now supports `--pull-missing --remote high --remote-dir ~/cipher/fhe-native-mamba3` with `--pull-dry-run` for safe validation. Covered by `tests/test_safe_slurm_campaign_script.py` and `tests/test_safe_slurm_campaign_collect_script.py`, exercised by high jobs `10157`-`10163`. High-memory OpenFHE full-chain jobs remain explicitly excluded from the safe campaign manifest.\n\n## Dependency Notes\n\n- Depends on `PBI-OPS-002`.\n\n## Sync Notes\n\n- This body is generated from the canonical backlog table.\n- Update `docs/backlog.md` first, then regenerate the issue plan.\n",
+      "body_changed": false,
+      "depends_on": [
+        "PBI-OPS-002"
+      ],
+      "issue_number": 41,
+      "labels": [
+        "PBI",
+        "devex",
+        "status-done",
+        "dependency"
+      ],
+      "missing_labels": [],
+      "pbi_id": "PBI-OPS-004",
+      "stage": "DevEx",
+      "status": "Done",
+      "title": "PBI-OPS-004: Add a safe parallel SLURM campaign runner for low/medium-risk evidence collection",
+      "title_changed": false
+    }
+  ],
+  "repo": "Hosi121/fhe-native-mamba3",
+  "repo_commit": "ce9344aa32aab06586f72e04206198d417d07c71",
+  "stage": "backlog-issue-sync-plan",
+  "tracked_pbi_count": 17,
+  "version": "0.3.127"
+}

@@ -59,6 +59,7 @@ def main() -> int:
             "devex_only": True,
             "github_issue_sync": bool(args.apply),
             "github_project_sync": False,
+            "full_model_correctness_claimed": False,
             "network_access": bool(args.repo or args.apply),
         },
         "plans": [plan.to_json_dict(source_path=str(backlog_path)) for plan in plans],

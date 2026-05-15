@@ -341,6 +341,7 @@ def _is_report_or_collection_payload(
         for key in (
             "artifact_level_report",
             "collection_only",
+            "devex_only",
             "stage1_ckks_level_report",
             "stage1_recurrent_chain_scaling_report",
             "stage1_recurrent_bootstrap_report",
