@@ -21,23 +21,8 @@ def main() -> int:
 
     args = _parse_args()
     artifact_path = Path(args.expected_artifact)
-    pull_result = None
-    if args.pull and not artifact_path.exists():
-        pull_result = _pull_remote_artifact(
-            str(args.expected_artifact),
-            destination=artifact_path,
-            remote=args.remote,
-            remote_dir=args.remote_dir,
-            dry_run=args.pull_dry_run,
-        )
     sacct_text = _sacct_text(args)
     sacct_rows = parse_sacct_pipe(sacct_text)
-    artifact_exists = artifact_path.exists()
-    validation = None
-    artifact_payload = None
-    if artifact_exists:
-        validation = validate_artifact_file(artifact_path).to_json_dict()
-        artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     root_state = _root_job_state(sacct_rows, args.job_id)
     collection_complete = root_state in {
         "COMPLETED",
@@ -46,6 +31,21 @@ def main() -> int:
         "TIMEOUT",
         "OUT_OF_MEMORY",
     }
+    pull_result = None
+    if args.pull and not artifact_path.exists() and (collection_complete or args.pull_incomplete):
+        pull_result = _pull_remote_artifact(
+            str(args.expected_artifact),
+            destination=artifact_path,
+            remote=args.remote,
+            remote_dir=args.remote_dir,
+            dry_run=args.pull_dry_run,
+        )
+    artifact_exists = artifact_path.exists()
+    validation = None
+    artifact_payload = None
+    if artifact_exists:
+        validation = validate_artifact_file(artifact_path).to_json_dict()
+        artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     valid = bool(validation and validation["valid"])
     payload = {
         "version": __version__,
@@ -219,6 +219,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--remote-dir", default="~/cipher/fhe-native-mamba3")
     parser.add_argument("--pull", action="store_true")
     parser.add_argument("--pull-dry-run", action="store_true")
+    parser.add_argument("--pull-incomplete", action="store_true")
     parser.add_argument("--sacct-file", default="")
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--require-valid", action="store_true")

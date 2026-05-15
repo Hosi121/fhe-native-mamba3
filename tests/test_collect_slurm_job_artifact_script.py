@@ -128,6 +128,40 @@ def test_collect_slurm_job_artifact_script_allows_running_job_without_require_co
     assert "`<unknow`" not in payload["ledger_row"]
 
 
+def test_collect_slurm_job_artifact_defers_pull_for_running_job(tmp_path) -> None:
+    sacct = tmp_path / "sacct.txt"
+    output = tmp_path / "collection.json"
+    sacct.write_text(
+        "JobID|State|Elapsed|MaxRSS|ExitCode\n10300|RUNNING|00:01:00||0:0\n",
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/collect_slurm_job_artifact.py",
+            "--job-id",
+            "10300",
+            "--expected-artifact",
+            str(tmp_path / "missing.json"),
+            "--sacct-file",
+            str(sacct),
+            "--pull",
+            "--pull-dry-run",
+            "--output-json",
+            str(output),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(output.read_text(encoding="utf-8"))
+
+    assert payload["collection_complete"] is False
+    assert payload["remote_pull"] is None
+
+
 def test_collect_slurm_job_artifact_marks_failed_artifact_in_ledger(tmp_path) -> None:
     artifact = tmp_path / "artifact.json"
     sacct = tmp_path / "sacct.txt"
