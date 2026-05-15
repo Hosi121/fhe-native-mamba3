@@ -184,6 +184,8 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "conv_projection" in rank_gate_fideslib_text
     assert "output_projection" in rank_gate_fideslib_text
     assert "slot_bsgs_precompute_baby_rotations" in rank_gate_fideslib_text
+    assert "rank_to_vector_reduce_rotations" in rank_gate_fideslib_text
+    assert "rank_to_vector_linear_reduce" in rank_gate_fideslib_text
     assert "rank_to_state_vector_linear_reduce" in rank_gate_fideslib_text
 
     stage1_bootstrap_slurm_text = stage1_bootstrap_slurm.read_text()

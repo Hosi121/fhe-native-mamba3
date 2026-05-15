@@ -313,16 +313,22 @@ auto slot_bsgs_rotations(int input_dim, int output_dim, int baby_step) -> std::v
   return {rotations.begin(), rotations.end()};
 }
 
-auto rank_to_state_vector_reduce_rotations(const stage1::RankGatePayloadConfig& config)
-    -> std::vector<int32_t> {
+auto rank_to_vector_reduce_rotations(
+    const stage1::RankGatePayloadConfig& config,
+    std::uint32_t output_dim) -> std::vector<int32_t> {
   std::set<int32_t> rotations;
   for (std::uint32_t step = 1; step < config.rank_pad; step *= 2) {
     rotations.insert(static_cast<int32_t>(step));
   }
-  for (std::uint32_t state_index = 1; state_index < config.d_state; ++state_index) {
-    rotations.insert(-static_cast<int32_t>(state_index));
+  for (std::uint32_t output_index = 1; output_index < output_dim; ++output_index) {
+    rotations.insert(-static_cast<int32_t>(output_index));
   }
   return {rotations.begin(), rotations.end()};
+}
+
+auto rank_to_state_vector_reduce_rotations(const stage1::RankGatePayloadConfig& config)
+    -> std::vector<int32_t> {
+  return rank_to_vector_reduce_rotations(config, config.d_state);
 }
 
 auto bounded_baby_step(int requested, int input_dim) -> int {
@@ -373,12 +379,8 @@ auto required_rank_gate_rotations(const stage1::RankGatePayload& payload)
   const auto bc_rotations = rank_to_state_vector_reduce_rotations(config);
   rotations.insert(bc_rotations.begin(), bc_rotations.end());
   const int dt_rank = static_cast<int>(payload.array("dt_in_weight").shape.at(0));
-  const auto dt_hidden_rotations = slot_bsgs_rotations(
-      config.mimo_rank,
-      dt_rank,
-      bounded_baby_step(
-          static_cast<int>(config.rank_baby_step),
-          static_cast<int>(config.mimo_rank)));
+  const auto dt_hidden_rotations =
+      rank_to_vector_reduce_rotations(config, static_cast<std::uint32_t>(dt_rank));
   rotations.insert(dt_hidden_rotations.begin(), dt_hidden_rotations.end());
   const auto dt_project_rotations = slot_bsgs_rotations(
       dt_rank,
@@ -651,17 +653,21 @@ auto slot_bsgs_linear_block0(
       adds);
 }
 
-auto rank_to_state_vector_linear_reduce(
+auto rank_to_vector_linear_reduce(
     const CryptoContext<DCRTPoly>& cc,
     const Ciphertext<DCRTPoly>& rank_ct,
     const std::vector<double>& weights,
     const stage1::RankGatePayloadConfig& config,
+    std::uint32_t output_dim,
     int batch_size,
     int& rotations,
     int& ct_pt_muls,
     int& adds) -> Ciphertext<DCRTPoly> {
-  if (weights.size() != static_cast<std::size_t>(config.d_state) * config.mimo_rank) {
-    throw std::runtime_error("rank-to-state reduction weights have invalid size");
+  if (weights.size() != static_cast<std::size_t>(output_dim) * config.mimo_rank) {
+    throw std::runtime_error("rank-to-vector reduction weights have invalid size");
+  }
+  if (output_dim == 0 || output_dim > static_cast<std::uint32_t>(batch_size)) {
+    throw std::runtime_error("rank-to-vector reduction output_dim exceeds batch size");
   }
   std::vector<double> slot0_mask(static_cast<std::size_t>(batch_size), 0.0);
   slot0_mask[0] = 1.0;
@@ -670,9 +676,9 @@ auto rank_to_state_vector_linear_reduce(
 
   Ciphertext<DCRTPoly> accumulator;
   bool has_accumulator = false;
-  for (std::uint32_t state_index = 0; state_index < config.d_state; ++state_index) {
+  for (std::uint32_t output_index = 0; output_index < output_dim; ++output_index) {
     std::vector<double> mask(static_cast<std::size_t>(batch_size), 0.0);
-    const auto weight_base = static_cast<std::size_t>(state_index) * config.mimo_rank;
+    const auto weight_base = static_cast<std::size_t>(output_index) * config.mimo_rank;
     for (std::uint32_t rank_index = 0; rank_index < config.mimo_rank; ++rank_index) {
       const double value = weights[weight_base + rank_index];
       mask[rank_index] = std::abs(value) < kPlaintextCoefficientFloor ? 0.0 : value;
@@ -690,8 +696,8 @@ auto rank_to_state_vector_linear_reduce(
     }
     state_sum_ct = cc->EvalMult(state_sum_ct, slot0_plain);
     ++ct_pt_muls;
-    if (state_index != 0) {
-      state_sum_ct = cc->EvalRotate(state_sum_ct, -static_cast<int32_t>(state_index));
+    if (output_index != 0) {
+      state_sum_ct = cc->EvalRotate(state_sum_ct, -static_cast<int32_t>(output_index));
       ++rotations;
     }
     if (!has_accumulator) {
@@ -703,9 +709,30 @@ auto rank_to_state_vector_linear_reduce(
     }
   }
   if (!has_accumulator) {
-    throw std::runtime_error("rank-to-state reduction produced no terms");
+    throw std::runtime_error("rank-to-vector reduction produced no terms");
   }
   return accumulator;
+}
+
+auto rank_to_state_vector_linear_reduce(
+    const CryptoContext<DCRTPoly>& cc,
+    const Ciphertext<DCRTPoly>& rank_ct,
+    const std::vector<double>& weights,
+    const stage1::RankGatePayloadConfig& config,
+    int batch_size,
+    int& rotations,
+    int& ct_pt_muls,
+    int& adds) -> Ciphertext<DCRTPoly> {
+  return rank_to_vector_linear_reduce(
+      cc,
+      rank_ct,
+      weights,
+      config,
+      config.d_state,
+      batch_size,
+      rotations,
+      ct_pt_muls,
+      adds);
 }
 
 void align_levels(
@@ -1418,25 +1445,14 @@ auto main(int argc, char* argv[]) -> int {
         ++ct_pt_muls;
       });
       log_phase("payload layer " + std::to_string(payload_index) + " skip update done");
-      const int rank_baby_step = bounded_baby_step(
-          static_cast<int>(layer_payload.config.rank_baby_step),
-          static_cast<int>(layer_payload.config.mimo_rank));
-      auto rank_input_babies = time_phase(phase_prefix + "rank_input_baby_rotations", [&]() {
-        return slot_bsgs_precompute_baby_rotations(
-            cc,
-            result.rank_input_poly,
-            rank_baby_step,
-            rotations);
-      });
       result.dt_rank = static_cast<int>(layer_payload.array("dt_in_weight").shape.at(0));
       result.dt_hidden_poly = time_phase(phase_prefix + "dt_hidden_projection", [&]() {
-        return slot_bsgs_linear_block0_from_babies(
+        return rank_to_vector_linear_reduce(
             cc,
-            rank_input_babies,
+            result.rank_input_poly,
             scaled_values(layer_payload.array("dt_in_weight").values, args.dt_projection_scale),
-            static_cast<int>(layer_payload.config.mimo_rank),
-            result.dt_rank,
-            rank_baby_step,
+            layer_payload.config,
+            static_cast<std::uint32_t>(result.dt_rank),
             batch_size,
             rotations,
             ct_pt_muls,
