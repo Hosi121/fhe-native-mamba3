@@ -66,6 +66,14 @@ SECRET_KEY_DIST="${SECRET_KEY_DIST:-uniform-ternary}"
 
 export OUTPUT_JSON
 export LD_LIBRARY_PATH="${FIDESLIB_PREFIX}/lib:${OPENFHE_PREFIX}/lib:${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
+ARTIFACT_VERSION="$("${PYTHON}" - <<'PY'
+from fhe_native_mamba3 import __version__
+
+print(__version__)
+PY
+)"
+REPO_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+REPO_COMMIT="${REPO_COMMIT:-unknown}"
 
 section() {
   printf '\n==== %s ====\n' "$1"
@@ -125,6 +133,8 @@ fi
 section "Run FIDESlib rank/gate projection"
 "${BUILD_DIR}/stage1_rank_gate_fideslib" \
   --input "${RANK_GATE_BINARY}" \
+  --artifact-version "${ARTIFACT_VERSION}" \
+  --repo-commit "${REPO_COMMIT}" \
   --ring-dim "${RING_DIM}" \
   --multiplicative-depth "${MULTIPLICATIVE_DEPTH}" \
   --scaling-mod-size "${SCALING_MOD_SIZE}" \

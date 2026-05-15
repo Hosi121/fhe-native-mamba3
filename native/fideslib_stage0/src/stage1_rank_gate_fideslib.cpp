@@ -25,6 +25,8 @@ constexpr double kPlaintextCoefficientFloor = 1e-8;
 struct Config {
   std::string input;
   std::string output_json;
+  std::string artifact_version = "0.0.0+unknown";
+  std::string repo_commit = "unknown";
   int ring_dim = 131072;
   int multiplicative_depth = 48;
   int scaling_mod_size = 40;
@@ -108,6 +110,10 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.input = value;
     } else if (arg == "--output-json") {
       config.output_json = value;
+    } else if (arg == "--artifact-version") {
+      config.artifact_version = value;
+    } else if (arg == "--repo-commit") {
+      config.repo_commit = value;
     } else if (arg == "--ring-dim") {
       config.ring_dim = parse_int(arg, value);
     } else if (arg == "--multiplicative-depth") {
@@ -760,6 +766,15 @@ auto json_escape(std::string_view value) -> std::string {
   return output;
 }
 
+void write_artifact_prefix(std::ostringstream& out, const Config& args) {
+  out << "\"version\":\"" << json_escape(args.artifact_version) << "\",";
+  out << "\"repo_commit\":\"" << json_escape(args.repo_commit) << "\",";
+  out << "\"stage\":\"stage1-rank-gate-fideslib-projection\",";
+  out << "\"backend\":\"fideslib-gpu\",";
+  out << "\"encrypted\":true,";
+  out << "\"config\":{\"input_mode\":\"stage1-rank-gate-fideslib-projection\"},";
+}
+
 void write_runtime_failure_payload(
     const Config& args,
     std::string_view phase,
@@ -769,9 +784,7 @@ void write_runtime_failure_payload(
   }
   std::ostringstream out;
   out << "{";
-  out << "\"stage\":\"stage1-rank-gate-fideslib-projection\",";
-  out << "\"backend\":\"fideslib-gpu\",";
-  out << "\"encrypted\":true,";
+  write_artifact_prefix(out, args);
   out << "\"status\":\"failed\",";
   out << "\"passed\":false,";
   out << "\"failure_phase\":\"" << json_escape(phase) << "\",";
@@ -1311,9 +1324,7 @@ auto main(int argc, char* argv[]) -> int {
     auto write_decrypt_failure_payload = [&](const std::string& message) {
       std::ostringstream failure;
       failure << "{";
-      failure << "\"stage\":\"stage1-rank-gate-fideslib-projection\",";
-      failure << "\"backend\":\"fideslib-gpu\",";
-      failure << "\"encrypted\":true,";
+      write_artifact_prefix(failure, args);
       failure << "\"status\":\"failed\",";
       failure << "\"passed\":false,";
       failure << "\"failure_phase\":\"decrypt\",";
@@ -1375,7 +1386,10 @@ auto main(int argc, char* argv[]) -> int {
               << (previous_state_is_zero ? "false" : "true") << ",";
       failure << "\"ckks_level_telemetry\":true,";
       failure << "\"decrypt_failure_artifact\":true,";
-      failure << "\"full_model_correctness_claimed\":false";
+      failure << "\"full_model_correctness_claimed\":false,";
+      failure << "\"claim\":\"Native FIDESlib rank/gate chain reached decrypt but failed "
+                 "before final correctness comparison; this artifact preserves telemetry "
+                 "and does not claim full Mamba model correctness.\"";
       failure << "}";
       failure << "}";
       write_payload(args.output_json, failure.str());
@@ -1615,9 +1629,7 @@ auto main(int argc, char* argv[]) -> int {
 
     std::ostringstream out;
     out << "{";
-    out << "\"stage\":\"stage1-rank-gate-fideslib-projection\",";
-    out << "\"backend\":\"fideslib-gpu\",";
-    out << "\"encrypted\":true,";
+    write_artifact_prefix(out, args);
     out << "\"status\":\"" << (passed ? "passed" : "failed") << "\",";
     out << "\"passed\":" << (passed ? "true" : "false") << ",";
     out << "\"parameters\":{";
@@ -1732,7 +1744,11 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"full_one_layer_polynomial_output_checked\":true,";
     out << "\"fideslib_encrypted_execution\":true,";
     out << "\"full_layer_pre_recurrence_computed_in_kernel\":true,";
-    out << "\"full_model_correctness_claimed\":false";
+    out << "\"full_model_correctness_claimed\":false,";
+    out << "\"claim\":\"Native FIDESlib encrypted rank/gate recurrence-tail projection "
+           "artifact for one checkpoint layer or recurrent chain; it does not claim "
+           "lm_head decoding, multi-layer full-model correctness, or full 24-layer "
+           "Mamba inference.\"";
     out << "}";
     out << "}";
     write_payload(args.output_json, out.str());
