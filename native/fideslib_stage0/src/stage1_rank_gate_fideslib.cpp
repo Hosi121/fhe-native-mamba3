@@ -32,8 +32,25 @@ struct Config {
   double atol = 1e-5;
   double rank_projection_scale = 1.0;
   double dt_projection_scale = 1.0;
+  int chain_steps = 1;
   std::string security = "128-classic";
   std::string secret_key_dist = "sparse-ternary";
+};
+
+struct TailCiphertexts {
+  Ciphertext<DCRTPoly> readout;
+  Ciphertext<DCRTPoly> rank_output;
+  Ciphertext<DCRTPoly> rank_payload;
+  Ciphertext<DCRTPoly> output_delta;
+  Ciphertext<DCRTPoly> output_model;
+};
+
+struct ChainReference {
+  std::vector<double> state_new;
+  std::vector<double> readout_rank;
+  std::vector<double> rank_output;
+  std::vector<double> rank_payload;
+  std::vector<double> output_model;
 };
 
 auto now() -> std::chrono::steady_clock::time_point { return std::chrono::steady_clock::now(); }
@@ -86,6 +103,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.rank_projection_scale = parse_double(arg, value);
     } else if (arg == "--dt-projection-scale") {
       config.dt_projection_scale = parse_double(arg, value);
+    } else if (arg == "--chain-steps") {
+      config.chain_steps = parse_int(arg, value);
     } else if (arg == "--security") {
       config.security = value;
     } else if (arg == "--secret-key-dist") {
@@ -102,7 +121,7 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.multiplicative_depth <= 0 || config.scaling_mod_size <= 0 ||
       config.first_mod_size <= 0 || config.atol < 0.0 || config.rank_projection_scale <= 0.0 ||
-      config.dt_projection_scale <= 0.0) {
+      config.dt_projection_scale <= 0.0 || config.chain_steps <= 0) {
     throw std::invalid_argument("invalid CKKS parameters");
   }
   if (config.security != "not-set" && config.security != "128-classic") {
@@ -683,6 +702,75 @@ auto json_escape(std::string_view value) -> std::string {
   return output;
 }
 
+auto build_repeated_chain_reference(
+    const stage1::RankGatePayload& payload,
+    int chain_steps) -> ChainReference {
+  const auto& config = payload.config;
+  const auto state_rank = static_cast<std::size_t>(config.d_state) * config.mimo_rank;
+  const auto& decay = payload.array("reference_decay_state_major_poly").values;
+  const auto& previous = payload.array("previous_state").values;
+  const auto& first_state = payload.array("reference_state_new_poly").values;
+  if (decay.size() != state_rank || previous.size() != state_rank ||
+      first_state.size() != state_rank) {
+    throw std::runtime_error("invalid state-major reference vector sizes");
+  }
+  std::vector<double> input_term(state_rank, 0.0);
+  std::vector<double> state = previous;
+  for (std::size_t index = 0; index < state_rank; ++index) {
+    input_term[index] = first_state[index] - decay[index] * previous[index];
+  }
+  for (int step = 0; step < chain_steps; ++step) {
+    for (std::size_t index = 0; index < state_rank; ++index) {
+      state[index] = decay[index] * state[index] + input_term[index];
+    }
+  }
+
+  const auto& c_state = payload.array("reference_c_state_major_poly").values;
+  const auto& skip = payload.array("reference_skip_update_poly").values;
+  const auto& gate = payload.array("reference_gate_poly").values;
+  const auto& w_out = payload.array("w_out").values;
+  const auto& residual = payload.array("residual_input").values;
+  if (c_state.size() != state_rank || skip.size() != config.mimo_rank ||
+      gate.size() != config.mimo_rank ||
+      w_out.size() != static_cast<std::size_t>(config.d_model) * config.mimo_rank ||
+      residual.size() != config.d_model) {
+    throw std::runtime_error("invalid chain readout reference vector sizes");
+  }
+
+  std::vector<double> readout(config.mimo_rank, 0.0);
+  for (std::uint32_t state_index = 0; state_index < config.d_state; ++state_index) {
+    const auto base = static_cast<std::size_t>(state_index) * config.mimo_rank;
+    for (std::uint32_t rank_index = 0; rank_index < config.mimo_rank; ++rank_index) {
+      const auto index = base + rank_index;
+      readout[rank_index] += c_state[index] * state[index];
+    }
+  }
+
+  std::vector<double> rank_output(config.mimo_rank, 0.0);
+  std::vector<double> rank_payload(config.mimo_rank, 0.0);
+  for (std::uint32_t rank_index = 0; rank_index < config.mimo_rank; ++rank_index) {
+    rank_output[rank_index] = readout[rank_index] + skip[rank_index];
+    rank_payload[rank_index] = rank_output[rank_index] * gate[rank_index];
+  }
+
+  std::vector<double> output_model(config.d_model, 0.0);
+  for (std::uint32_t output = 0; output < config.d_model; ++output) {
+    double value = residual[output];
+    const auto base = static_cast<std::size_t>(output) * config.mimo_rank;
+    for (std::uint32_t rank_index = 0; rank_index < config.mimo_rank; ++rank_index) {
+      value += w_out[base + rank_index] * rank_payload[rank_index];
+    }
+    output_model[output] = value;
+  }
+  return ChainReference{
+      .state_new = state,
+      .readout_rank = readout,
+      .rank_output = rank_output,
+      .rank_payload = rank_payload,
+      .output_model = output_model,
+  };
+}
+
 }  // namespace
 
 auto main(int argc, char* argv[]) -> int {
@@ -959,52 +1047,90 @@ auto main(int argc, char* argv[]) -> int {
       auto decay_state_term_ct = cc->EvalMult(decay_state_major_aligned_ct, previous_state_ct);
       ++ct_ct_muls;
       log_phase("decay state term done");
-      align_levels(cc, decay_state_term_ct, input_state_term_ct, unity_multiplies);
-      state_new_poly_ct = cc->EvalAdd(decay_state_term_ct, input_state_term_ct);
+      auto input_state_term_for_update_ct = input_state_term_ct->Clone();
+      align_levels(cc, decay_state_term_ct, input_state_term_for_update_ct, unity_multiplies);
+      state_new_poly_ct = cc->EvalAdd(decay_state_term_ct, input_state_term_for_update_ct);
       ++adds;
       log_phase("state update add done");
     }
-    Ciphertext<DCRTPoly> c_state_major_aligned_ct = c_state_major_poly_ct->Clone();
-    auto state_new_for_readout_ct = state_new_poly_ct->Clone();
-    align_levels(cc, c_state_major_aligned_ct, state_new_for_readout_ct, unity_multiplies);
-    auto readout_poly_ct = cc->EvalMult(c_state_major_aligned_ct, state_new_for_readout_ct);
-    ++ct_ct_muls;
-    for (const auto step : state_major_to_rank_block0_rotations(payload.config)) {
-      readout_poly_ct = cc->EvalAdd(readout_poly_ct, cc->EvalRotate(readout_poly_ct, step));
-      ++rotations;
-      ++adds;
-    }
     auto rank_mask_plain = make_plain(rank_valid_mask(payload.config));
-    readout_poly_ct = cc->EvalMult(readout_poly_ct, rank_mask_plain);
-    ++ct_pt_muls;
-    auto readout_for_rank_output_ct = readout_poly_ct->Clone();
-    auto skip_for_rank_output_ct = skip_update_poly_ct->Clone();
-    align_levels(cc, readout_for_rank_output_ct, skip_for_rank_output_ct, unity_multiplies);
-    auto rank_output_poly_ct = cc->EvalAdd(readout_for_rank_output_ct, skip_for_rank_output_ct);
-    ++adds;
-    auto rank_output_for_gate_ct = rank_output_poly_ct->Clone();
-    auto gate_for_tail_ct = gate_poly_ct->Clone();
-    align_levels(cc, rank_output_for_gate_ct, gate_for_tail_ct, unity_multiplies);
-    auto rank_payload_poly_ct = cc->EvalMult(rank_output_for_gate_ct, gate_for_tail_ct);
-    ++ct_ct_muls;
     const int out_baby_step = bounded_baby_step(
         static_cast<int>(payload.config.rank_baby_step),
         static_cast<int>(payload.config.mimo_rank));
-    auto output_delta_poly_ct = slot_bsgs_linear_block0(
-        cc,
-        rank_payload_poly_ct,
-        payload.array("w_out").values,
-        static_cast<int>(payload.config.mimo_rank),
-        static_cast<int>(payload.config.d_model),
-        out_baby_step,
-        batch_size,
-        rotations,
-        ct_pt_muls,
-        adds);
-    auto residual_ct = encrypt_values(pack_block0(payload.array("residual_input").values, payload.config));
-    align_levels(cc, output_delta_poly_ct, residual_ct, unity_multiplies);
-    auto output_model_poly_ct = cc->EvalAdd(output_delta_poly_ct, residual_ct);
-    ++adds;
+    auto residual_base_ct =
+        encrypt_values(pack_block0(payload.array("residual_input").values, payload.config));
+    auto evaluate_tail_from_state = [&](const Ciphertext<DCRTPoly>& state_ct) -> TailCiphertexts {
+      Ciphertext<DCRTPoly> c_state_major_aligned_ct = c_state_major_poly_ct->Clone();
+      auto state_new_for_readout_ct = state_ct->Clone();
+      align_levels(cc, c_state_major_aligned_ct, state_new_for_readout_ct, unity_multiplies);
+      auto readout_ct = cc->EvalMult(c_state_major_aligned_ct, state_new_for_readout_ct);
+      ++ct_ct_muls;
+      for (const auto step : state_major_to_rank_block0_rotations(payload.config)) {
+        readout_ct = cc->EvalAdd(readout_ct, cc->EvalRotate(readout_ct, step));
+        ++rotations;
+        ++adds;
+      }
+      readout_ct = cc->EvalMult(readout_ct, rank_mask_plain);
+      ++ct_pt_muls;
+      auto readout_for_rank_output_ct = readout_ct->Clone();
+      auto skip_for_rank_output_ct = skip_update_poly_ct->Clone();
+      align_levels(cc, readout_for_rank_output_ct, skip_for_rank_output_ct, unity_multiplies);
+      auto rank_output_ct = cc->EvalAdd(readout_for_rank_output_ct, skip_for_rank_output_ct);
+      ++adds;
+      auto rank_output_for_gate_ct = rank_output_ct->Clone();
+      auto gate_for_tail_ct = gate_poly_ct->Clone();
+      align_levels(cc, rank_output_for_gate_ct, gate_for_tail_ct, unity_multiplies);
+      auto rank_payload_ct = cc->EvalMult(rank_output_for_gate_ct, gate_for_tail_ct);
+      ++ct_ct_muls;
+      auto output_delta_ct = slot_bsgs_linear_block0(
+          cc,
+          rank_payload_ct,
+          payload.array("w_out").values,
+          static_cast<int>(payload.config.mimo_rank),
+          static_cast<int>(payload.config.d_model),
+          out_baby_step,
+          batch_size,
+          rotations,
+          ct_pt_muls,
+          adds);
+      auto residual_ct = residual_base_ct->Clone();
+      align_levels(cc, output_delta_ct, residual_ct, unity_multiplies);
+      auto output_model_ct = cc->EvalAdd(output_delta_ct, residual_ct);
+      ++adds;
+      return TailCiphertexts{
+          .readout = readout_ct,
+          .rank_output = rank_output_ct,
+          .rank_payload = rank_payload_ct,
+          .output_delta = output_delta_ct,
+          .output_model = output_model_ct,
+      };
+    };
+
+    auto tail_ciphertexts = evaluate_tail_from_state(state_new_poly_ct);
+    auto readout_poly_ct = tail_ciphertexts.readout;
+    auto rank_output_poly_ct = tail_ciphertexts.rank_output;
+    auto rank_payload_poly_ct = tail_ciphertexts.rank_payload;
+    auto output_delta_poly_ct = tail_ciphertexts.output_delta;
+    auto output_model_poly_ct = tail_ciphertexts.output_model;
+    for (int chain_step = 2; chain_step <= args.chain_steps; ++chain_step) {
+      Ciphertext<DCRTPoly> decay_state_major_aligned_ct = decay_state_major_poly_ct->Clone();
+      auto previous_state_for_chain_ct = state_new_poly_ct->Clone();
+      align_levels(cc, decay_state_major_aligned_ct, previous_state_for_chain_ct, unity_multiplies);
+      auto decay_state_term_ct =
+          cc->EvalMult(decay_state_major_aligned_ct, previous_state_for_chain_ct);
+      ++ct_ct_muls;
+      auto input_state_term_for_chain_ct = input_state_term_ct->Clone();
+      align_levels(cc, decay_state_term_ct, input_state_term_for_chain_ct, unity_multiplies);
+      state_new_poly_ct = cc->EvalAdd(decay_state_term_ct, input_state_term_for_chain_ct);
+      ++adds;
+      tail_ciphertexts = evaluate_tail_from_state(state_new_poly_ct);
+      readout_poly_ct = tail_ciphertexts.readout;
+      rank_output_poly_ct = tail_ciphertexts.rank_output;
+      rank_payload_poly_ct = tail_ciphertexts.rank_payload;
+      output_delta_poly_ct = tail_ciphertexts.output_delta;
+      output_model_poly_ct = tail_ciphertexts.output_model;
+      log_phase("ciphertext chain step " + std::to_string(chain_step) + " done");
+    }
     log_phase("polynomial recurrence/readout/output tail done");
     const double eval_seconds = seconds_since(eval_start);
     log_phase(
@@ -1061,7 +1187,8 @@ auto main(int argc, char* argv[]) -> int {
       failure << "\"batch_size\":" << batch_size << ",";
       failure << "\"ring_dimension\":" << args.ring_dim << ",";
       failure << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
-      failure << "\"scaling_mod_size\":" << args.scaling_mod_size;
+      failure << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
+      failure << "\"chain_steps\":" << args.chain_steps;
       failure << "},";
       failure << "\"measurements\":{";
       failure << "\"required_application_rotation_key_count\":" << required_rotations.size()
@@ -1090,6 +1217,11 @@ auto main(int argc, char* argv[]) -> int {
       failure << "\"rank_gate_payload\":true,";
       failure << "\"state_major_layout\":true,";
       failure << "\"recurrence_tail_executed\":true,";
+      failure << "\"ciphertext_recurrent_state_chain\":"
+              << (args.chain_steps > 1 ? "true" : "false") << ",";
+      failure << "\"chain_steps\":" << args.chain_steps << ",";
+      failure << "\"chain_exact_reference_available\":"
+              << (args.chain_steps == 1 ? "true" : "false") << ",";
       failure << "\"previous_state_nonzero\":"
               << (previous_state_is_zero ? "false" : "true") << ",";
       failure << "\"ckks_level_telemetry\":true,";
@@ -1251,6 +1383,7 @@ auto main(int argc, char* argv[]) -> int {
         first_values(rank_payload_poly_slots, static_cast<size_t>(payload.config.mimo_rank));
     const auto output_model_poly =
         first_values(output_model_poly_slots, static_cast<size_t>(payload.config.d_model));
+    const auto chain_reference = build_repeated_chain_reference(payload, args.chain_steps);
     const auto conv_error =
         stage1::max_abs_delta(conv_pre, payload.array("reference_conv_pre").values);
     const auto gate_error =
@@ -1282,17 +1415,17 @@ auto main(int argc, char* argv[]) -> int {
         c_state_major_poly,
         payload.array("reference_c_state_major_poly").values);
     const auto state_new_poly_error =
-        stage1::max_abs_delta(state_new_poly, payload.array("reference_state_new_poly").values);
+        stage1::max_abs_delta(state_new_poly, chain_reference.state_new);
     const auto readout_poly_error =
-        stage1::max_abs_delta(readout_poly, payload.array("reference_readout_rank_poly").values);
+        stage1::max_abs_delta(readout_poly, chain_reference.readout_rank);
     const auto rank_output_poly_error =
-        stage1::max_abs_delta(rank_output_poly, payload.array("reference_rank_output_poly").values);
+        stage1::max_abs_delta(rank_output_poly, chain_reference.rank_output);
     const auto rank_payload_poly_error = stage1::max_abs_delta(
         rank_payload_poly,
-        payload.array("reference_rank_payload_poly").values);
+        chain_reference.rank_payload);
     const auto output_model_poly_error = stage1::max_abs_delta(
         output_model_poly,
-        payload.array("reference_output_model_poly").values);
+        chain_reference.output_model);
     const auto rank_poly_approx_error = stage1::max_abs_delta(
         payload.array("reference_rank_input_poly").values,
         payload.array("reference_rank_input").values);
@@ -1347,6 +1480,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"ring_dimension\":" << args.ring_dim << ",";
     out << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
     out << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
+    out << "\"chain_steps\":" << args.chain_steps << ",";
     out << "\"model_baby_step\":" << payload.config.model_baby_step;
     out << ",\"rank_baby_step\":" << payload.config.rank_baby_step;
     out << ",\"rank_projection_scale\":" << args.rank_projection_scale;
@@ -1387,12 +1521,14 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"decay_poly_vs_exact_max_abs_error\":" << decay_poly_approx_error << ",";
     out << "\"output_model_poly_vs_exact_max_abs_error\":" << output_model_poly_vs_exact_error
         << ",";
+    out << "\"output_model_poly_vs_exact_reference_steps\":1,";
     out << "\"native_plaintext_reference_max_abs_error\":" << reference.max_abs_error << ",";
     out << "\"required_application_rotation_key_count\":" << required_rotations.size() << ",";
     out << "\"plaintext_coefficient_floor\":" << kPlaintextCoefficientFloor << ",";
     out << "\"rank_projection_scaled\":" << (args.rank_projection_scale == 1.0 ? "false" : "true")
         << ",";
     out << "\"previous_state_nonzero\":" << (previous_state_is_zero ? "false" : "true") << ",";
+    out << "\"chain_steps\":" << args.chain_steps << ",";
     out << "\"peak_rss_gib\":" << peak_rss_gib() << ",";
     out << "\"rss_gib\":" << rss_gib();
     out << "},";
@@ -1422,6 +1558,11 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"pre_recurrence_dynamic_bc\":true,";
     out << "\"pre_recurrence_decay\":true,";
     out << "\"recurrence_tail_executed\":true,";
+    out << "\"ciphertext_recurrent_state_chain\":"
+        << (args.chain_steps > 1 ? "true" : "false") << ",";
+    out << "\"chain_steps\":" << args.chain_steps << ",";
+    out << "\"chain_exact_reference_available\":"
+        << (args.chain_steps == 1 ? "true" : "false") << ",";
     out << "\"previous_state_nonzero\":"
         << (previous_state_is_zero ? "false" : "true") << ",";
     out << "\"ckks_level_telemetry\":true,";
