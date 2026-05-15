@@ -137,6 +137,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
 
     rank_gate_payload_eval_text = stage1_rank_gate_payload_eval_source.read_text()
     assert "stage1-rank-gate-payload-native-eval" in rank_gate_payload_eval_text
+    assert "stage1-rank-gate-payload-chain-native-eval" in rank_gate_payload_eval_text
+    assert "--input-chain" in rank_gate_payload_eval_text
+    assert "model_layout_handoff_reference" in rank_gate_payload_eval_text
     assert "pre_recurrence_rank_gate_only" in rank_gate_payload_eval_text
 
     rank_gate_fideslib_text = stage1_rank_gate_fideslib_source.read_text()

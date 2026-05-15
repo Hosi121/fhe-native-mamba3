@@ -205,6 +205,10 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   `1.19e-07`. This is a payload/export contract only; the next executable
   blocker is native multi-payload evaluation that keeps the layer-0 output
   ciphertext alive as the layer-1 residual input.
+- `v0.3.129` adds a FIDESlib-free native `--input-chain` evaluator for rank/gate
+  payload handoff contracts. It validates the same two-payload artifact at
+  `max_abs_error=6.45e-07` and `model_layout_handoff_max_abs_error=1.19e-07`
+  without GPU/FIDESlib, keeping `chain_steps` separate from layer payload count.
 
 ## Near-Term Parallel Slices
 

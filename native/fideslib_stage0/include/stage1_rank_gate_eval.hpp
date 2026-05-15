@@ -26,6 +26,13 @@ struct RankGateEvalResult {
   double skip_update_max_abs_error = 0.0;
 };
 
+struct RankGateChainHandoffEvalResult {
+  std::size_t payload_count = 0;
+  double max_abs_error = 0.0;
+  double rank_gate_max_abs_error = 0.0;
+  double model_layout_handoff_max_abs_error = 0.0;
+};
+
 inline auto rank_gate_array_values(const RankGatePayload& payload, const std::string& name)
     -> const std::vector<double>& {
   return payload.array(name).values;
@@ -83,6 +90,32 @@ inline auto evaluate_rank_gate_payload(const RankGatePayload& payload) -> RankGa
        result.gate_pre_max_abs_error,
        result.gate_max_abs_error,
        result.skip_update_max_abs_error});
+  return result;
+}
+
+inline auto evaluate_rank_gate_payload_chain_handoff(
+    const std::vector<RankGatePayload>& payloads) -> RankGateChainHandoffEvalResult {
+  if (payloads.empty()) {
+    throw std::runtime_error("rank/gate payload chain must not be empty");
+  }
+  RankGateChainHandoffEvalResult result;
+  result.payload_count = payloads.size();
+  for (const auto& payload : payloads) {
+    const auto rank_gate = evaluate_rank_gate_payload(payload);
+    result.rank_gate_max_abs_error =
+        std::max(result.rank_gate_max_abs_error, rank_gate.max_abs_error);
+  }
+  for (std::size_t index = 1; index < payloads.size(); ++index) {
+    const auto& previous_output =
+        rank_gate_array_values(payloads[index - 1], "reference_output_model_poly");
+    const auto& current_residual = rank_gate_array_values(payloads[index], "residual_input");
+    result.model_layout_handoff_max_abs_error =
+        std::max(
+            result.model_layout_handoff_max_abs_error,
+            max_abs_delta(current_residual, previous_output));
+  }
+  result.max_abs_error =
+      std::max(result.rank_gate_max_abs_error, result.model_layout_handoff_max_abs_error);
   return result;
 }
 

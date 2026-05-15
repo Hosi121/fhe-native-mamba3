@@ -201,6 +201,9 @@ auto make_consistent_payload() -> stage1::RankGatePayload {
   push("reference_rank_input_poly", rank_input_poly);
   push("reference_gate_poly", gate_poly);
   push("reference_skip_update_poly", skip_update_poly);
+  push("residual_input", {0.1, 0.2, 0.3});
+  push("reference_output_model_poly", {0.4, 0.5, 0.6});
+  push("reference_output_model_exact", {0.4, 0.5, 0.6});
   push("polynomial_metadata", {2.0, 2.0, 8.0});
   return payload;
 }
@@ -211,10 +214,33 @@ void test_evaluate_rank_gate_payload_matches_reference() {
   require_equal(result.skip_update.size(), 4, "skip update length");
 }
 
+void test_evaluate_rank_gate_payload_chain_handoff_matches_reference() {
+  auto layer0 = make_consistent_payload();
+  auto layer1 = make_consistent_payload();
+  layer0.config.layer_index = 0;
+  layer1.config.layer_index = 1;
+  for (auto& array : layer1.arrays) {
+    if (array.name == "residual_input") {
+      array.values = layer0.array("reference_output_model_poly").values;
+    }
+  }
+
+  const auto result = stage1::evaluate_rank_gate_payload_chain_handoff({layer0, layer1});
+  require_equal(result.payload_count, 2, "chain payload count");
+  require_close(result.rank_gate_max_abs_error, 0.0, 1e-15, "chain rank/gate max error");
+  require_close(
+      result.model_layout_handoff_max_abs_error,
+      0.0,
+      1e-15,
+      "chain model-layout handoff max error");
+  require_close(result.max_abs_error, 0.0, 1e-15, "chain max error");
+}
+
 }  // namespace
 
 auto main() -> int {
   test_read_rank_gate_payload();
   test_evaluate_rank_gate_payload_matches_reference();
+  test_evaluate_rank_gate_payload_chain_handoff_matches_reference();
   return EXIT_SUCCESS;
 }
