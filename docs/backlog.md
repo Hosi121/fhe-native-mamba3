@@ -283,6 +283,16 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   `gate_poly_vs_exact_max_abs_error=5.06e-02`, and
   `output_model_poly_vs_original_exact_max_abs_error=9.90e-04`. This still
   does not claim encrypted execution; the encrypted replay is the next check.
+- `v0.3.141` closes the LoRA merged-payload encrypted replay loop. Job `10580`
+  runs the merged Mamba-130M-shaped layer-0 payload through the native FIDESlib
+  encrypted path and passes with `max_abs_error=0`, `diagnostic_max_abs_error=
+  0.726`, `output_model_poly_vs_exact_max_abs_error=9.90e-04`, `189`
+  application rotation keys, `1036` rotations, `13211` ct-pt multiplies, `30`
+  ct-ct multiplies, setup `173.08s`, rotate-keygen `69.32s`, context load
+  `100.02s`, eval `968.84s`, and peak RSS `77.67 GiB`. LoRA successfully
+  clamps the gate preactivation to the target range while preserving the
+  encrypted polynomial reference, but it does not materially change the Stage 1
+  runtime bottleneck; dense projection cost remains the next target.
 
 ## Near-Term Parallel Slices
 
@@ -290,9 +300,10 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   execution on top of the new chain payload export and the FIDESlib
   recurrent-state chain, then validate bootstrap placement at the projected
   recurrent boundary.
-- Stage 2 B: PBI-S2-009 remains contingent work; PBI-S2-015 currently says
-  deterministic calibration is enough, so LoRA should wait unless PBI-S1-041 or
-  a later multi-layer chain exposes a new range/accuracy failure.
+- Stage 2 B: PBI-S2-009 now has a complete LoRA range-tuning -> payload merge
+  -> encrypted replay slice for Mamba-130M layer 0. Continue only if later
+  layers or real checkpoints expose range failures; otherwise prioritize Stage 1
+  projection/runtime reduction.
 - Low-risk reporting C: run `scripts/sync_backlog_issues.py` after backlog
   edits to keep GitHub Issue plans in sync; direct Project board automation is
   future DevEx work, not claimed in this line. Use
