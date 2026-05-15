@@ -1,0 +1,143 @@
+{
+  "boundary_levels": {
+    "decay_state_major_poly": 22,
+    "gate_poly": 8,
+    "input_state_term": 18,
+    "output_model_poly": 28,
+    "rank_input_poly": 15,
+    "rank_payload_poly": 27,
+    "readout_poly": 26,
+    "state_new_poly": 24
+  },
+  "decision_reasons": [
+    "artifact has no bootstrap; multi-layer scheduling remains open"
+  ],
+  "decrypt_failure": false,
+  "error_message": null,
+  "inputs": {
+    "artifact_json": "runs/stage1-s052-mamba130m-chain2-scale50-v03118b.json"
+  },
+  "level_spread": 28,
+  "levels_descending": [
+    {
+      "level": 28,
+      "name": "output_model_poly"
+    },
+    {
+      "level": 28,
+      "name": "output_delta_poly"
+    },
+    {
+      "level": 27,
+      "name": "rank_payload_poly"
+    },
+    {
+      "level": 26,
+      "name": "readout_poly"
+    },
+    {
+      "level": 26,
+      "name": "rank_output_poly"
+    },
+    {
+      "level": 24,
+      "name": "state_new_poly"
+    },
+    {
+      "level": 22,
+      "name": "decay_state_major_poly"
+    },
+    {
+      "level": 18,
+      "name": "input_state_term"
+    },
+    {
+      "level": 17,
+      "name": "x_state_major_poly"
+    },
+    {
+      "level": 17,
+      "name": "dt_state_major_poly"
+    },
+    {
+      "level": 17,
+      "name": "dt_pre_poly"
+    },
+    {
+      "level": 17,
+      "name": "c_state_major_poly"
+    },
+    {
+      "level": 17,
+      "name": "b_state_major_poly"
+    },
+    {
+      "level": 16,
+      "name": "skip_update_poly"
+    },
+    {
+      "level": 16,
+      "name": "dt_hidden_poly"
+    },
+    {
+      "level": 16,
+      "name": "c_vec_poly"
+    },
+    {
+      "level": 16,
+      "name": "b_vec_poly"
+    },
+    {
+      "level": 15,
+      "name": "rank_input_poly"
+    },
+    {
+      "level": 8,
+      "name": "gate_poly"
+    },
+    {
+      "level": 1,
+      "name": "conv_pre_for_silu"
+    },
+    {
+      "level": 0,
+      "name": "rms_input"
+    },
+    {
+      "level": 0,
+      "name": "gate_pre"
+    },
+    {
+      "level": 0,
+      "name": "conv_pre"
+    }
+  ],
+  "max_consumed_level": 28,
+  "max_consumed_level_name": "output_model_poly",
+  "measurement_scope": {
+    "ckks_level_telemetry_available": true,
+    "claim": "Summarizes CKKS consumed-level telemetry from a Stage 1 artifact; this report does not claim new encrypted execution or full-model correctness.",
+    "full_model_correctness_claimed": false,
+    "get_level_semantics": "OpenFHE consumed-level index; larger means less remaining depth",
+    "multi_layer_success_claimed": false,
+    "stage1_ckks_level_report": true
+  },
+  "min_consumed_level": 0,
+  "multiplicative_depth": 48,
+  "operation_counts": {
+    "adds": 15896,
+    "bootstraps": 0,
+    "ct_ct_mul": 34,
+    "ct_pt_mul": 15516,
+    "rotations": 1138,
+    "unity_level_align_muls": 103
+  },
+  "passed": true,
+  "previous_state_nonzero": true,
+  "recommended_action": "continue_with_bounded_multilayer_or_bootstrap_probe",
+  "remaining_level_margin": 20,
+  "repo_commit": "f9d219ac29072bfb61131c915f9ff45d646b9f9d",
+  "stage": "stage1-ckks-level-report",
+  "telemetry_available": true,
+  "version": "0.3.127"
+}

@@ -189,10 +189,11 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   The native recurrent bootstrap hook has also executed one scheduled bootstrap
   in a tiny `CHAIN_STEPS=3` run, and the resulting artifact now satisfies the
   common validation schema without warnings.
-  The remaining blockers are scaling the repeated chain to Mamba-130M shape,
-  adding model-layout layer-to-layer handoff, and executing the derived
-  recurrent bootstrap schedule at a larger projected boundary before any full
-  24-layer claim.
+  Mamba-130M-shaped chain2 scaling is now recorded: the extra recurrent update
+  costs `212.50s`, `102` rotations, `2304` ct-pt muls, and `3` ct-ct muls,
+  with max consumed level `28/48`. The remaining blockers are model-layout
+  layer-to-layer handoff and executing the derived recurrent bootstrap schedule
+  at a larger projected boundary before any full 24-layer claim.
 - Sketch/range evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-013 is complete; PBI-S2-005 adds the first learned/data-dependent sketch baseline; PBI-S2-014 expands it to the matrix report; PBI-S2-015 adds the current range/LoRA decision gate. PBI-S2-004 and PBI-S0-010 continue to feed future PBI-S2-009 work if later encrypted chains expose a calibration failure.
 - Encrypted sketch execution: PBI-S2-006 and PBI-S2-007 are complete; the learned/data-dependent sketch branch is complete through PBI-S2-014. PBI-S2-015 currently recommends deferring LoRA until a later chain artifact fails the existing deterministic calibration gate.
 - Decoding branch: PBI-S2-003 is complete at the current scope. PBI-S2-010 records client-side decode accounting, and PBI-S2-011 records a toy encrypted CutMax/OpenFHE path. Full-vocab encrypted generation is not claimed.
@@ -200,10 +201,9 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 
 ## Near-Term Parallel Slices
 
-- Mainline A: continue PBI-S1-045 by scaling the FIDESlib recurrent-state chain
-  from tiny/small96 toward Mamba-130M shape, then add model-layout
-  layer-to-layer handoff and validate bootstrap placement at the projected
-  recurrent boundary.
+- Mainline A: continue PBI-S1-045 by adding model-layout layer-to-layer handoff
+  on top of the FIDESlib recurrent-state chain, then validate bootstrap
+  placement at the projected recurrent boundary.
 - Stage 2 B: PBI-S2-009 remains contingent work; PBI-S2-015 currently says
   deterministic calibration is enough, so LoRA should wait unless PBI-S1-041 or
   a later multi-layer chain exposes a new range/accuracy failure.

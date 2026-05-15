@@ -1,0 +1,170 @@
+{
+  "artifact_pair_valid": false,
+  "base": {
+    "artifact": "runs/stage1-s050-mamba130m-prev0125-scale50-v03117.json",
+    "artifact_exists": true,
+    "artifact_passed": true,
+    "artifact_stage": "stage1-rank-gate-fideslib-projection",
+    "artifact_valid": false,
+    "job_id": "10441",
+    "remote_pull": null,
+    "root_state": "COMPLETED",
+    "sacct_rows": [
+      {
+        "Elapsed": "00:18:54",
+        "ExitCode": "0:0",
+        "JobID": "10441",
+        "MaxRSS": "",
+        "State": "COMPLETED"
+      },
+      {
+        "Elapsed": "00:18:54",
+        "ExitCode": "0:0",
+        "JobID": "10441.batch",
+        "MaxRSS": "85459972K",
+        "State": "COMPLETED"
+      },
+      {
+        "Elapsed": "00:18:54",
+        "ExitCode": "0:0",
+        "JobID": "10441.extern",
+        "MaxRSS": "0",
+        "State": "COMPLETED"
+      }
+    ],
+    "validation": {
+      "error_count": 1,
+      "explicit_non_success_probe": false,
+      "issues": [
+        {
+          "message": "version must be a non-empty string",
+          "path": "version",
+          "severity": "error"
+        },
+        {
+          "message": "artifact should include repo_commit, commit, or git_commit",
+          "path": "repo_commit",
+          "severity": "warning"
+        },
+        {
+          "message": "measurement_scope should include a human-readable claim/non-claim",
+          "path": "measurement_scope.claim",
+          "severity": "warning"
+        },
+        {
+          "message": "backend artifacts should include input_mode when applicable",
+          "path": "config.input_mode",
+          "severity": "warning"
+        }
+      ],
+      "stage": "stage1-rank-gate-fideslib-projection",
+      "success_claimed": true,
+      "success_predicate_passed": true,
+      "valid": false,
+      "warning_count": 3
+    }
+  },
+  "collection_complete": true,
+  "extended": {
+    "artifact": "runs/stage1-s052-mamba130m-chain2-scale50-v03118b.json",
+    "artifact_exists": true,
+    "artifact_passed": true,
+    "artifact_stage": "stage1-rank-gate-fideslib-projection",
+    "artifact_valid": false,
+    "job_id": "10487",
+    "remote_pull": null,
+    "root_state": "COMPLETED",
+    "sacct_rows": [
+      {
+        "Elapsed": "00:22:48",
+        "ExitCode": "0:0",
+        "JobID": "10487",
+        "MaxRSS": "",
+        "State": "COMPLETED"
+      },
+      {
+        "Elapsed": "00:22:48",
+        "ExitCode": "0:0",
+        "JobID": "10487.batch",
+        "MaxRSS": "85486908K",
+        "State": "COMPLETED"
+      },
+      {
+        "Elapsed": "00:22:48",
+        "ExitCode": "0:0",
+        "JobID": "10487.extern",
+        "MaxRSS": "0",
+        "State": "COMPLETED"
+      }
+    ],
+    "validation": {
+      "error_count": 1,
+      "explicit_non_success_probe": false,
+      "issues": [
+        {
+          "message": "version must be a non-empty string",
+          "path": "version",
+          "severity": "error"
+        },
+        {
+          "message": "artifact should include repo_commit, commit, or git_commit",
+          "path": "repo_commit",
+          "severity": "warning"
+        },
+        {
+          "message": "measurement_scope should include a human-readable claim/non-claim",
+          "path": "measurement_scope.claim",
+          "severity": "warning"
+        },
+        {
+          "message": "backend artifacts should include input_mode when applicable",
+          "path": "config.input_mode",
+          "severity": "warning"
+        }
+      ],
+      "stage": "stage1-rank-gate-fideslib-projection",
+      "success_claimed": true,
+      "success_predicate_passed": true,
+      "valid": false,
+      "warning_count": 3
+    }
+  },
+  "ledger_rows": [
+    "| PBI-S1-045 | 10441 / 10487 | `runs/stage1-s050-mamba130m-prev0125-scale50-v03117.json`, `runs/stage1-s052-mamba130m-chain2-scale50-v03118b.json` | `v0.3.127` / `f9d219a` | Passed | Stage 1 recurrent-chain pair collection; incremental eval 212.50s per recurrent step. |"
+  ],
+  "measurement_scope": {
+    "claim": "deferred collection of a Stage 1 recurrent-chain artifact pair; writes level and scaling reports when both artifacts are available",
+    "collection_only": true,
+    "full_model_correctness_claimed": false,
+    "multi_layer_success_claimed": false,
+    "remote_pull_attempted": false
+  },
+  "passed": false,
+  "repo_commit": "f9d219ac29072bfb61131c915f9ff45d646b9f9d",
+  "reports": {
+    "chain_scaling_report": {
+      "incremental_eval_seconds_per_step": 212.50299999999993,
+      "output_json": "runs/stage1-s052-mamba130m-chain-scaling-report-v03120.json",
+      "passed": true,
+      "written": true
+    },
+    "level_reports": {
+      "base": {
+        "max_consumed_level": 27,
+        "output_json": "runs/stage1-s052-mamba130m-chain1-level-report-v03120.json",
+        "passed": true,
+        "recommended_action": "continue_with_bounded_multilayer_or_bootstrap_probe",
+        "written": true
+      },
+      "extended": {
+        "max_consumed_level": 28,
+        "output_json": "runs/stage1-s052-mamba130m-chain2-level-report-v03120.json",
+        "passed": true,
+        "recommended_action": "continue_with_bounded_multilayer_or_bootstrap_probe",
+        "written": true
+      }
+    }
+  },
+  "stage": "stage1-recurrent-chain-pair-collection",
+  "version": "0.3.127"
+}

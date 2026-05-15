@@ -1,0 +1,54 @@
+{
+  "base_chain_steps": 1,
+  "base_eval_seconds": 924.317,
+  "base_fixed_seconds": 355.2771,
+  "base_max_abs_error": 0.0,
+  "base_peak_rss_gib": 81.4453,
+  "decision_reasons": [
+    "no bootstrap is present; long chains still need scheduling evidence",
+    "target chain projection exceeds one hour of kernel eval time"
+  ],
+  "extended_chain_steps": 2,
+  "extended_eval_seconds": 1136.82,
+  "extended_fixed_seconds": 371.5734,
+  "extended_max_abs_error": 0.0,
+  "extended_peak_rss_gib": 81.4484,
+  "extra_chain_steps": 1,
+  "incremental_eval_seconds_per_step": 212.50299999999993,
+  "inputs": {
+    "base_json": "runs/stage1-s050-mamba130m-prev0125-scale50-v03117.json",
+    "extended_json": "runs/stage1-s052-mamba130m-chain2-scale50-v03118b.json"
+  },
+  "measurement_scope": {
+    "artifact_level_report": true,
+    "chain_steps_are_recurrent_updates_not_model_layers": true,
+    "claim": "Compares native FIDESlib recurrent-state chain artifacts to separate one-time setup/keygen/load costs from per-step encrypted recurrence cost.",
+    "encrypted": true,
+    "full_model_correctness_claimed": false,
+    "multi_layer_success_claimed": false,
+    "projected_eval_seconds_for_target_chain_steps": 5811.885999999999,
+    "stage1_recurrent_chain_scaling_report": true,
+    "target_chain_steps": 24
+  },
+  "operation_count_delta_per_step": {
+    "adds": 2309.0,
+    "bootstraps": 0.0,
+    "ct_ct_mul": 3.0,
+    "ct_pt_mul": 2304.0,
+    "rotations": 102.0,
+    "unity_level_align_muls": 43.0
+  },
+  "operation_count_deltas": {
+    "adds": 2309.0,
+    "bootstraps": 0.0,
+    "ct_ct_mul": 3.0,
+    "ct_pt_mul": 2304.0,
+    "rotations": 102.0,
+    "unity_level_align_muls": 43.0
+  },
+  "passed": true,
+  "recommended_action": "continue_with_larger_shape_chain_or_bootstrap_probe",
+  "repo_commit": "f9d219ac29072bfb61131c915f9ff45d646b9f9d",
+  "stage": "stage1-recurrent-chain-scaling-report",
+  "version": "0.3.127"
+}

@@ -88,8 +88,8 @@ def validate_benchmark_artifact(
         )
         measurement_scope = {}
     _validate_measurement_scope(measurement_scope, issues)
-    _validate_backend_fields(payload, issues)
-    _validate_counts(payload, issues)
+    _validate_backend_fields(payload, measurement_scope, issues)
+    _validate_counts(payload, measurement_scope, issues)
 
     success_claimed = _success_claimed(payload)
     explicit_non_success_probe = _explicit_non_success_probe(payload, measurement_scope)
@@ -214,8 +214,11 @@ def _validate_measurement_scope(
 
 def _validate_backend_fields(
     payload: dict[str, Any],
+    measurement_scope: dict[str, Any],
     issues: list[ArtifactValidationIssue],
 ) -> None:
+    if _is_report_or_collection_payload(payload, measurement_scope):
+        return
     backend = payload.get("backend")
     measurements = payload.get("measurements")
     if backend is None and not isinstance(measurements, dict):
@@ -236,7 +239,13 @@ def _validate_backend_fields(
         )
 
 
-def _validate_counts(payload: dict[str, Any], issues: list[ArtifactValidationIssue]) -> None:
+def _validate_counts(
+    payload: dict[str, Any],
+    measurement_scope: dict[str, Any],
+    issues: list[ArtifactValidationIssue],
+) -> None:
+    if _is_report_or_collection_payload(payload, measurement_scope):
+        return
     if _find_key(payload, "operation_counts") is None:
         issues.append(
             ArtifactValidationIssue(
@@ -318,6 +327,25 @@ def _find_key(value: Any, key: str) -> Any:
             if found is not None:
                 return found
     return None
+
+
+def _is_report_or_collection_payload(
+    payload: dict[str, Any],
+    measurement_scope: dict[str, Any],
+) -> bool:
+    stage = payload.get("stage")
+    if isinstance(stage, str) and (stage.endswith("-report") or stage.endswith("-collection")):
+        return True
+    return any(
+        bool(measurement_scope.get(key))
+        for key in (
+            "artifact_level_report",
+            "collection_only",
+            "stage1_ckks_level_report",
+            "stage1_recurrent_chain_scaling_report",
+            "stage1_recurrent_bootstrap_report",
+        )
+    )
 
 
 def _int_or_none(value: Any) -> int | None:

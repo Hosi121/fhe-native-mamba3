@@ -108,6 +108,45 @@ def test_artifact_validator_accepts_native_rank_gate_failure_contract() -> None:
     assert result.success_claimed is False
 
 
+def test_artifact_validator_does_not_require_backend_counts_for_reports() -> None:
+    payload = {
+        "version": __version__,
+        "repo_commit": "abc123",
+        "stage": "stage1-recurrent-chain-scaling-report",
+        "passed": True,
+        "measurement_scope": {
+            "artifact_level_report": True,
+            "stage1_recurrent_chain_scaling_report": True,
+            "full_model_correctness_claimed": False,
+            "claim": "metadata report, not direct backend execution",
+        },
+    }
+
+    result = validate_benchmark_artifact(payload, require_commit=True)
+
+    assert result.valid is True
+    assert result.warnings == ()
+
+
+def test_artifact_validator_does_not_require_backend_counts_for_collections() -> None:
+    payload = {
+        "version": __version__,
+        "repo_commit": "abc123",
+        "stage": "single-slurm-job-collection",
+        "passed": True,
+        "measurement_scope": {
+            "collection_only": True,
+            "full_model_correctness_claimed": False,
+            "claim": "collection wrapper, not direct backend execution",
+        },
+    }
+
+    result = validate_benchmark_artifact(payload, require_commit=True)
+
+    assert result.valid is True
+    assert result.warnings == ()
+
+
 def test_artifact_validator_file_loader_rejects_non_object(tmp_path: Path) -> None:
     path = tmp_path / "artifact.json"
     path.write_text("[]", encoding="utf-8")

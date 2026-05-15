@@ -135,6 +135,10 @@ def _scope(*, telemetry_available: bool) -> dict[str, Any]:
         "get_level_semantics": "OpenFHE consumed-level index; larger means less remaining depth",
         "full_model_correctness_claimed": False,
         "multi_layer_success_claimed": False,
+        "claim": (
+            "Summarizes CKKS consumed-level telemetry from a Stage 1 artifact; "
+            "this report does not claim new encrypted execution or full-model correctness."
+        ),
     }
 
 
