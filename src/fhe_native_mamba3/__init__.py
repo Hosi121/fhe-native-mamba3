@@ -406,6 +406,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_rank_gate_payload",
         "Stage1RankGatePayload",
     ),
+    "Stage1RecurrentBootstrapReport": (
+        "fhe_native_mamba3.stage1_recurrent_bootstrap_report",
+        "Stage1RecurrentBootstrapReport",
+    ),
     "SlotBsgsSchedule": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "SlotBsgsSchedule",
@@ -697,6 +701,10 @@ _LAZY_IMPORTS = {
     "build_stage1_grouped_chain_inventory": (
         "fhe_native_mamba3.stage1_grouped_chain",
         "build_stage1_grouped_chain_inventory",
+    ),
+    "build_stage1_recurrent_bootstrap_report": (
+        "fhe_native_mamba3.stage1_recurrent_bootstrap_report",
+        "build_stage1_recurrent_bootstrap_report",
     ),
     "build_stage1_checkpoint_grouped_gate_inventory": (
         "fhe_native_mamba3.stage1_checkpoint_grouped_gate",
@@ -1233,6 +1241,7 @@ __all__ = [
     "Stage1Plan",
     "Stage1ProfileHints",
     "Stage1RankGatePayload",
+    "Stage1RecurrentBootstrapReport",
     "Stage1TailGapReport",
     "Stage2LearnedSketchBaselineResult",
     "Stage2LearnedSketchBaselineRow",
@@ -1296,6 +1305,7 @@ __all__ = [
     "build_stage1_grouped_chain_inventory",
     "build_stage1_plan",
     "build_stage1_rank_gate_payload",
+    "build_stage1_recurrent_bootstrap_report",
     "build_stage1_tail_gap_report",
     "build_state_major_layout_plan",
     "build_tiny_mimo_block_problem",
