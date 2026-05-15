@@ -15,7 +15,7 @@ def test_stage1_scaling_decision_prioritizes_reduction_when_direct_runs_are_too_
                 "rotations": 1028,
                 "ct_pt_mul": 13210,
                 "ct_ct_mul": 31,
-                "bootstrap": 0,
+                "bootstraps": 0,
             },
         },
         collection_payload={
@@ -35,6 +35,7 @@ def test_stage1_scaling_decision_prioritizes_reduction_when_direct_runs_are_too_
     assert report.two_layer_projected_seconds == 17388.0
     assert report.twenty_four_layer_projected_seconds == 208656.0
     assert report.required_application_rotation_key_count == 163
+    assert report.bootstrap_count == 0
     assert round(report.one_layer_maxrss_gib or 0.0, 1) == 67.6
     assert report.runtime_projection_ratio is not None
     assert any("bootstrap" in reason for reason in report.decision_reasons)
@@ -44,7 +45,7 @@ def test_stage1_scaling_decision_allows_bounded_two_layer_when_under_guard() -> 
     report = build_stage1_scaling_decision_report(
         one_layer_payload={
             "timing": {"total_seconds": 100.0},
-            "operation_counts": {"bootstrap": 1},
+            "operation_counts": {"bootstraps": 1},
         },
         max_single_job_seconds=3600.0,
         max_direct_24_layer_seconds=3600.0,
@@ -52,3 +53,4 @@ def test_stage1_scaling_decision_allows_bounded_two_layer_when_under_guard() -> 
 
     assert report.recommended_action == "submit_bounded_2layer_openfhe"
     assert report.two_layer_projected_seconds == 200.0
+    assert report.bootstrap_count == 1

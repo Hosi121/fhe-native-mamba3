@@ -59,7 +59,8 @@ def build_stage1_scaling_decision_report(
         reasons.append("projected direct 2-layer OpenFHE run exceeds the single-job guard")
     if full_seconds > max_direct_24_layer_seconds:
         reasons.append("projected direct 24-layer OpenFHE run is outside the daily budget")
-    if int(op_counts.get("bootstrap", 0)) == 0:
+    bootstrap_count = _bootstrap_count(op_counts)
+    if bootstrap_count == 0:
         reasons.append(
             "one-layer evidence has no bootstrap; multi-layer depth scheduling remains open"
         )
@@ -85,7 +86,7 @@ def build_stage1_scaling_decision_report(
         runtime_rotation_count=_optional_int(op_counts.get("rotations")),
         ct_pt_mul_count=_optional_int(op_counts.get("ct_pt_mul")),
         ct_ct_mul_count=_optional_int(op_counts.get("ct_ct_mul")),
-        bootstrap_count=_optional_int(op_counts.get("bootstrap")),
+        bootstrap_count=bootstrap_count,
         decision_reasons=tuple(reasons),
         measurement_scope={
             "claim": (
@@ -146,6 +147,11 @@ def _optional_float(value: Any) -> float | None:
 
 def _optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
+
+
+def _bootstrap_count(op_counts: dict[str, Any]) -> int | None:
+    value = op_counts.get("bootstraps", op_counts.get("bootstrap"))
+    return _optional_int(value)
 
 
 def _parse_memory_gib(value: str) -> float | None:
