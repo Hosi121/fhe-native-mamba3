@@ -137,6 +137,12 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   `+10.58s`, `+37` rotations, `+160` ct-pt muls, and `+3` ct-ct muls. Both
   pass with no bootstrap; Mamba-130M-shape chain2 remains in flight as job
   `10487`.
+- `v0.3.121` adds a recurrent-chain bootstrap schedule report. The accepted
+  tiny and small96 chain1/chain2 pairs both show `+1` consumed CKKS level per
+  added recurrent update. Projecting to `24` recurrent updates at depth `48`
+  and min level `2` requires one prospective bootstrap before
+  `recurrent-step-22`. This is a schedule derived from telemetry, not an
+  executed bootstrap run.
 
 ## Dependency Map
 
@@ -181,8 +187,8 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   covers state-major decay, recurrence, readout, and output projection, with a
   tiny repeated recurrent-state chain smoke validating ciphertext state reuse.
   The remaining blockers are scaling the repeated chain to Mamba-130M shape,
-  adding model-layout layer-to-layer handoff, and inserting bootstrap scheduling
-  before any full 24-layer claim.
+  adding model-layout layer-to-layer handoff, and executing the derived
+  recurrent bootstrap schedule before any full 24-layer claim.
 - Sketch/range evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-013 is complete; PBI-S2-005 adds the first learned/data-dependent sketch baseline; PBI-S2-014 expands it to the matrix report; PBI-S2-015 adds the current range/LoRA decision gate. PBI-S2-004 and PBI-S0-010 continue to feed future PBI-S2-009 work if later encrypted chains expose a calibration failure.
 - Encrypted sketch execution: PBI-S2-006 and PBI-S2-007 are complete; the learned/data-dependent sketch branch is complete through PBI-S2-014. PBI-S2-015 currently recommends deferring LoRA until a later chain artifact fails the existing deterministic calibration gate.
 - Decoding branch: PBI-S2-003 is complete at the current scope. PBI-S2-010 records client-side decode accounting, and PBI-S2-011 records a toy encrypted CutMax/OpenFHE path. Full-vocab encrypted generation is not claimed.

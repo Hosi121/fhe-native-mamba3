@@ -1,0 +1,373 @@
+{
+  "base_chain_steps": 1,
+  "base_max_consumed_level": 26,
+  "base_max_consumed_level_name": "output_model_poly",
+  "bootstrap_before_recurrent_steps": [
+    22
+  ],
+  "decision_reasons": [
+    "target recurrent chain exceeds usable level budget without bootstrap",
+    "greedy schedule inserts 1 bootstrap(s)",
+    "input artifacts did not execute bootstrap; schedule remains prospective"
+  ],
+  "extended_chain_steps": 2,
+  "extended_max_consumed_level": 27,
+  "extended_max_consumed_level_name": "output_model_poly",
+  "final_level": 45,
+  "incremental_consumed_level_per_step": 1.0,
+  "incremental_depth_cost_per_step": 1,
+  "inputs": {
+    "base_json": "runs/stage1-s052-tiny-chain1-scale50-v03119.json",
+    "extended_json": "runs/stage1-s051-tiny-chain2-scale50-v03118.json"
+  },
+  "max_level": 48,
+  "measurement_scope": {
+    "artifact_level_report": true,
+    "chain_steps_are_recurrent_updates_not_model_layers": true,
+    "claim": "Infers recurrent-state bootstrap placement from Stage 1 FIDESlib chain-level telemetry; this is a scheduling report, not an executed bootstrap artifact.",
+    "encrypted": true,
+    "full_model_correctness_claimed": false,
+    "multi_layer_success_claimed": false,
+    "stage1_recurrent_bootstrap_report": true,
+    "uses_conservative_ceil_for_incremental_depth_cost": true
+  },
+  "min_level": 2,
+  "passed": true,
+  "projected_consumed_level_without_bootstrap": 49.0,
+  "recommended_action": "run_recurrent_chain_with_scheduled_bootstrap_probe",
+  "repo_commit": "bff66df2f0e9356816afd6bf4cbbf0b29980635b",
+  "schedule": {
+    "block_count": 24,
+    "blocks": [
+      {
+        "depth_cost": 26,
+        "name": "observed-base-chain-1-steps"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-2"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-3"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-4"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-5"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-6"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-7"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-8"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-9"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-10"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-11"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-12"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-13"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-14"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-15"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-16"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-17"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-18"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-19"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-20"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-21"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-22"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-23"
+      },
+      {
+        "depth_cost": 1,
+        "name": "recurrent-step-24"
+      }
+    ],
+    "bootstrap_before_blocks": [
+      21
+    ],
+    "bootstrap_before_names": [
+      "recurrent-step-22"
+    ],
+    "bootstraps": 1,
+    "final_level": 45,
+    "forced_bootstrap_before": [],
+    "max_level": 48,
+    "min_level": 2,
+    "steps": [
+      {
+        "block_index": 0,
+        "block_name": "observed-base-chain-1-steps",
+        "bootstrap_before": false,
+        "depth_cost": 26,
+        "post_level": 22,
+        "pre_level": 48,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 1,
+        "block_name": "recurrent-step-2",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 21,
+        "pre_level": 22,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 2,
+        "block_name": "recurrent-step-3",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 20,
+        "pre_level": 21,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 3,
+        "block_name": "recurrent-step-4",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 19,
+        "pre_level": 20,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 4,
+        "block_name": "recurrent-step-5",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 18,
+        "pre_level": 19,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 5,
+        "block_name": "recurrent-step-6",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 17,
+        "pre_level": 18,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 6,
+        "block_name": "recurrent-step-7",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 16,
+        "pre_level": 17,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 7,
+        "block_name": "recurrent-step-8",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 15,
+        "pre_level": 16,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 8,
+        "block_name": "recurrent-step-9",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 14,
+        "pre_level": 15,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 9,
+        "block_name": "recurrent-step-10",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 13,
+        "pre_level": 14,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 10,
+        "block_name": "recurrent-step-11",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 12,
+        "pre_level": 13,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 11,
+        "block_name": "recurrent-step-12",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 11,
+        "pre_level": 12,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 12,
+        "block_name": "recurrent-step-13",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 10,
+        "pre_level": 11,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 13,
+        "block_name": "recurrent-step-14",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 9,
+        "pre_level": 10,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 14,
+        "block_name": "recurrent-step-15",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 8,
+        "pre_level": 9,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 15,
+        "block_name": "recurrent-step-16",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 7,
+        "pre_level": 8,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 16,
+        "block_name": "recurrent-step-17",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 6,
+        "pre_level": 7,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 17,
+        "block_name": "recurrent-step-18",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 5,
+        "pre_level": 6,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 18,
+        "block_name": "recurrent-step-19",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 4,
+        "pre_level": 5,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 19,
+        "block_name": "recurrent-step-20",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 3,
+        "pre_level": 4,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 20,
+        "block_name": "recurrent-step-21",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 2,
+        "pre_level": 3,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 21,
+        "block_name": "recurrent-step-22",
+        "bootstrap_before": true,
+        "depth_cost": 1,
+        "post_level": 47,
+        "pre_level": 48,
+        "reason": "level-underflow"
+      },
+      {
+        "block_index": 22,
+        "block_name": "recurrent-step-23",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 46,
+        "pre_level": 47,
+        "reason": "level-budget-ok"
+      },
+      {
+        "block_index": 23,
+        "block_name": "recurrent-step-24",
+        "bootstrap_before": false,
+        "depth_cost": 1,
+        "post_level": 45,
+        "pre_level": 46,
+        "reason": "level-budget-ok"
+      }
+    ]
+  },
+  "stage": "stage1-recurrent-bootstrap-report",
+  "target_chain_steps": 24,
+  "total_bootstrap_count": 1,
+  "version": "0.3.121"
+}
