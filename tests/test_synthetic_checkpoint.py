@@ -72,6 +72,11 @@ def test_build_synthetic_checkpoint_script(tmp_path: Path) -> None:
     assert payload["version"] == __version__
     assert payload["passed"] is True
     assert payload["tensor_count"] == 3 + 10 * 2
+    assert payload["config"]["input_mode"] == "synthetic-checkpoint-build"
+    assert payload["config"]["synthetic_checkpoint"]["n_layers"] == 2
+    assert payload["measurement_scope"]["devex_only"] is True
+    assert payload["measurement_scope"]["full_model_correctness_claimed"] is False
+    assert payload["measurements"]["output_size_bytes"] == checkpoint.stat().st_size
     assert key == "model"
     assert loaded["backbone.layers.1.mixer.dt_proj.weight"].shape == (12, 5)
     assert torch.is_tensor(loaded["backbone.norm_f.weight"])

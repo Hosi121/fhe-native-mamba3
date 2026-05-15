@@ -41,9 +41,31 @@ def main() -> int:
         "version": __version__,
         "repo_commit": current_git_commit(ROOT),
         "stage": "synthetic-mamba-checkpoint",
+        "backend": "none",
         "output": str(args.output),
         "state_dict_key": args.state_dict_key,
-        "config": config.__dict__,
+        "config": {
+            "input_mode": "synthetic-checkpoint-build",
+            "synthetic_checkpoint": config.__dict__,
+        },
+        "measurement_scope": {
+            "benchmark": False,
+            "devex_only": True,
+            "full_model_correctness_claimed": False,
+            "claim": (
+                "Builds a deterministic synthetic checkpoint for downstream encrypted "
+                "smokes; it does not execute inference or claim model correctness."
+            ),
+        },
+        "measurements": {
+            "output_size_bytes": args.output.stat().st_size,
+        },
+        "operation_counts": {
+            "rotations": 0,
+            "ct_pt_mul": 0,
+            "ct_ct_mul": 0,
+            "bootstraps": 0,
+        },
         "tensor_count": len(state_dict),
         "passed": True,
     }
