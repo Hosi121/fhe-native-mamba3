@@ -129,6 +129,14 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   and max consumed level `27/48`. This validates encrypted recurrent-state
   handoff inside the Stage 1 slice; it does not claim model-layer-to-layer
   handoff or full-model success.
+- `v0.3.119` adds chain-scaling reports that compare `CHAIN_STEPS=1` and
+  `CHAIN_STEPS=2` artifacts to separate setup/key/context costs from recurrent
+  eval increments. Tiny chain scaling (`10489` vs `10483`) reports an extra
+  encrypted recurrent step at `+0.40s`, `+7` rotations, `+14` ct-pt muls, and
+  `+3` ct-ct muls. Small96 chain scaling (`10490` vs `10488`) reports
+  `+10.58s`, `+37` rotations, `+160` ct-pt muls, and `+3` ct-ct muls. Both
+  pass with no bootstrap; Mamba-130M-shape chain2 remains in flight as job
+  `10487`.
 
 ## Dependency Map
 
