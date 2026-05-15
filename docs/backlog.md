@@ -317,6 +317,15 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   projections to `1.19s` / `1.18s`, and lowers eval to `753.84s` (`1.32x`).
   The remaining Stage 1 bottleneck is now conv/gate/output/dt dense projection,
   not B/C, recurrence, or polynomial nonlinearities.
+- `v0.3.150` adds a direct truncated-SVD low-rank diagnostic for rank/gate/output
+  payload projections. It confirms that the LoRA-merged synthetic Mamba-130M-
+  shaped payload has a compressed rank-8 pass, but the real
+  `state-spaces/mamba-130m-hf` layer-0 payload has no compressed pass under
+  `output_delta_atol=5e-2`; only full rank `768` passes. A small real-checkpoint
+  LoRA range sweep still succeeds as a range-control tool, reducing
+  `gate_pre_max_abs` from `7.1291` to `5.6763` with zero remaining range excess
+  and task MSE `1.47e-03`, but direct post-hoc SVD is not a credible projection
+  runtime fix without distillation or architecture changes.
 
 ## Near-Term Parallel Slices
 
@@ -325,9 +334,10 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   remaining conv/gate/output/dt dense projection cost before attempting broader
   24-layer scheduling.
 - Stage 2 B: PBI-S2-009 now has a complete LoRA range-tuning -> payload merge
-  -> encrypted replay slice for Mamba-130M layer 0. Continue only if later
-  layers or real checkpoints expose range failures; otherwise prioritize Stage 1
-  projection/runtime reduction.
+  -> encrypted replay slice for Mamba-130M layer 0, plus a real-checkpoint layer-0
+  range sweep. Continue LoRA only for range control or distillation; direct
+  post-hoc SVD low-rank replacement should not be prioritized as the Stage 1
+  dense-projection runtime fix.
 - Low-risk reporting C: run `scripts/sync_backlog_issues.py` after backlog
   edits to keep GitHub Issue plans in sync; direct Project board automation is
   future DevEx work, not claimed in this line. Use
