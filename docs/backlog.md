@@ -216,6 +216,12 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   layer's pre-recurrence tensors payload/reference-driven. Remote FIDESlib
   compile on `high` passes; the next artifact should be a tiny two-payload
   encrypted model-layout handoff run.
+- Job `10497` closes that tiny handoff smoke: `runs/stage1-s055-tiny-model-handoff-v03130.json`
+  passes with `payload_count=2`, `model_layout_ciphertext_handoff=true`,
+  final `max_abs_error=0`, handoff reference error `5.43e-08`, `110`
+  rotations, `150` ct-pt multiplies, `60` ct-ct multiplies, eval `42.60s`,
+  and peak RSS `13.64 GiB`. This is still tiny-shape evidence; the next
+  Stage 1 scaling step is small96 or Mamba-130M-shaped model-layout handoff.
 
 ## Near-Term Parallel Slices
 

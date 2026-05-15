@@ -1,0 +1,72 @@
+{
+  "artifact_exists": true,
+  "artifact_passed": true,
+  "artifact_path": "runs/stage1-s055-tiny-model-handoff-v03130.json",
+  "artifact_stage": "stage1-rank-gate-fideslib-projection",
+  "artifact_valid": true,
+  "collection_complete": true,
+  "expected_artifact": "runs/stage1-s055-tiny-model-handoff-v03130.json",
+  "job_id": "10497",
+  "ledger_row": "| PBI-S1-045 | 10497 | `runs/stage1-s055-tiny-model-handoff-v03130.json` | `v0.3.130` / `d6c85cc` | Passed | Single SLURM job collection result. |",
+  "measurement_scope": {
+    "claim": "single SLURM job collection and artifact validation summary",
+    "collection_only": true,
+    "full_model_correctness_claimed": false,
+    "remote_pull_attempted": true
+  },
+  "passed": true,
+  "pbi_ids": [
+    "PBI-S1-045"
+  ],
+  "remote_pull": {
+    "command": [
+      "rsync",
+      "-az",
+      "high:/home/asuser30135/cipher/fhe-native-mamba3/runs/stage1-s055-tiny-model-handoff-v03130.json",
+      "runs/stage1-s055-tiny-model-handoff-v03130.json"
+    ],
+    "destination": "runs/stage1-s055-tiny-model-handoff-v03130.json",
+    "remote_path": "high:/home/asuser30135/cipher/fhe-native-mamba3/runs/stage1-s055-tiny-model-handoff-v03130.json",
+    "returncode": 0,
+    "status": "pulled",
+    "stderr": "",
+    "stdout": ""
+  },
+  "repo_commit": "d6c85cce022f652833cfd3095b1e203ef09c1b42",
+  "root_state": "COMPLETED",
+  "sacct_rows": [
+    {
+      "Elapsed": "00:01:19",
+      "ExitCode": "0:0",
+      "JobID": "10497",
+      "MaxRSS": "",
+      "State": "COMPLETED"
+    },
+    {
+      "Elapsed": "00:01:19",
+      "ExitCode": "0:0",
+      "JobID": "10497.batch",
+      "MaxRSS": "14192508K",
+      "State": "COMPLETED"
+    },
+    {
+      "Elapsed": "00:01:19",
+      "ExitCode": "0:0",
+      "JobID": "10497.extern",
+      "MaxRSS": "0",
+      "State": "COMPLETED"
+    }
+  ],
+  "stage": "single-slurm-job-collection",
+  "validation": {
+    "error_count": 0,
+    "explicit_non_success_probe": false,
+    "issues": [],
+    "stage": "stage1-rank-gate-fideslib-projection",
+    "success_claimed": true,
+    "success_predicate_passed": true,
+    "valid": true,
+    "warning_count": 0
+  },
+  "version": "0.3.130"
+}
