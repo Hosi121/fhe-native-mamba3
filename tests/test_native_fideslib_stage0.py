@@ -169,6 +169,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "model_layout_ciphertext_handoff" in rank_gate_fideslib_text
     assert "pre_recurrence_payload_reference_per_layer" in rank_gate_fideslib_text
     assert "payload_chain_reference_max_abs_error" in rank_gate_fideslib_text
+    assert '"output_model_poly_vs_exact_reference_steps\\":" << payloads.size()' in (
+        rank_gate_fideslib_text
+    )
     assert "bootstrap_before_chain_steps" in rank_gate_fideslib_text
     assert "EvalBootstrapSetup" in rank_gate_fideslib_text
     assert "EvalBootstrap(result.state_new_poly)" in rank_gate_fideslib_text

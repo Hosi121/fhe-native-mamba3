@@ -1876,7 +1876,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"decay_poly_vs_exact_max_abs_error\":" << decay_poly_approx_error << ",";
     out << "\"output_model_poly_vs_exact_max_abs_error\":" << output_model_poly_vs_exact_error
         << ",";
-    out << "\"output_model_poly_vs_exact_reference_steps\":1,";
+    out << "\"output_model_poly_vs_exact_reference_steps\":" << payloads.size() << ",";
     out << "\"native_plaintext_reference_max_abs_error\":" << reference.max_abs_error << ",";
     out << "\"payload_chain_reference_max_abs_error\":" << handoff_reference.max_abs_error << ",";
     out << "\"model_layout_handoff_max_abs_error\":"
