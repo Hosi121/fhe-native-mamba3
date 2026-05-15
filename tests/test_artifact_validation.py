@@ -83,6 +83,31 @@ def test_artifact_validator_allows_explicit_non_success_probe() -> None:
     assert result.success_predicate_passed is False
 
 
+def test_artifact_validator_accepts_native_rank_gate_artifact_contract() -> None:
+    payload = _native_rank_gate_payload(passed=True)
+
+    result = validate_benchmark_artifact(payload, require_commit=True)
+
+    assert result.valid is True
+    assert result.warnings == ()
+    assert result.stage == "stage1-rank-gate-fideslib-projection"
+    assert result.success_claimed is True
+
+
+def test_artifact_validator_accepts_native_rank_gate_failure_contract() -> None:
+    payload = _native_rank_gate_payload(passed=False)
+    payload["status"] = "failed"
+    payload["failure_phase"] = "decrypt"
+    payload["error_message"] = "decode failed"
+    payload["measurement_scope"]["decrypt_failure_artifact"] = True
+
+    result = validate_benchmark_artifact(payload, require_commit=True)
+
+    assert result.valid is True
+    assert result.warnings == ()
+    assert result.success_claimed is False
+
+
 def test_artifact_validator_file_loader_rejects_non_object(tmp_path: Path) -> None:
     path = tmp_path / "artifact.json"
     path.write_text("[]", encoding="utf-8")
@@ -152,5 +177,55 @@ def _checkpoint_sweep_payload(*, passed: bool) -> dict[str, object]:
                     "rotation_count": 2,
                 }
             ],
+        },
+    }
+
+
+def _native_rank_gate_payload(*, passed: bool) -> dict[str, object]:
+    return {
+        "version": __version__,
+        "repo_commit": "abc123",
+        "stage": "stage1-rank-gate-fideslib-projection",
+        "backend": "fideslib-gpu",
+        "encrypted": True,
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "config": {"input_mode": "stage1-rank-gate-fideslib-projection"},
+        "parameters": {
+            "d_model": 8,
+            "d_state": 2,
+            "mimo_rank": 6,
+            "rank_pad": 8,
+            "batch_size": 16,
+            "ring_dimension": 131072,
+            "multiplicative_depth": 48,
+            "scaling_mod_size": 50,
+            "chain_steps": 3,
+            "bootstrap_before_chain_steps": [2],
+        },
+        "measurements": {
+            "max_abs_error": 0.0,
+            "required_application_rotation_key_count": 7,
+        },
+        "operation_counts": {
+            "rotations": 55,
+            "ct_pt_mul": 100,
+            "ct_ct_mul": 31,
+            "adds": 42,
+            "bootstraps": 1,
+        },
+        "measurement_scope": {
+            "rank_gate_payload": True,
+            "state_major_layout": True,
+            "recurrence_tail_executed": True,
+            "ciphertext_recurrent_state_chain": True,
+            "scheduled_bootstrap_chain": True,
+            "bootstrap_before_chain_steps": [2],
+            "executed_bootstrap_count": 1,
+            "full_model_correctness_claimed": False,
+            "claim": (
+                "Native FIDESlib encrypted rank/gate recurrence-tail projection artifact; "
+                "does not claim full 24-layer Mamba inference."
+            ),
         },
     }
