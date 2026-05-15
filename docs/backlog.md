@@ -122,6 +122,13 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   level `27/48`. This closes the immediate nonzero-state one-layer correctness
   blocker for the synthetic Mamba-130M-shaped FIDESlib slice; multi-layer
   chaining and bootstrap scheduling remain open.
+- `v0.3.118` adds a repeated encrypted recurrent-state chain smoke to the
+  native FIDESlib rank/gate kernel. Tiny high/B200 job `10483` passed with
+  `CHAIN_STEPS=2`, nonzero previous state, `max_abs_error=0`,
+  `diagnostic_max_abs_error=3.10e-05`, eval `24.90s`, peak RSS `14.27 GiB`,
+  and max consumed level `27/48`. This validates encrypted recurrent-state
+  handoff inside the Stage 1 slice; it does not claim model-layer-to-layer
+  handoff or full-model success.
 
 ## Dependency Map
 
@@ -162,9 +169,12 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   parity is also available natively; encrypted FIDESlib rank/gate projection
   passes through Mamba-130M shape; and the encrypted native slice now covers
   polynomial SiLU, skip update, dynamic B/C, and state-major B/C
-  broadcast through Mamba-130M shape. The remaining blocker is adding
-  decay/recurrence integration so the result covers the full one-layer
-  checkpoint bridge rather than separate source-boundary slices.
+  broadcast through Mamba-130M shape. The encrypted native slice now also
+  covers state-major decay, recurrence, readout, and output projection, with a
+  tiny repeated recurrent-state chain smoke validating ciphertext state reuse.
+  The remaining blockers are scaling the repeated chain to Mamba-130M shape,
+  adding model-layout layer-to-layer handoff, and inserting bootstrap scheduling
+  before any full 24-layer claim.
 - Sketch/range evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-013 is complete; PBI-S2-005 adds the first learned/data-dependent sketch baseline; PBI-S2-014 expands it to the matrix report; PBI-S2-015 adds the current range/LoRA decision gate. PBI-S2-004 and PBI-S0-010 continue to feed future PBI-S2-009 work if later encrypted chains expose a calibration failure.
 - Encrypted sketch execution: PBI-S2-006 and PBI-S2-007 are complete; the learned/data-dependent sketch branch is complete through PBI-S2-014. PBI-S2-015 currently recommends deferring LoRA until a later chain artifact fails the existing deterministic calibration gate.
 - Decoding branch: PBI-S2-003 is complete at the current scope. PBI-S2-010 records client-side decode accounting, and PBI-S2-011 records a toy encrypted CutMax/OpenFHE path. Full-vocab encrypted generation is not claimed.
