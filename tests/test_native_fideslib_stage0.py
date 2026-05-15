@@ -157,6 +157,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "bootstrap_before_chain_steps" in rank_gate_fideslib_text
     assert "EvalBootstrapSetup" in rank_gate_fideslib_text
     assert "EvalBootstrap(state_new_poly_ct)" in rank_gate_fideslib_text
+    assert "write_runtime_failure_payload" in rank_gate_fideslib_text
     assert "previous_state_nonzero" in rank_gate_fideslib_text
     assert "state_new_poly" in rank_gate_fideslib_text
     assert "state_vector_to_state_major_ciphertext" in rank_gate_fideslib_text

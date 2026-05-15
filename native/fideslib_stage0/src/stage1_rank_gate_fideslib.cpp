@@ -699,6 +699,14 @@ void write_payload(const std::string& output_json, const std::string& payload) {
   output << payload << std::endl;
 }
 
+auto payload_file_exists(const std::string& output_json) -> bool {
+  if (output_json.empty()) {
+    return false;
+  }
+  std::ifstream input(output_json, std::ios::ate);
+  return input && input.tellg() > 0;
+}
+
 void write_level_field(
     std::ostringstream& out,
     std::string_view name,
@@ -750,6 +758,54 @@ auto json_escape(std::string_view value) -> std::string {
     }
   }
   return output;
+}
+
+void write_runtime_failure_payload(
+    const Config& args,
+    std::string_view phase,
+    std::string_view message) {
+  if (args.output_json.empty()) {
+    return;
+  }
+  std::ostringstream out;
+  out << "{";
+  out << "\"stage\":\"stage1-rank-gate-fideslib-projection\",";
+  out << "\"backend\":\"fideslib-gpu\",";
+  out << "\"encrypted\":true,";
+  out << "\"status\":\"failed\",";
+  out << "\"passed\":false,";
+  out << "\"failure_phase\":\"" << json_escape(phase) << "\",";
+  out << "\"error_message\":\"" << json_escape(message) << "\",";
+  out << "\"parameters\":{";
+  out << "\"ring_dimension\":" << args.ring_dim << ",";
+  out << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
+  out << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
+  out << "\"chain_steps\":" << args.chain_steps << ",";
+  out << "\"bootstrap_before_chain_steps\":";
+  write_int_set_json(out, args.bootstrap_before_chain_steps);
+  out << "},";
+  out << "\"operation_counts\":{";
+  out << "\"bootstraps\":0,";
+  out << "\"rotations\":0,";
+  out << "\"ct_ct_mul\":0,";
+  out << "\"ct_pt_mul\":0";
+  out << "},";
+  out << "\"measurement_scope\":{";
+  out << "\"rank_gate_payload\":true,";
+  out << "\"state_major_layout\":true,";
+  out << "\"scheduled_bootstrap_chain\":"
+      << (args.bootstrap_before_chain_steps.empty() ? "false" : "true") << ",";
+  out << "\"bootstrap_before_chain_steps\":";
+  write_int_set_json(out, args.bootstrap_before_chain_steps);
+  out << ",";
+  out << "\"non_success_probe\":true,";
+  out << "\"success_not_expected\":true,";
+  out << "\"full_model_correctness_claimed\":false,";
+  out << "\"claim\":\"Native FIDESlib rank/gate chain failed before final decrypt; "
+         "this artifact preserves the failure phase for collection.\"";
+  out << "}";
+  out << "}";
+  write_payload(args.output_json, out.str());
 }
 
 auto build_repeated_chain_reference(
@@ -824,8 +880,11 @@ auto build_repeated_chain_reference(
 }  // namespace
 
 auto main(int argc, char* argv[]) -> int {
+  Config args;
+  bool args_available = false;
   try {
-    const auto args = parse_args(argc, argv);
+    args = parse_args(argc, argv);
+    args_available = true;
     const auto payload = stage1::read_rank_gate_payload(args.input);
     const auto reference = stage1::evaluate_rank_gate_payload(payload);
     const auto required_rotations = required_rank_gate_rotations(payload);
@@ -1679,6 +1738,14 @@ auto main(int argc, char* argv[]) -> int {
     write_payload(args.output_json, out.str());
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
   } catch (const std::exception& exc) {
+    if (args_available && !payload_file_exists(args.output_json)) {
+      try {
+        write_runtime_failure_payload(args, "runtime", exc.what());
+      } catch (const std::exception& write_exc) {
+        std::cerr << "failed to write runtime failure artifact: " << write_exc.what()
+                  << std::endl;
+      }
+    }
     std::cerr << "stage1_rank_gate_fideslib failed: " << exc.what() << std::endl;
     return EXIT_FAILURE;
   }
