@@ -239,6 +239,19 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   `13.64 -> 30.09 GiB`. This supports the current diagnosis that the next
   Mamba-130M-shaped two-layer attempt is projection/rotation dominated rather
   than recurrence-multiplication dominated.
+- Job `10500` closes the Mamba-130M-shaped two-payload encrypted handoff
+  attempt: `runs/stage1-s057-mamba130m-model-handoff-v03133.json` passes with
+  `d_model=768`, `mimo_rank=1536`, `d_state=16`, `payload_count=2`,
+  `model_layout_ciphertext_handoff=true`, final polynomial `max_abs_error=0`,
+  handoff reference error `4.66e-10`, payload-chain reference error
+  `2.46e-06`, `189` application rotation keys, `2072` rotations, `26422`
+  ct-pt multiplies, `60` ct-ct multiplies, eval `2114.35s`, peak RSS
+  `77.71 GiB`, and SLURM elapsed `00:38:52`. The exact-reference diagnostic
+  error is still large (`4.50`), so the evidence is correctness of the
+  encrypted polynomial execution and model-layout ciphertext handoff, not
+  language-model quality preservation. The next bottleneck is reducing
+  projection/rotation cost and deciding whether to pursue 24-layer synthetic
+  polynomial execution or first add range calibration / lower-degree adapters.
 
 ## Near-Term Parallel Slices
 
