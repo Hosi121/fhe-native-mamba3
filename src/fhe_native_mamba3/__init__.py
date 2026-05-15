@@ -227,6 +227,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage2_lora_payload_merge",
         "train_and_merge_lora_range_payload",
     ),
+    "sweep_low_rank_payload": (
+        "fhe_native_mamba3.stage2_low_rank_payload_sweep",
+        "sweep_low_rank_payload",
+    ),
+    "truncated_svd_reconstruction": (
+        "fhe_native_mamba3.stage2_low_rank_payload_sweep",
+        "truncated_svd_reconstruction",
+    ),
     "train_lora_range_model": (
         "fhe_native_mamba3.stage2_lora_range_smoke",
         "train_lora_range_model",
@@ -315,6 +323,18 @@ _LAZY_IMPORTS = {
     "Stage2LoRARangeSweepRow": (
         "fhe_native_mamba3.stage2_lora_range_sweep",
         "Stage2LoRARangeSweepRow",
+    ),
+    "LowRankPayloadSweepResult": (
+        "fhe_native_mamba3.stage2_low_rank_payload_sweep",
+        "LowRankPayloadSweepResult",
+    ),
+    "LowRankPayloadSweepRow": (
+        "fhe_native_mamba3.stage2_low_rank_payload_sweep",
+        "LowRankPayloadSweepRow",
+    ),
+    "LowRankProjectionEstimate": (
+        "fhe_native_mamba3.stage2_low_rank_payload_sweep",
+        "LowRankProjectionEstimate",
     ),
     "RangeLossConfig": ("fhe_native_mamba3.range_finetune", "RangeLossConfig"),
     "RangeLossResult": ("fhe_native_mamba3.range_finetune", "RangeLossResult"),
@@ -1272,6 +1292,9 @@ __all__ = [
     "LearnedSketchReportRow",
     "LoRAConfig",
     "LoRALinear",
+    "LowRankPayloadSweepResult",
+    "LowRankPayloadSweepRow",
+    "LowRankProjectionEstimate",
     "MambaCheckpointAdapterReport",
     "MambaCheckpointPlan",
     "MambaLayerPlan",
@@ -1543,8 +1566,10 @@ __all__ = [
     "state_axis_rotation_steps",
     "state_major_slot",
     "sweep_head_pack_candidates",
+    "sweep_low_rank_payload",
     "train_and_merge_lora_range_payload",
     "train_lora_range_model",
+    "truncated_svd_reconstruction",
     "validate_artifact_file",
     "validate_benchmark_artifact",
     "write_stage1_checkpoint_tail_payload_binary",
