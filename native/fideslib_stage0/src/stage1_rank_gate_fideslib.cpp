@@ -331,6 +331,19 @@ auto rank_to_state_vector_reduce_rotations(const stage1::RankGatePayloadConfig& 
   return rank_to_vector_reduce_rotations(config, config.d_state);
 }
 
+auto vector_to_rank_block_expand_rotations(
+    int input_dim,
+    const stage1::RankGatePayloadConfig& config) -> std::vector<int32_t> {
+  std::set<int32_t> rotations;
+  for (int input_index = 1; input_index < input_dim; ++input_index) {
+    rotations.insert(static_cast<int32_t>(input_index));
+  }
+  for (std::uint32_t step = 1; step < config.rank_pad; step *= 2) {
+    rotations.insert(-static_cast<int32_t>(step));
+  }
+  return {rotations.begin(), rotations.end()};
+}
+
 auto bounded_baby_step(int requested, int input_dim) -> int {
   return std::max(1, std::min(requested, input_dim));
 }
@@ -382,11 +395,8 @@ auto required_rank_gate_rotations(const stage1::RankGatePayload& payload)
   const auto dt_hidden_rotations =
       rank_to_vector_reduce_rotations(config, static_cast<std::uint32_t>(dt_rank));
   rotations.insert(dt_hidden_rotations.begin(), dt_hidden_rotations.end());
-  const auto dt_project_rotations = slot_bsgs_rotations(
-      dt_rank,
-      config.mimo_rank,
-      bounded_baby_step(static_cast<int>(config.rank_baby_step), dt_rank));
-  rotations.insert(dt_project_rotations.begin(), dt_project_rotations.end());
+  const auto dt_project_expand_rotations = vector_to_rank_block_expand_rotations(dt_rank, config);
+  rotations.insert(dt_project_expand_rotations.begin(), dt_project_expand_rotations.end());
   const auto state_rotations = state_vector_to_state_major_rotations(config);
   rotations.insert(state_rotations.begin(), state_rotations.end());
   const auto rank_broadcast_rotations = rank_block0_to_state_major_rotations(config);
@@ -733,6 +743,74 @@ auto rank_to_state_vector_linear_reduce(
       rotations,
       ct_pt_muls,
       adds);
+}
+
+auto vector_to_rank_block_linear_expand(
+    const CryptoContext<DCRTPoly>& cc,
+    const Ciphertext<DCRTPoly>& input_ct,
+    const std::vector<double>& weights,
+    int input_dim,
+    const stage1::RankGatePayloadConfig& config,
+    int batch_size,
+    int& rotations,
+    int& ct_pt_muls,
+    int& adds) -> Ciphertext<DCRTPoly> {
+  if (input_dim <= 0 || static_cast<std::uint32_t>(input_dim) > config.rank_pad) {
+    throw std::runtime_error("vector-to-rank expansion input_dim exceeds rank pad");
+  }
+  if (weights.size() != static_cast<std::size_t>(config.mimo_rank) * input_dim) {
+    throw std::runtime_error("vector-to-rank expansion weights have invalid size");
+  }
+  Ciphertext<DCRTPoly> accumulator;
+  bool has_accumulator = false;
+  for (int input_index = 0; input_index < input_dim; ++input_index) {
+    std::vector<double> select_mask(static_cast<std::size_t>(batch_size), 0.0);
+    select_mask[static_cast<std::size_t>(input_index)] = 1.0;
+    auto select_plain = cc->MakeCKKSPackedPlaintext(select_mask);
+    select_plain->SetLength(static_cast<std::size_t>(batch_size));
+    auto column_ct = cc->EvalMult(input_ct, select_plain);
+    ++ct_pt_muls;
+    if (input_index != 0) {
+      column_ct = cc->EvalRotate(column_ct, static_cast<int32_t>(input_index));
+      ++rotations;
+    }
+    for (std::uint32_t step = 1; step < config.rank_pad; step *= 2) {
+      column_ct = cc->EvalAdd(column_ct, cc->EvalRotate(column_ct, -static_cast<int32_t>(step)));
+      ++rotations;
+      ++adds;
+    }
+
+    std::vector<double> weight_mask(static_cast<std::size_t>(batch_size), 0.0);
+    bool has_column = false;
+    for (std::uint32_t rank_index = 0; rank_index < config.mimo_rank; ++rank_index) {
+      const auto weight_index =
+          static_cast<std::size_t>(rank_index) * input_dim + static_cast<std::size_t>(input_index);
+      const double value = weights[weight_index];
+      if (std::abs(value) < kPlaintextCoefficientFloor) {
+        continue;
+      }
+      weight_mask[rank_index] = value;
+      has_column = true;
+    }
+    if (!has_column) {
+      continue;
+    }
+    auto weight_plain = cc->MakeCKKSPackedPlaintext(weight_mask);
+    weight_plain->SetLength(static_cast<std::size_t>(batch_size));
+    auto term = cc->EvalMult(column_ct, weight_plain);
+    ++ct_pt_muls;
+    if (!has_accumulator) {
+      accumulator = term;
+      has_accumulator = true;
+    } else {
+      accumulator = cc->EvalAdd(accumulator, term);
+      ++adds;
+    }
+  }
+  if (!has_accumulator) {
+    throw std::runtime_error("vector-to-rank expansion produced no terms");
+  }
+  return accumulator;
 }
 
 void align_levels(
@@ -1459,17 +1537,13 @@ auto main(int argc, char* argv[]) -> int {
             adds);
       });
       log_phase("payload layer " + std::to_string(payload_index) + " dt hidden projection done");
-      const int dt_baby_step = bounded_baby_step(
-          static_cast<int>(layer_payload.config.rank_baby_step),
-          result.dt_rank);
       time_phase(phase_prefix + "dt_rank_projection", [&]() {
-        result.dt_pre_poly = slot_bsgs_linear_block0(
+        result.dt_pre_poly = vector_to_rank_block_linear_expand(
             cc,
             result.dt_hidden_poly,
             layer_payload.array("dt_proj_weight").values,
             result.dt_rank,
-            static_cast<int>(layer_payload.config.mimo_rank),
-            dt_baby_step,
+            layer_payload.config,
             batch_size,
             rotations,
             ct_pt_muls,
