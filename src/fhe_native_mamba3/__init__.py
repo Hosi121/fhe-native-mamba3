@@ -304,6 +304,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage2_lora_range_smoke",
         "Stage2LoRARangeSmokeResult",
     ),
+    "Stage2LoRAReplayReport": (
+        "fhe_native_mamba3.stage2_lora_replay_report",
+        "Stage2LoRAReplayReport",
+    ),
     "Stage2LoRARangeSweepResult": (
         "fhe_native_mamba3.stage2_lora_range_sweep",
         "Stage2LoRARangeSweepResult",
@@ -798,6 +802,10 @@ _LAZY_IMPORTS = {
     "build_stage1_tail_gap_report": (
         "fhe_native_mamba3.stage1_tail_gap_report",
         "build_stage1_tail_gap_report",
+    ),
+    "build_stage2_lora_replay_report": (
+        "fhe_native_mamba3.stage2_lora_replay_report",
+        "build_stage2_lora_replay_report",
     ),
     "build_fixed_bsgs_schedule": (
         "fhe_native_mamba3.stage1_state_major_layout",
