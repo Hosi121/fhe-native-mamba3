@@ -100,3 +100,12 @@ def test_top_level_lora_linear_parameters_are_trainable_and_counted() -> None:
         lora_parameter_count(module) == module.lora_a.weight.numel() + module.lora_b.weight.numel()
     )
     assert module.base.weight.requires_grad is False
+
+
+def test_lora_linear_matches_base_dtype() -> None:
+    base = nn.Linear(4, 3).double()
+
+    module = LoRALinear(base, LoRAConfig(rank=2, alpha=4.0, freeze_base=True))
+
+    assert module.lora_a.weight.dtype == base.weight.dtype
+    assert module.lora_b.weight.dtype == base.weight.dtype

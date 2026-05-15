@@ -108,6 +108,8 @@ class LoRALinear(nn.Module):
         self.config = config
         self.lora_a = nn.Linear(base.in_features, config.rank, bias=False)
         self.lora_b = nn.Linear(config.rank, base.out_features, bias=False)
+        self.lora_a.to(device=base.weight.device, dtype=base.weight.dtype)
+        self.lora_b.to(device=base.weight.device, dtype=base.weight.dtype)
         self.dropout = nn.Dropout(config.dropout)
         self.scaling = config.alpha / config.rank
         self.reset_parameters()
