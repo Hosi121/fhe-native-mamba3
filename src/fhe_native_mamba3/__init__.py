@@ -231,6 +231,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage2_low_rank_payload_sweep",
         "sweep_low_rank_payload",
     ),
+    "sweep_projection_pruning": (
+        "fhe_native_mamba3.stage2_projection_prune_sweep",
+        "sweep_projection_pruning",
+    ),
     "truncated_svd_reconstruction": (
         "fhe_native_mamba3.stage2_low_rank_payload_sweep",
         "truncated_svd_reconstruction",
@@ -335,6 +339,18 @@ _LAZY_IMPORTS = {
     "LowRankProjectionEstimate": (
         "fhe_native_mamba3.stage2_low_rank_payload_sweep",
         "LowRankProjectionEstimate",
+    ),
+    "ProjectionPruneEstimate": (
+        "fhe_native_mamba3.stage2_projection_prune_sweep",
+        "ProjectionPruneEstimate",
+    ),
+    "ProjectionPruneSweepResult": (
+        "fhe_native_mamba3.stage2_projection_prune_sweep",
+        "ProjectionPruneSweepResult",
+    ),
+    "ProjectionPruneSweepRow": (
+        "fhe_native_mamba3.stage2_projection_prune_sweep",
+        "ProjectionPruneSweepRow",
     ),
     "RangeLossConfig": ("fhe_native_mamba3.range_finetune", "RangeLossConfig"),
     "RangeLossResult": ("fhe_native_mamba3.range_finetune", "RangeLossResult"),
@@ -1313,6 +1329,9 @@ __all__ = [
     "OpenFheRecurrenceResult",
     "PackedPrefixScanPlan",
     "PackingPlan",
+    "ProjectionPruneEstimate",
+    "ProjectionPruneSweepResult",
+    "ProjectionPruneSweepRow",
     "RangeLossConfig",
     "RangeLossResult",
     "RangeLossTerm",
@@ -1567,6 +1586,7 @@ __all__ = [
     "state_major_slot",
     "sweep_head_pack_candidates",
     "sweep_low_rank_payload",
+    "sweep_projection_pruning",
     "train_and_merge_lora_range_payload",
     "train_lora_range_model",
     "truncated_svd_reconstruction",
