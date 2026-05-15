@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 using namespace fideslib;
@@ -90,10 +91,42 @@ struct LayerCiphertexts {
   bool previous_state_is_zero = true;
 };
 
+struct OperationCounts {
+  int rotations = 0;
+  int ct_pt_mul = 0;
+  int ct_ct_mul = 0;
+  int adds = 0;
+  int unity_level_align_muls = 0;
+  int bootstraps = 0;
+};
+
 auto now() -> std::chrono::steady_clock::time_point { return std::chrono::steady_clock::now(); }
 
 auto seconds_since(std::chrono::steady_clock::time_point start) -> double {
   return std::chrono::duration<double>(now() - start).count();
+}
+
+auto add_counts(OperationCounts lhs, const OperationCounts& rhs) -> OperationCounts {
+  lhs.rotations += rhs.rotations;
+  lhs.ct_pt_mul += rhs.ct_pt_mul;
+  lhs.ct_ct_mul += rhs.ct_ct_mul;
+  lhs.adds += rhs.adds;
+  lhs.unity_level_align_muls += rhs.unity_level_align_muls;
+  lhs.bootstraps += rhs.bootstraps;
+  return lhs;
+}
+
+auto subtract_counts(const OperationCounts& after, const OperationCounts& before)
+    -> OperationCounts {
+  return OperationCounts{
+      .rotations = after.rotations - before.rotations,
+      .ct_pt_mul = after.ct_pt_mul - before.ct_pt_mul,
+      .ct_ct_mul = after.ct_ct_mul - before.ct_ct_mul,
+      .adds = after.adds - before.adds,
+      .unity_level_align_muls =
+          after.unity_level_align_muls - before.unity_level_align_muls,
+      .bootstraps = after.bootstraps - before.bootstraps,
+  };
 }
 
 auto parse_int(std::string_view name, const char* value) -> int {
@@ -874,6 +907,48 @@ auto json_escape(std::string_view value) -> std::string {
   return output;
 }
 
+void write_double_map_json(
+    std::ostringstream& out,
+    const std::map<std::string, double>& values) {
+  out << "{";
+  bool first = true;
+  for (const auto& [name, value] : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    out << "\"" << json_escape(name) << "\":" << value;
+  }
+  out << "}";
+}
+
+void write_operation_counts_json(std::ostringstream& out, const OperationCounts& counts) {
+  out << "{";
+  out << "\"rotations\":" << counts.rotations << ",";
+  out << "\"ct_pt_mul\":" << counts.ct_pt_mul << ",";
+  out << "\"ct_ct_mul\":" << counts.ct_ct_mul << ",";
+  out << "\"adds\":" << counts.adds << ",";
+  out << "\"unity_level_align_muls\":" << counts.unity_level_align_muls << ",";
+  out << "\"bootstraps\":" << counts.bootstraps;
+  out << "}";
+}
+
+void write_phase_operation_counts_json(
+    std::ostringstream& out,
+    const std::map<std::string, OperationCounts>& values) {
+  out << "{";
+  bool first = true;
+  for (const auto& [name, counts] : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    out << "\"" << json_escape(name) << "\":";
+    write_operation_counts_json(out, counts);
+  }
+  out << "}";
+}
+
 void write_artifact_prefix(std::ostringstream& out, const Config& args) {
   out << "\"version\":\"" << json_escape(args.artifact_version) << "\",";
   out << "\"repo_commit\":\"" << json_escape(args.repo_commit) << "\",";
@@ -1105,6 +1180,42 @@ auto main(int argc, char* argv[]) -> int {
     int adds = 0;
     int bootstraps = 0;
     double bootstrap_eval_seconds = 0.0;
+    std::map<std::string, double> phase_timings;
+    std::map<std::string, OperationCounts> phase_operation_counts;
+
+    auto current_operation_counts = [&]() {
+      return OperationCounts{
+          .rotations = rotations,
+          .ct_pt_mul = ct_pt_muls,
+          .ct_ct_mul = ct_ct_muls,
+          .adds = adds,
+          .unity_level_align_muls = unity_multiplies,
+          .bootstraps = bootstraps,
+      };
+    };
+    auto record_phase = [&](
+                            const std::string& name,
+                            std::chrono::steady_clock::time_point phase_start,
+                            const OperationCounts& before) {
+      phase_timings[name] += seconds_since(phase_start);
+      phase_operation_counts[name] = add_counts(
+          phase_operation_counts[name],
+          subtract_counts(current_operation_counts(), before));
+    };
+    auto time_phase = [&](const std::string& name, auto&& work)
+        -> std::invoke_result_t<decltype(work)&> {
+      using Result = std::invoke_result_t<decltype(work)&>;
+      const auto before = current_operation_counts();
+      const auto phase_start = now();
+      if constexpr (std::is_void_v<Result>) {
+        work();
+        record_phase(name, phase_start, before);
+      } else {
+        Result result = work();
+        record_phase(name, phase_start, before);
+        return result;
+      }
+    };
 
     auto evaluate_payload_layer = [&](
                                       const stage1::RankGatePayload& layer_payload,
@@ -1112,222 +1223,267 @@ auto main(int argc, char* argv[]) -> int {
                                       std::size_t payload_index) -> LayerCiphertexts {
       LayerCiphertexts result;
       log_phase("payload layer " + std::to_string(payload_index) + " eval begin");
-      result.rms =
-          encrypt_values(pack_block0(layer_payload.array("rms_input").values, layer_payload.config));
-      result.conv_pre = slot_bsgs_linear_block0(
-          cc,
-          result.rms,
-          scaled_values(
-              layer_payload.array("effective_rank_weight").values,
-              args.rank_projection_scale),
-          static_cast<int>(layer_payload.config.d_model),
-          static_cast<int>(layer_payload.config.mimo_rank),
-          static_cast<int>(layer_payload.config.model_baby_step),
-          batch_size,
-          rotations,
-          ct_pt_muls,
-          adds);
-      auto conv_bias_ct =
-          encrypt_values(pack_block0(
-              scaled_values(layer_payload.array("conv_bias").values, args.rank_projection_scale),
-              layer_payload.config));
-      align_levels(cc, result.conv_pre, conv_bias_ct, unity_multiplies);
-      result.conv_pre = cc->EvalAdd(result.conv_pre, conv_bias_ct);
-      ++adds;
+      const std::string phase_prefix = "layer_" + std::to_string(payload_index) + ".";
+      time_phase(phase_prefix + "encrypt_rms_input", [&]() {
+        result.rms = encrypt_values(
+            pack_block0(layer_payload.array("rms_input").values, layer_payload.config));
+      });
+      time_phase(phase_prefix + "conv_projection", [&]() {
+        result.conv_pre = slot_bsgs_linear_block0(
+            cc,
+            result.rms,
+            scaled_values(
+                layer_payload.array("effective_rank_weight").values,
+                args.rank_projection_scale),
+            static_cast<int>(layer_payload.config.d_model),
+            static_cast<int>(layer_payload.config.mimo_rank),
+            static_cast<int>(layer_payload.config.model_baby_step),
+            batch_size,
+            rotations,
+            ct_pt_muls,
+            adds);
+        auto conv_bias_ct =
+            encrypt_values(pack_block0(
+                scaled_values(layer_payload.array("conv_bias").values, args.rank_projection_scale),
+                layer_payload.config));
+        align_levels(cc, result.conv_pre, conv_bias_ct, unity_multiplies);
+        result.conv_pre = cc->EvalAdd(result.conv_pre, conv_bias_ct);
+        ++adds;
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " conv projection done");
       result.conv_pre_for_silu = result.conv_pre;
       if (args.rank_projection_scale != 1.0) {
-        auto unscale_plain = make_plain(
-            pack_block0(
-                repeated_rank_values(
-                    1.0 / args.rank_projection_scale,
-                    layer_payload.config),
-                layer_payload.config));
-        result.conv_pre_for_silu = cc->EvalMult(result.conv_pre, unscale_plain);
-        ++ct_pt_muls;
+        time_phase(phase_prefix + "conv_unscale", [&]() {
+          auto unscale_plain = make_plain(
+              pack_block0(
+                  repeated_rank_values(
+                      1.0 / args.rank_projection_scale,
+                      layer_payload.config),
+                  layer_payload.config));
+          result.conv_pre_for_silu = cc->EvalMult(result.conv_pre, unscale_plain);
+          ++ct_pt_muls;
+        });
       }
 
-      result.gate_pre = slot_bsgs_linear_block0(
-          cc,
-          result.rms,
-          layer_payload.array("gate_weight").values,
-          static_cast<int>(layer_payload.config.d_model),
-          static_cast<int>(layer_payload.config.mimo_rank),
-          static_cast<int>(layer_payload.config.model_baby_step),
-          batch_size,
-          rotations,
-          ct_pt_muls,
-          adds);
+      result.gate_pre = time_phase(phase_prefix + "gate_projection", [&]() {
+        return slot_bsgs_linear_block0(
+            cc,
+            result.rms,
+            layer_payload.array("gate_weight").values,
+            static_cast<int>(layer_payload.config.d_model),
+            static_cast<int>(layer_payload.config.mimo_rank),
+            static_cast<int>(layer_payload.config.model_baby_step),
+            batch_size,
+            rotations,
+            ct_pt_muls,
+            adds);
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " gate projection done");
-      result.rank_input_poly = evaluate_power_polynomial_block0(
-          cc,
-          keys.publicKey,
-          result.conv_pre_for_silu,
-          layer_payload.array("rank_silu_coefficients").values,
-          layer_payload.config,
-          batch_size,
-          ct_ct_muls,
-          adds,
-          unity_multiplies);
+      result.rank_input_poly = time_phase(phase_prefix + "rank_silu_polynomial", [&]() {
+        return evaluate_power_polynomial_block0(
+            cc,
+            keys.publicKey,
+            result.conv_pre_for_silu,
+            layer_payload.array("rank_silu_coefficients").values,
+            layer_payload.config,
+            batch_size,
+            ct_ct_muls,
+            adds,
+            unity_multiplies);
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " rank SiLU polynomial done");
-      result.gate_poly = evaluate_power_polynomial_block0(
-          cc,
-          keys.publicKey,
-          result.gate_pre,
-          layer_payload.array("gate_silu_coefficients").values,
-          layer_payload.config,
-          batch_size,
-          ct_ct_muls,
-          adds,
-          unity_multiplies);
+      result.gate_poly = time_phase(phase_prefix + "gate_silu_polynomial", [&]() {
+        return evaluate_power_polynomial_block0(
+            cc,
+            keys.publicKey,
+            result.gate_pre,
+            layer_payload.array("gate_silu_coefficients").values,
+            layer_payload.config,
+            batch_size,
+            ct_ct_muls,
+            adds,
+            unity_multiplies);
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " gate SiLU polynomial done");
-      auto d_skip_plain =
-          make_plain(pack_block0(layer_payload.array("d_skip").values, layer_payload.config));
-      result.skip_update_poly = cc->EvalMult(result.rank_input_poly, d_skip_plain);
-      ++ct_pt_muls;
+      time_phase(phase_prefix + "skip_update", [&]() {
+        auto d_skip_plain =
+            make_plain(pack_block0(layer_payload.array("d_skip").values, layer_payload.config));
+        result.skip_update_poly = cc->EvalMult(result.rank_input_poly, d_skip_plain);
+        ++ct_pt_muls;
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " skip update done");
       const int rank_baby_step = bounded_baby_step(
           static_cast<int>(layer_payload.config.rank_baby_step),
           static_cast<int>(layer_payload.config.mimo_rank));
       result.dt_rank = static_cast<int>(layer_payload.array("dt_in_weight").shape.at(0));
-      result.dt_hidden_poly = slot_bsgs_linear_block0(
-          cc,
-          result.rank_input_poly,
-          scaled_values(layer_payload.array("dt_in_weight").values, args.dt_projection_scale),
-          static_cast<int>(layer_payload.config.mimo_rank),
-          result.dt_rank,
-          rank_baby_step,
-          batch_size,
-          rotations,
-          ct_pt_muls,
-          adds);
+      result.dt_hidden_poly = time_phase(phase_prefix + "dt_hidden_projection", [&]() {
+        return slot_bsgs_linear_block0(
+            cc,
+            result.rank_input_poly,
+            scaled_values(layer_payload.array("dt_in_weight").values, args.dt_projection_scale),
+            static_cast<int>(layer_payload.config.mimo_rank),
+            result.dt_rank,
+            rank_baby_step,
+            batch_size,
+            rotations,
+            ct_pt_muls,
+            adds);
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " dt hidden projection done");
       const int dt_baby_step = bounded_baby_step(
           static_cast<int>(layer_payload.config.rank_baby_step),
           result.dt_rank);
-      result.dt_pre_poly = slot_bsgs_linear_block0(
-          cc,
-          result.dt_hidden_poly,
-          layer_payload.array("dt_proj_weight").values,
-          result.dt_rank,
-          static_cast<int>(layer_payload.config.mimo_rank),
-          dt_baby_step,
-          batch_size,
-          rotations,
-          ct_pt_muls,
-          adds);
+      time_phase(phase_prefix + "dt_rank_projection", [&]() {
+        result.dt_pre_poly = slot_bsgs_linear_block0(
+            cc,
+            result.dt_hidden_poly,
+            layer_payload.array("dt_proj_weight").values,
+            result.dt_rank,
+            static_cast<int>(layer_payload.config.mimo_rank),
+            dt_baby_step,
+            batch_size,
+            rotations,
+            ct_pt_muls,
+            adds);
+        auto dt_bias_ct = encrypt_values(
+            pack_block0(
+                scaled_values(layer_payload.array("dt_proj_bias").values, args.dt_projection_scale),
+                layer_payload.config));
+        align_levels(cc, result.dt_pre_poly, dt_bias_ct, unity_multiplies);
+        result.dt_pre_poly = cc->EvalAdd(result.dt_pre_poly, dt_bias_ct);
+        ++adds;
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " dt rank projection done");
-      auto dt_bias_ct = encrypt_values(
-          pack_block0(
-              scaled_values(layer_payload.array("dt_proj_bias").values, args.dt_projection_scale),
-              layer_payload.config));
-      align_levels(cc, result.dt_pre_poly, dt_bias_ct, unity_multiplies);
-      result.dt_pre_poly = cc->EvalAdd(result.dt_pre_poly, dt_bias_ct);
-      ++adds;
       log_phase("payload layer " + std::to_string(payload_index) + " dt bias add done");
-      result.dt_state_major_poly = rank_block0_to_state_major_ciphertext(
-          cc,
-          result.dt_pre_poly,
-          layer_payload.config,
-          rotations,
-          adds);
+      result.dt_state_major_poly = time_phase(phase_prefix + "dt_state_major_broadcast", [&]() {
+        return rank_block0_to_state_major_ciphertext(
+            cc,
+            result.dt_pre_poly,
+            layer_payload.config,
+            rotations,
+            adds);
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " dt state-major broadcast done");
-      result.decay_state_major_poly = evaluate_state_major_vector_power_polynomial(
-          cc,
-          keys.publicKey,
-          result.dt_state_major_poly,
-          scaled_decay_coefficients(
-              layer_payload.array("decay_coefficients").values,
-              layer_payload.config,
-              args.dt_projection_scale),
-          layer_payload.config,
-          batch_size,
-          ct_ct_muls,
-          adds,
-          unity_multiplies);
+      result.decay_state_major_poly =
+          time_phase(phase_prefix + "decay_state_major_polynomial", [&]() {
+            return evaluate_state_major_vector_power_polynomial(
+                cc,
+                keys.publicKey,
+                result.dt_state_major_poly,
+                scaled_decay_coefficients(
+                    layer_payload.array("decay_coefficients").values,
+                    layer_payload.config,
+                    args.dt_projection_scale),
+                layer_payload.config,
+                batch_size,
+                ct_ct_muls,
+                adds,
+                unity_multiplies);
+          });
       log_phase(
           "payload layer " + std::to_string(payload_index) +
           " dynamic decay projection/polynomial done");
-      result.b_vec_poly = slot_bsgs_linear_block0(
-          cc,
-          result.rank_input_poly,
-          layer_payload.array("b_weight").values,
-          static_cast<int>(layer_payload.config.mimo_rank),
-          static_cast<int>(layer_payload.config.d_state),
-          rank_baby_step,
-          batch_size,
-          rotations,
-          ct_pt_muls,
-          adds);
-      result.c_vec_poly = slot_bsgs_linear_block0(
-          cc,
-          result.rank_input_poly,
-          layer_payload.array("c_weight").values,
-          static_cast<int>(layer_payload.config.mimo_rank),
-          static_cast<int>(layer_payload.config.d_state),
-          rank_baby_step,
-          batch_size,
-          rotations,
-          ct_pt_muls,
-          adds);
+      result.b_vec_poly = time_phase(phase_prefix + "dynamic_b_projection", [&]() {
+        return slot_bsgs_linear_block0(
+            cc,
+            result.rank_input_poly,
+            layer_payload.array("b_weight").values,
+            static_cast<int>(layer_payload.config.mimo_rank),
+            static_cast<int>(layer_payload.config.d_state),
+            rank_baby_step,
+            batch_size,
+            rotations,
+            ct_pt_muls,
+            adds);
+      });
+      result.c_vec_poly = time_phase(phase_prefix + "dynamic_c_projection", [&]() {
+        return slot_bsgs_linear_block0(
+            cc,
+            result.rank_input_poly,
+            layer_payload.array("c_weight").values,
+            static_cast<int>(layer_payload.config.mimo_rank),
+            static_cast<int>(layer_payload.config.d_state),
+            rank_baby_step,
+            batch_size,
+            rotations,
+            ct_pt_muls,
+            adds);
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " dynamic B/C projections done");
-      result.b_state_major_poly = state_vector_to_state_major_ciphertext(
-          cc,
-          result.b_vec_poly,
-          layer_payload.config,
-          batch_size,
-          rotations,
-          ct_pt_muls,
-          adds);
-      result.c_state_major_poly = state_vector_to_state_major_ciphertext(
-          cc,
-          result.c_vec_poly,
-          layer_payload.config,
-          batch_size,
-          rotations,
-          ct_pt_muls,
-          adds);
+      result.b_state_major_poly = time_phase(phase_prefix + "dynamic_b_broadcast", [&]() {
+        return state_vector_to_state_major_ciphertext(
+            cc,
+            result.b_vec_poly,
+            layer_payload.config,
+            batch_size,
+            rotations,
+            ct_pt_muls,
+            adds);
+      });
+      result.c_state_major_poly = time_phase(phase_prefix + "dynamic_c_broadcast", [&]() {
+        return state_vector_to_state_major_ciphertext(
+            cc,
+            result.c_vec_poly,
+            layer_payload.config,
+            batch_size,
+            rotations,
+            ct_pt_muls,
+            adds);
+      });
       log_phase(
           "payload layer " + std::to_string(payload_index) + " dynamic B/C broadcasts done");
-      result.gate_poly_slots_for_error = decrypt_slots(
-          cc,
-          keys.secretKey,
-          result.gate_poly,
-          static_cast<size_t>(batch_size));
+      result.gate_poly_slots_for_error =
+          time_phase(phase_prefix + "gate_diagnostic_decrypt", [&]() {
+            return decrypt_slots(
+                cc,
+                keys.secretKey,
+                result.gate_poly,
+                static_cast<size_t>(batch_size));
+          });
       log_phase("payload layer " + std::to_string(payload_index) + " gate diagnostic decrypt done");
-      result.x_state_major_poly = rank_block0_to_state_major_ciphertext(
-          cc,
-          result.rank_input_poly,
-          layer_payload.config,
-          rotations,
-          adds);
+      result.x_state_major_poly = time_phase(phase_prefix + "rank_input_broadcast", [&]() {
+        return rank_block0_to_state_major_ciphertext(
+            cc,
+            result.rank_input_poly,
+            layer_payload.config,
+            rotations,
+            adds);
+      });
       log_phase(
           "payload layer " + std::to_string(payload_index) + " rank input broadcast done");
-      Ciphertext<DCRTPoly> b_state_major_aligned_ct = result.b_state_major_poly->Clone();
-      align_levels(cc, b_state_major_aligned_ct, result.x_state_major_poly, unity_multiplies);
-      result.input_state_term =
-          cc->EvalMult(b_state_major_aligned_ct, result.x_state_major_poly);
-      ++ct_ct_muls;
+      time_phase(phase_prefix + "input_state_term", [&]() {
+        Ciphertext<DCRTPoly> b_state_major_aligned_ct = result.b_state_major_poly->Clone();
+        align_levels(cc, b_state_major_aligned_ct, result.x_state_major_poly, unity_multiplies);
+        result.input_state_term =
+            cc->EvalMult(b_state_major_aligned_ct, result.x_state_major_poly);
+        ++ct_ct_muls;
+      });
       log_phase("payload layer " + std::to_string(payload_index) + " input state term done");
 
       result.previous_state_is_zero =
           is_near_zero_vector(layer_payload.array("previous_state").values);
       if (result.previous_state_is_zero) {
-        result.state_new_poly = result.input_state_term;
+        time_phase(phase_prefix + "zero_state_select", [&]() {
+          result.state_new_poly = result.input_state_term;
+        });
         log_phase("payload layer " + std::to_string(payload_index) + " zero state skipped");
       } else {
-        auto previous_state_ct = encrypt_values(
-            pack_state_major_values(layer_payload.array("previous_state").values, layer_payload.config));
-        Ciphertext<DCRTPoly> decay_state_major_aligned_ct =
-            result.decay_state_major_poly->Clone();
-        align_levels(cc, decay_state_major_aligned_ct, previous_state_ct, unity_multiplies);
-        auto decay_state_term_ct =
-            cc->EvalMult(decay_state_major_aligned_ct, previous_state_ct);
-        ++ct_ct_muls;
-        auto input_state_term_for_update_ct = result.input_state_term->Clone();
-        align_levels(cc, decay_state_term_ct, input_state_term_for_update_ct, unity_multiplies);
-        result.state_new_poly = cc->EvalAdd(decay_state_term_ct, input_state_term_for_update_ct);
-        ++adds;
+        time_phase(phase_prefix + "state_update", [&]() {
+          auto previous_state_ct = encrypt_values(
+              pack_state_major_values(
+                  layer_payload.array("previous_state").values,
+                  layer_payload.config));
+          Ciphertext<DCRTPoly> decay_state_major_aligned_ct =
+              result.decay_state_major_poly->Clone();
+          align_levels(cc, decay_state_major_aligned_ct, previous_state_ct, unity_multiplies);
+          auto decay_state_term_ct =
+              cc->EvalMult(decay_state_major_aligned_ct, previous_state_ct);
+          ++ct_ct_muls;
+          auto input_state_term_for_update_ct = result.input_state_term->Clone();
+          align_levels(cc, decay_state_term_ct, input_state_term_for_update_ct, unity_multiplies);
+          result.state_new_poly = cc->EvalAdd(decay_state_term_ct, input_state_term_for_update_ct);
+          ++adds;
+        });
         log_phase("payload layer " + std::to_string(payload_index) + " state update done");
       }
 
@@ -1342,43 +1498,59 @@ auto main(int argc, char* argv[]) -> int {
                                   : (*residual_override_ct)->Clone();
       auto evaluate_tail_from_state =
           [&](const Ciphertext<DCRTPoly>& state_ct) -> TailCiphertexts {
-        Ciphertext<DCRTPoly> c_state_major_aligned_ct = result.c_state_major_poly->Clone();
-        auto state_new_for_readout_ct = state_ct->Clone();
-        align_levels(cc, c_state_major_aligned_ct, state_new_for_readout_ct, unity_multiplies);
-        auto readout_ct = cc->EvalMult(c_state_major_aligned_ct, state_new_for_readout_ct);
-        ++ct_ct_muls;
-        for (const auto step : state_major_to_rank_block0_rotations(layer_payload.config)) {
-          readout_ct = cc->EvalAdd(readout_ct, cc->EvalRotate(readout_ct, step));
-          ++rotations;
+        auto readout_ct = time_phase(phase_prefix + "readout_reduce", [&]() {
+          Ciphertext<DCRTPoly> c_state_major_aligned_ct = result.c_state_major_poly->Clone();
+          auto state_new_for_readout_ct = state_ct->Clone();
+          align_levels(cc, c_state_major_aligned_ct, state_new_for_readout_ct, unity_multiplies);
+          auto local_readout_ct = cc->EvalMult(c_state_major_aligned_ct, state_new_for_readout_ct);
+          ++ct_ct_muls;
+          for (const auto step : state_major_to_rank_block0_rotations(layer_payload.config)) {
+            local_readout_ct =
+                cc->EvalAdd(local_readout_ct, cc->EvalRotate(local_readout_ct, step));
+            ++rotations;
+            ++adds;
+          }
+          local_readout_ct = cc->EvalMult(local_readout_ct, rank_mask_plain);
+          ++ct_pt_muls;
+          return local_readout_ct;
+        });
+        auto rank_output_ct = time_phase(phase_prefix + "rank_skip_add", [&]() {
+          auto readout_for_rank_output_ct = readout_ct->Clone();
+          auto skip_for_rank_output_ct = result.skip_update_poly->Clone();
+          align_levels(cc, readout_for_rank_output_ct, skip_for_rank_output_ct, unity_multiplies);
+          auto local_rank_output_ct =
+              cc->EvalAdd(readout_for_rank_output_ct, skip_for_rank_output_ct);
           ++adds;
-        }
-        readout_ct = cc->EvalMult(readout_ct, rank_mask_plain);
-        ++ct_pt_muls;
-        auto readout_for_rank_output_ct = readout_ct->Clone();
-        auto skip_for_rank_output_ct = result.skip_update_poly->Clone();
-        align_levels(cc, readout_for_rank_output_ct, skip_for_rank_output_ct, unity_multiplies);
-        auto rank_output_ct = cc->EvalAdd(readout_for_rank_output_ct, skip_for_rank_output_ct);
-        ++adds;
-        auto rank_output_for_gate_ct = rank_output_ct->Clone();
-        auto gate_for_tail_ct = result.gate_poly->Clone();
-        align_levels(cc, rank_output_for_gate_ct, gate_for_tail_ct, unity_multiplies);
-        auto rank_payload_ct = cc->EvalMult(rank_output_for_gate_ct, gate_for_tail_ct);
-        ++ct_ct_muls;
-        auto output_delta_ct = slot_bsgs_linear_block0(
-            cc,
-            rank_payload_ct,
-            layer_payload.array("w_out").values,
-            static_cast<int>(layer_payload.config.mimo_rank),
-            static_cast<int>(layer_payload.config.d_model),
-            out_baby_step,
-            batch_size,
-            rotations,
-            ct_pt_muls,
-            adds);
-        auto residual_ct = residual_base_ct->Clone();
-        align_levels(cc, output_delta_ct, residual_ct, unity_multiplies);
-        auto output_model_ct = cc->EvalAdd(output_delta_ct, residual_ct);
-        ++adds;
+          return local_rank_output_ct;
+        });
+        auto rank_payload_ct = time_phase(phase_prefix + "rank_gate_product", [&]() {
+          auto rank_output_for_gate_ct = rank_output_ct->Clone();
+          auto gate_for_tail_ct = result.gate_poly->Clone();
+          align_levels(cc, rank_output_for_gate_ct, gate_for_tail_ct, unity_multiplies);
+          auto local_rank_payload_ct = cc->EvalMult(rank_output_for_gate_ct, gate_for_tail_ct);
+          ++ct_ct_muls;
+          return local_rank_payload_ct;
+        });
+        auto output_delta_ct = time_phase(phase_prefix + "output_projection", [&]() {
+          return slot_bsgs_linear_block0(
+              cc,
+              rank_payload_ct,
+              layer_payload.array("w_out").values,
+              static_cast<int>(layer_payload.config.mimo_rank),
+              static_cast<int>(layer_payload.config.d_model),
+              out_baby_step,
+              batch_size,
+              rotations,
+              ct_pt_muls,
+              adds);
+        });
+        auto output_model_ct = time_phase(phase_prefix + "residual_add", [&]() {
+          auto residual_ct = residual_base_ct->Clone();
+          align_levels(cc, output_delta_ct, residual_ct, unity_multiplies);
+          auto local_output_model_ct = cc->EvalAdd(output_delta_ct, residual_ct);
+          ++adds;
+          return local_output_model_ct;
+        });
         return TailCiphertexts{
             .readout = readout_ct,
             .rank_output = rank_output_ct,
@@ -1397,22 +1569,34 @@ auto main(int argc, char* argv[]) -> int {
       for (int chain_step = 2; chain_step <= args.chain_steps; ++chain_step) {
         if (args.bootstrap_before_chain_steps.count(chain_step) > 0) {
           const auto bootstrap_start = now();
-          result.state_new_poly = cc->EvalBootstrap(result.state_new_poly);
+          time_phase(
+              phase_prefix + "chain_step_" + std::to_string(chain_step) + ".bootstrap",
+              [&]() {
+                result.state_new_poly = cc->EvalBootstrap(result.state_new_poly);
+                ++bootstraps;
+              });
           bootstrap_eval_seconds += seconds_since(bootstrap_start);
-          ++bootstraps;
           log_phase("bootstrap before ciphertext chain step " + std::to_string(chain_step) + " done");
         }
-        Ciphertext<DCRTPoly> decay_state_major_aligned_ct =
-            result.decay_state_major_poly->Clone();
-        auto previous_state_for_chain_ct = result.state_new_poly->Clone();
-        align_levels(cc, decay_state_major_aligned_ct, previous_state_for_chain_ct, unity_multiplies);
-        auto decay_state_term_ct =
-            cc->EvalMult(decay_state_major_aligned_ct, previous_state_for_chain_ct);
-        ++ct_ct_muls;
-        auto input_state_term_for_chain_ct = result.input_state_term->Clone();
-        align_levels(cc, decay_state_term_ct, input_state_term_for_chain_ct, unity_multiplies);
-        result.state_new_poly = cc->EvalAdd(decay_state_term_ct, input_state_term_for_chain_ct);
-        ++adds;
+        time_phase(
+            phase_prefix + "chain_step_" + std::to_string(chain_step) + ".state_update",
+            [&]() {
+              Ciphertext<DCRTPoly> decay_state_major_aligned_ct =
+                  result.decay_state_major_poly->Clone();
+              auto previous_state_for_chain_ct = result.state_new_poly->Clone();
+              align_levels(
+                  cc,
+                  decay_state_major_aligned_ct,
+                  previous_state_for_chain_ct,
+                  unity_multiplies);
+              auto decay_state_term_ct =
+                  cc->EvalMult(decay_state_major_aligned_ct, previous_state_for_chain_ct);
+              ++ct_ct_muls;
+              auto input_state_term_for_chain_ct = result.input_state_term->Clone();
+              align_levels(cc, decay_state_term_ct, input_state_term_for_chain_ct, unity_multiplies);
+              result.state_new_poly = cc->EvalAdd(decay_state_term_ct, input_state_term_for_chain_ct);
+              ++adds;
+            });
         tail_ciphertexts = evaluate_tail_from_state(result.state_new_poly);
         result.readout_poly = tail_ciphertexts.readout;
         result.rank_output_poly = tail_ciphertexts.rank_output;
@@ -1544,6 +1728,12 @@ auto main(int argc, char* argv[]) -> int {
       failure << "\"load_context_seconds\":" << load_context_seconds << ",";
       failure << "\"eval_seconds\":" << eval_seconds;
       failure << "},";
+      failure << "\"phase_timings\":";
+      write_double_map_json(failure, phase_timings);
+      failure << ",";
+      failure << "\"phase_operation_counts\":";
+      write_phase_operation_counts_json(failure, phase_operation_counts);
+      failure << ",";
       failure << "\"operation_counts\":{";
       failure << "\"rotations\":" << rotations << ",";
       failure << "\"ct_pt_mul\":" << ct_pt_muls << ",";
@@ -1905,6 +2095,12 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"load_context_seconds\":" << load_context_seconds << ",";
     out << "\"eval_seconds\":" << eval_seconds;
     out << "},";
+    out << "\"phase_timings\":";
+    write_double_map_json(out, phase_timings);
+    out << ",";
+    out << "\"phase_operation_counts\":";
+    write_phase_operation_counts_json(out, phase_operation_counts);
+    out << ",";
     out << "\"operation_counts\":{";
     out << "\"rotations\":" << rotations << ",";
     out << "\"ct_pt_mul\":" << ct_pt_muls << ",";

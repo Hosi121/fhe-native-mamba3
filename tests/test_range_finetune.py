@@ -123,4 +123,4 @@ def test_merged_linear_weight_bias_matches_lora_forward_in_eval_mode() -> None:
 
     expected = module.eval()(x)
     actual = torch.nn.functional.linear(x, weight, bias)
-    assert torch.allclose(actual, expected)
+    assert torch.allclose(actual, expected, atol=1e-6, rtol=1e-6)

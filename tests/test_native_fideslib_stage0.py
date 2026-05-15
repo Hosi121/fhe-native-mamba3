@@ -179,6 +179,10 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "previous_state_nonzero" in rank_gate_fideslib_text
     assert "state_new_poly" in rank_gate_fideslib_text
     assert "state_vector_to_state_major_ciphertext" in rank_gate_fideslib_text
+    assert "phase_timings" in rank_gate_fideslib_text
+    assert "phase_operation_counts" in rank_gate_fideslib_text
+    assert "conv_projection" in rank_gate_fideslib_text
+    assert "output_projection" in rank_gate_fideslib_text
 
     stage1_bootstrap_slurm_text = stage1_bootstrap_slurm.read_text()
     assert "stage1_bootstrap_probe" in stage1_bootstrap_slurm_text
