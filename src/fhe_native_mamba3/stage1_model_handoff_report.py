@@ -21,7 +21,11 @@ class Stage1ModelHandoffArtifactSummary:
     peak_rss_gib: float | None
     required_application_rotation_key_count: int | None
     max_abs_error: float | None
+    diagnostic_max_abs_error: float | None
     model_layout_handoff_max_abs_error: float | None
+    payload_chain_reference_max_abs_error: float | None
+    output_model_poly_vs_exact_max_abs_error: float | None
+    output_model_poly_vs_exact_reference_steps: int | None
     operation_counts: dict[str, float]
 
 
@@ -94,9 +98,22 @@ def _summarize_artifact(payload: dict[str, Any]) -> Stage1ModelHandoffArtifactSu
             "required_application_rotation_key_count",
         ),
         max_abs_error=_float_value(payload, "max_abs_error"),
+        diagnostic_max_abs_error=_float_value(payload, "diagnostic_max_abs_error"),
         model_layout_handoff_max_abs_error=_float_value(
             payload,
             "model_layout_handoff_max_abs_error",
+        ),
+        payload_chain_reference_max_abs_error=_float_value(
+            payload,
+            "payload_chain_reference_max_abs_error",
+        ),
+        output_model_poly_vs_exact_max_abs_error=_float_value(
+            payload,
+            "output_model_poly_vs_exact_max_abs_error",
+        ),
+        output_model_poly_vs_exact_reference_steps=_int_value(
+            payload,
+            "output_model_poly_vs_exact_reference_steps",
         ),
         operation_counts=_operation_counts(payload),
     )

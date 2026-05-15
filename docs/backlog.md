@@ -252,6 +252,12 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   language-model quality preservation. The next bottleneck is reducing
   projection/rotation cost and deciding whether to pursue 24-layer synthetic
   polynomial execution or first add range calibration / lower-degree adapters.
+- `v0.3.135` refreshes the handoff scaling report to carry exact-reference
+  diagnostics. The Mamba-130M-shaped row has
+  `output_model_poly_vs_exact_max_abs_error=9.65e-04` over two reference steps
+  even though the broader diagnostic max is `4.50`; this keeps the artifact
+  useful for engineering regression checks while still avoiding any claim about
+  language-model quality.
 
 ## Near-Term Parallel Slices
 

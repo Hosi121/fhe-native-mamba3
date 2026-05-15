@@ -49,7 +49,11 @@ def test_stage1_model_handoff_scaling_report_compares_same_payload_count() -> No
     assert report.scaled.eval_seconds == 9.0
     assert report.scaled.peak_rss_gib == 6.0
     assert report.scaled.required_application_rotation_key_count == 17
+    assert report.scaled.diagnostic_max_abs_error == 0.02
     assert report.scaled.model_layout_handoff_max_abs_error == 0.0002
+    assert report.scaled.payload_chain_reference_max_abs_error == 0.0003
+    assert report.scaled.output_model_poly_vs_exact_max_abs_error == 0.04
+    assert report.scaled.output_model_poly_vs_exact_reference_steps == 2
     assert report.operation_count_deltas["rotations"] == 30
     assert report.operation_count_ratios["ct_ct_mul"] == 3.0
     assert report.operation_count_ratios["bootstraps"] is None
@@ -140,7 +144,11 @@ def _payload(
             "peak_rss_gib": peak_rss_gib,
             "required_application_rotation_key_count": 17,
             "max_abs_error": 0.001,
+            "diagnostic_max_abs_error": 0.02,
             "model_layout_handoff_max_abs_error": 0.0002,
+            "payload_chain_reference_max_abs_error": 0.0003,
+            "output_model_poly_vs_exact_max_abs_error": 0.04,
+            "output_model_poly_vs_exact_reference_steps": 2,
         },
         "operation_counts": {
             "rotations": rotations,
