@@ -112,6 +112,34 @@ def run_lora_range_smoke(
     approximation boundary that matters for encrypted execution.
     """
 
+    _model, result = train_lora_range_model(
+        payload,
+        sample_count=sample_count,
+        noise_scale=noise_scale,
+        steps=steps,
+        learning_rate=learning_rate,
+        lora_config=lora_config,
+        range_loss_config=range_loss_config,
+        seed=seed,
+        device=device,
+    )
+    return result
+
+
+def train_lora_range_model(
+    payload: Stage1RankGatePayload,
+    *,
+    sample_count: int = 64,
+    noise_scale: float = 0.01,
+    steps: int = 100,
+    learning_rate: float = 1e-2,
+    lora_config: LoRAConfig | None = None,
+    range_loss_config: RangeLossConfig | None = None,
+    seed: int = 0,
+    device: str = "cpu",
+) -> tuple[RankGateProjectionModule, Stage2LoRARangeSmokeResult]:
+    """Train LoRA adapters and return both the tuned model and metrics."""
+
     if sample_count <= 0:
         msg = "sample_count must be positive"
         raise ValueError(msg)
@@ -146,6 +174,7 @@ def run_lora_range_smoke(
         device=resolved_device,
     )
     with torch.no_grad():
+        base.eval()
         targets = base(inputs)
         target_rank = targets["rank_act"].detach()
         target_gate = targets["gate_act"].detach()
@@ -157,6 +186,7 @@ def run_lora_range_smoke(
         target_gate=target_gate,
         range_config=resolved_range,
     )
+    model.train()
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
         outputs = model(inputs)
@@ -172,6 +202,7 @@ def run_lora_range_smoke(
         total.backward()
         optimizer.step()
 
+    model.eval()
     after = _evaluate_metrics(
         model,
         inputs,
@@ -179,7 +210,7 @@ def run_lora_range_smoke(
         target_gate=target_gate,
         range_config=resolved_range,
     )
-    return Stage2LoRARangeSmokeResult(
+    result = Stage2LoRARangeSmokeResult(
         passed=(
             after.total_loss <= before.total_loss
             and after.max_excess <= before.max_excess
@@ -210,6 +241,7 @@ def run_lora_range_smoke(
             ),
         },
     )
+    return model, result
 
 
 def _training_inputs(
@@ -234,27 +266,32 @@ def _evaluate_metrics(
     target_gate: Tensor,
     range_config: RangeLossConfig,
 ) -> Stage2LoRARangeMetrics:
-    with torch.no_grad():
-        outputs = model(inputs)
-        task_loss = _task_loss(outputs, target_rank=target_rank, target_gate=target_gate)
-        penalty = range_loss(
-            {"rank_pre": outputs["rank_pre"], "gate_pre": outputs["gate_pre"]},
-            range_config,
-        )
-        total = task_loss + penalty.weighted_loss.to(
-            device=task_loss.device,
-            dtype=task_loss.dtype,
-        )
-        return Stage2LoRARangeMetrics(
-            task_mse=float(task_loss.detach().cpu()),
-            range_loss=float(penalty.loss.detach().cpu()),
-            weighted_range_loss=float(penalty.weighted_loss.detach().cpu()),
-            total_loss=float(total.detach().cpu()),
-            max_abs=penalty.max_abs,
-            max_excess=penalty.max_excess,
-            rank_pre_max_abs=float(outputs["rank_pre"].abs().amax().detach().cpu()),
-            gate_pre_max_abs=float(outputs["gate_pre"].abs().amax().detach().cpu()),
-        )
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            outputs = model(inputs)
+            task_loss = _task_loss(outputs, target_rank=target_rank, target_gate=target_gate)
+            penalty = range_loss(
+                {"rank_pre": outputs["rank_pre"], "gate_pre": outputs["gate_pre"]},
+                range_config,
+            )
+            total = task_loss + penalty.weighted_loss.to(
+                device=task_loss.device,
+                dtype=task_loss.dtype,
+            )
+            return Stage2LoRARangeMetrics(
+                task_mse=float(task_loss.detach().cpu()),
+                range_loss=float(penalty.loss.detach().cpu()),
+                weighted_range_loss=float(penalty.weighted_loss.detach().cpu()),
+                total_loss=float(total.detach().cpu()),
+                max_abs=penalty.max_abs,
+                max_excess=penalty.max_excess,
+                rank_pre_max_abs=float(outputs["rank_pre"].abs().amax().detach().cpu()),
+                gate_pre_max_abs=float(outputs["gate_pre"].abs().amax().detach().cpu()),
+            )
+    finally:
+        model.train(was_training)
 
 
 def _task_loss(outputs: dict[str, Tensor], *, target_rank: Tensor, target_gate: Tensor) -> Tensor:
@@ -279,4 +316,5 @@ __all__ = [
     "Stage2LoRARangeMetrics",
     "Stage2LoRARangeSmokeResult",
     "run_lora_range_smoke",
+    "train_lora_range_model",
 ]

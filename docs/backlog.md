@@ -268,6 +268,13 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   still plaintext projection-boundary tuning; the next PBI-S2-009 slices are
   a seed/step sweep and then re-exporting a LoRA-merged payload for encrypted
   comparison.
+- `v0.3.138` runs that seed/step/range-weight sweep on B200. Job `10574`
+  covers 27 rows over seeds `0/1/2`, steps `200/500/1000`, and range weights
+  `1/2/4`; the best row is seed `2`, `500` steps, weight `2`, reducing
+  Mamba-130M layer-0 `gate_pre_max_abs` from `7.3268` to `5.9955` with zero
+  remaining range loss and task MSE `2.00e-03`. The next slice is now concrete:
+  merge the selected LoRA weights back into the public rank/gate payload and
+  replay the encrypted polynomial path against the merged references.
 
 ## Near-Term Parallel Slices
 

@@ -11,6 +11,7 @@ from fhe_native_mamba3.range_finetune import (
     fhe_aware_loss,
     lora_parameter_count,
     mark_only_lora_trainable,
+    merged_linear_weight_bias,
     range_loss,
 )
 
@@ -109,3 +110,17 @@ def test_lora_linear_matches_base_dtype() -> None:
 
     assert module.lora_a.weight.dtype == base.weight.dtype
     assert module.lora_b.weight.dtype == base.weight.dtype
+
+
+def test_merged_linear_weight_bias_matches_lora_forward_in_eval_mode() -> None:
+    base = nn.Linear(4, 3)
+    module = LoRALinear(base, LoRAConfig(rank=2, alpha=4.0, freeze_base=True))
+    with torch.no_grad():
+        module.lora_b.weight.fill_(0.5)
+    x = torch.randn(5, 4)
+
+    weight, bias = merged_linear_weight_bias(module)
+
+    expected = module.eval()(x)
+    actual = torch.nn.functional.linear(x, weight, bias)
+    assert torch.allclose(actual, expected)

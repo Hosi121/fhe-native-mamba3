@@ -240,6 +240,18 @@ def lora_parameter_count(model: nn.Module) -> int:
     )
 
 
+def merged_linear_weight_bias(module: nn.Linear | LoRALinear) -> tuple[Tensor, Tensor | None]:
+    """Return inference-time dense parameters for a plain or LoRA linear layer."""
+
+    if isinstance(module, LoRALinear):
+        weight = module.base.weight + module.scaling * (module.lora_b.weight @ module.lora_a.weight)
+        return weight.detach(), None if module.base.bias is None else module.base.bias.detach()
+    if isinstance(module, nn.Linear):
+        return module.weight.detach(), None if module.bias is None else module.bias.detach()
+    msg = f"expected nn.Linear or LoRALinear, got {type(module).__name__}"
+    raise TypeError(msg)
+
+
 def _is_lora_parameter_name(name: str) -> bool:
     return (
         name.startswith("lora_a.")
