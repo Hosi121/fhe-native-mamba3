@@ -275,6 +275,14 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   remaining range loss and task MSE `2.00e-03`. The next slice is now concrete:
   merge the selected LoRA weights back into the public rank/gate payload and
   replay the encrypted polynomial path against the merged references.
+- `v0.3.139` implements that merge path. Job `10577` trains the selected
+  rank-8 LoRA setting on B200 and writes
+  `runs/stage2-s018-lora-merged-payload-mamba130m-v03139.bin`; the merged
+  payload validates with `gate_weight_delta_max_abs=9.07e-02`,
+  `reference_gate_pre_delta_max_abs=6.94`, post-merge
+  `gate_poly_vs_exact_max_abs_error=5.06e-02`, and
+  `output_model_poly_vs_original_exact_max_abs_error=9.90e-04`. This still
+  does not claim encrypted execution; the encrypted replay is the next check.
 
 ## Near-Term Parallel Slices
 
