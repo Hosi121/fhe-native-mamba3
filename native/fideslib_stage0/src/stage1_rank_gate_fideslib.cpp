@@ -33,6 +33,11 @@ struct Config {
   double rank_projection_scale = 1.0;
   double dt_projection_scale = 1.0;
   int chain_steps = 1;
+  std::set<int> bootstrap_before_chain_steps;
+  int bootstrap_level_budget_cts = 5;
+  int bootstrap_level_budget_stc = 4;
+  int bootstrap_bsgs_dim_cts = 0;
+  int bootstrap_bsgs_dim_stc = 0;
   std::string security = "128-classic";
   std::string secret_key_dist = "sparse-ternary";
 };
@@ -77,6 +82,20 @@ auto parse_double(std::string_view name, const char* value) -> double {
   }
 }
 
+auto parse_int_set(std::string_view name, std::string_view value) -> std::set<int> {
+  std::set<int> output;
+  std::string text(value);
+  std::stringstream stream(text);
+  std::string token;
+  while (std::getline(stream, token, ',')) {
+    if (token.empty()) {
+      continue;
+    }
+    output.insert(parse_int(name, token.c_str()));
+  }
+  return output;
+}
+
 auto parse_args(int argc, char* argv[]) -> Config {
   Config config;
   for (int i = 1; i < argc; ++i) {
@@ -105,6 +124,16 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.dt_projection_scale = parse_double(arg, value);
     } else if (arg == "--chain-steps") {
       config.chain_steps = parse_int(arg, value);
+    } else if (arg == "--bootstrap-before-chain-steps") {
+      config.bootstrap_before_chain_steps = parse_int_set(arg, value);
+    } else if (arg == "--bootstrap-level-budget-cts") {
+      config.bootstrap_level_budget_cts = parse_int(arg, value);
+    } else if (arg == "--bootstrap-level-budget-stc") {
+      config.bootstrap_level_budget_stc = parse_int(arg, value);
+    } else if (arg == "--bootstrap-bsgs-dim-cts") {
+      config.bootstrap_bsgs_dim_cts = parse_int(arg, value);
+    } else if (arg == "--bootstrap-bsgs-dim-stc") {
+      config.bootstrap_bsgs_dim_stc = parse_int(arg, value);
     } else if (arg == "--security") {
       config.security = value;
     } else if (arg == "--secret-key-dist") {
@@ -121,8 +150,16 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.multiplicative_depth <= 0 || config.scaling_mod_size <= 0 ||
       config.first_mod_size <= 0 || config.atol < 0.0 || config.rank_projection_scale <= 0.0 ||
-      config.dt_projection_scale <= 0.0 || config.chain_steps <= 0) {
+      config.dt_projection_scale <= 0.0 || config.chain_steps <= 0 ||
+      config.bootstrap_level_budget_cts <= 0 || config.bootstrap_level_budget_stc <= 0 ||
+      config.bootstrap_bsgs_dim_cts < 0 || config.bootstrap_bsgs_dim_stc < 0) {
     throw std::invalid_argument("invalid CKKS parameters");
+  }
+  for (const int step : config.bootstrap_before_chain_steps) {
+    if (step <= 1 || step > config.chain_steps) {
+      throw std::invalid_argument(
+          "bootstrap-before-chain-steps must be in [2, chain_steps]");
+    }
   }
   if (config.security != "not-set" && config.security != "128-classic") {
     throw std::invalid_argument("security must be not-set or 128-classic");
@@ -674,6 +711,19 @@ void write_level_field(
   out << "\"" << name << "\":" << ciphertext->GetLevel();
 }
 
+void write_int_set_json(std::ostringstream& out, const std::set<int>& values) {
+  out << "[";
+  bool first = true;
+  for (const int value : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    out << value;
+  }
+  out << "]";
+}
+
 auto json_escape(std::string_view value) -> std::string {
   std::string output;
   output.reserve(value.size());
@@ -813,6 +863,10 @@ auto main(int argc, char* argv[]) -> int {
     cc->Enable(PKE);
     cc->Enable(KEYSWITCH);
     cc->Enable(LEVELEDSHE);
+    if (!args.bootstrap_before_chain_steps.empty()) {
+      cc->Enable(ADVANCEDSHE);
+      cc->Enable(FHE);
+    }
     auto keys = cc->KeyGen();
     cc->EvalMultKeyGen(keys.secretKey);
     log_phase("context setup done");
@@ -821,6 +875,23 @@ auto main(int argc, char* argv[]) -> int {
     cc->EvalRotateKeyGen(keys.secretKey, required_rotations);
     const double rotate_keygen_seconds = seconds_since(keygen_start);
     log_phase("rotation keygen done");
+    double bootstrap_precompute_seconds = 0.0;
+    if (!args.bootstrap_before_chain_steps.empty()) {
+      const auto bootstrap_precompute_start = now();
+      log_phase("bootstrap setup/keygen begin");
+      const std::vector<uint32_t> level_budget = {
+          static_cast<uint32_t>(args.bootstrap_level_budget_cts),
+          static_cast<uint32_t>(args.bootstrap_level_budget_stc),
+      };
+      const std::vector<uint32_t> bsgs_dim = {
+          static_cast<uint32_t>(args.bootstrap_bsgs_dim_cts),
+          static_cast<uint32_t>(args.bootstrap_bsgs_dim_stc),
+      };
+      cc->EvalBootstrapSetup(level_budget, bsgs_dim, static_cast<uint32_t>(batch_size), 0);
+      cc->EvalBootstrapKeyGen(keys.secretKey, static_cast<uint32_t>(batch_size));
+      bootstrap_precompute_seconds = seconds_since(bootstrap_precompute_start);
+      log_phase("bootstrap setup/keygen done");
+    }
     const auto load_start = now();
     log_phase("load context begin");
     cc->LoadContext(keys.publicKey);
@@ -845,6 +916,8 @@ auto main(int argc, char* argv[]) -> int {
     int ct_ct_muls = 0;
     int unity_multiplies = 0;
     int adds = 0;
+    int bootstraps = 0;
+    double bootstrap_eval_seconds = 0.0;
 
     auto rms_ct = encrypt_values(pack_block0(payload.array("rms_input").values, payload.config));
     auto conv_pre_ct = slot_bsgs_linear_block0(
@@ -1113,6 +1186,13 @@ auto main(int argc, char* argv[]) -> int {
     auto output_delta_poly_ct = tail_ciphertexts.output_delta;
     auto output_model_poly_ct = tail_ciphertexts.output_model;
     for (int chain_step = 2; chain_step <= args.chain_steps; ++chain_step) {
+      if (args.bootstrap_before_chain_steps.count(chain_step) > 0) {
+        const auto bootstrap_start = now();
+        state_new_poly_ct = cc->EvalBootstrap(state_new_poly_ct);
+        bootstrap_eval_seconds += seconds_since(bootstrap_start);
+        ++bootstraps;
+        log_phase("bootstrap before ciphertext chain step " + std::to_string(chain_step) + " done");
+      }
       Ciphertext<DCRTPoly> decay_state_major_aligned_ct = decay_state_major_poly_ct->Clone();
       auto previous_state_for_chain_ct = state_new_poly_ct->Clone();
       align_levels(cc, decay_state_major_aligned_ct, previous_state_for_chain_ct, unity_multiplies);
@@ -1188,7 +1268,9 @@ auto main(int argc, char* argv[]) -> int {
       failure << "\"ring_dimension\":" << args.ring_dim << ",";
       failure << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
       failure << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
-      failure << "\"chain_steps\":" << args.chain_steps;
+      failure << "\"chain_steps\":" << args.chain_steps << ",";
+      failure << "\"bootstrap_before_chain_steps\":";
+      write_int_set_json(failure, args.bootstrap_before_chain_steps);
       failure << "},";
       failure << "\"measurements\":{";
       failure << "\"required_application_rotation_key_count\":" << required_rotations.size()
@@ -1202,6 +1284,8 @@ auto main(int argc, char* argv[]) -> int {
       failure << "\"timing\":{";
       failure << "\"setup_seconds\":" << setup_seconds << ",";
       failure << "\"rotate_keygen_seconds\":" << rotate_keygen_seconds << ",";
+      failure << "\"bootstrap_precompute_seconds\":" << bootstrap_precompute_seconds << ",";
+      failure << "\"bootstrap_eval_seconds\":" << bootstrap_eval_seconds << ",";
       failure << "\"load_context_seconds\":" << load_context_seconds << ",";
       failure << "\"eval_seconds\":" << eval_seconds;
       failure << "},";
@@ -1211,7 +1295,7 @@ auto main(int argc, char* argv[]) -> int {
       failure << "\"ct_ct_mul\":" << ct_ct_muls << ",";
       failure << "\"adds\":" << adds << ",";
       failure << "\"unity_level_align_muls\":" << unity_multiplies << ",";
-      failure << "\"bootstraps\":0";
+      failure << "\"bootstraps\":" << bootstraps;
       failure << "},";
       failure << "\"measurement_scope\":{";
       failure << "\"rank_gate_payload\":true,";
@@ -1220,6 +1304,12 @@ auto main(int argc, char* argv[]) -> int {
       failure << "\"ciphertext_recurrent_state_chain\":"
               << (args.chain_steps > 1 ? "true" : "false") << ",";
       failure << "\"chain_steps\":" << args.chain_steps << ",";
+      failure << "\"scheduled_bootstrap_chain\":"
+              << (args.bootstrap_before_chain_steps.empty() ? "false" : "true") << ",";
+      failure << "\"bootstrap_before_chain_steps\":";
+      write_int_set_json(failure, args.bootstrap_before_chain_steps);
+      failure << ",";
+      failure << "\"executed_bootstrap_count\":" << bootstraps << ",";
       failure << "\"chain_exact_reference_available\":"
               << (args.chain_steps == 1 ? "true" : "false") << ",";
       failure << "\"previous_state_nonzero\":"
@@ -1481,6 +1571,9 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
     out << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
     out << "\"chain_steps\":" << args.chain_steps << ",";
+    out << "\"bootstrap_before_chain_steps\":";
+    write_int_set_json(out, args.bootstrap_before_chain_steps);
+    out << ",";
     out << "\"model_baby_step\":" << payload.config.model_baby_step;
     out << ",\"rank_baby_step\":" << payload.config.rank_baby_step;
     out << ",\"rank_projection_scale\":" << args.rank_projection_scale;
@@ -1529,6 +1622,9 @@ auto main(int argc, char* argv[]) -> int {
         << ",";
     out << "\"previous_state_nonzero\":" << (previous_state_is_zero ? "false" : "true") << ",";
     out << "\"chain_steps\":" << args.chain_steps << ",";
+    out << "\"scheduled_bootstrap_chain\":"
+        << (args.bootstrap_before_chain_steps.empty() ? "false" : "true") << ",";
+    out << "\"executed_bootstrap_count\":" << bootstraps << ",";
     out << "\"peak_rss_gib\":" << peak_rss_gib() << ",";
     out << "\"rss_gib\":" << rss_gib();
     out << "},";
@@ -1536,6 +1632,8 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"timing\":{";
     out << "\"setup_seconds\":" << setup_seconds << ",";
     out << "\"rotate_keygen_seconds\":" << rotate_keygen_seconds << ",";
+    out << "\"bootstrap_precompute_seconds\":" << bootstrap_precompute_seconds << ",";
+    out << "\"bootstrap_eval_seconds\":" << bootstrap_eval_seconds << ",";
     out << "\"load_context_seconds\":" << load_context_seconds << ",";
     out << "\"eval_seconds\":" << eval_seconds;
     out << "},";
@@ -1545,7 +1643,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"ct_ct_mul\":" << ct_ct_muls << ",";
     out << "\"adds\":" << adds << ",";
     out << "\"unity_level_align_muls\":" << unity_multiplies << ",";
-    out << "\"bootstraps\":0";
+    out << "\"bootstraps\":" << bootstraps;
     out << "},";
     out << "\"measurement_scope\":{";
     out << "\"rank_gate_payload\":true,";
@@ -1561,6 +1659,12 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"ciphertext_recurrent_state_chain\":"
         << (args.chain_steps > 1 ? "true" : "false") << ",";
     out << "\"chain_steps\":" << args.chain_steps << ",";
+    out << "\"scheduled_bootstrap_chain\":"
+        << (args.bootstrap_before_chain_steps.empty() ? "false" : "true") << ",";
+    out << "\"bootstrap_before_chain_steps\":";
+    write_int_set_json(out, args.bootstrap_before_chain_steps);
+    out << ",";
+    out << "\"executed_bootstrap_count\":" << bootstraps << ",";
     out << "\"chain_exact_reference_available\":"
         << (args.chain_steps == 1 ? "true" : "false") << ",";
     out << "\"previous_state_nonzero\":"

@@ -154,6 +154,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "chain_steps" in rank_gate_fideslib_text
     assert "ciphertext_recurrent_state_chain" in rank_gate_fideslib_text
     assert "build_repeated_chain_reference" in rank_gate_fideslib_text
+    assert "bootstrap_before_chain_steps" in rank_gate_fideslib_text
+    assert "EvalBootstrapSetup" in rank_gate_fideslib_text
+    assert "EvalBootstrap(state_new_poly_ct)" in rank_gate_fideslib_text
     assert "previous_state_nonzero" in rank_gate_fideslib_text
     assert "state_new_poly" in rank_gate_fideslib_text
     assert "state_vector_to_state_major_ciphertext" in rank_gate_fideslib_text
@@ -182,7 +185,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "DT_PROJECTION_SCALE" in stage1_rank_gate_slurm_text
     assert "PREVIOUS_STATE_SCALE" in stage1_rank_gate_slurm_text
     assert "CHAIN_STEPS" in stage1_rank_gate_slurm_text
+    assert "BOOTSTRAP_BEFORE_CHAIN_STEPS" in stage1_rank_gate_slurm_text
     assert "--chain-steps" in stage1_rank_gate_slurm_text
+    assert "--bootstrap-before-chain-steps" in stage1_rank_gate_slurm_text
     assert "--previous-state-scale" in stage1_rank_gate_slurm_text
 
     checkpoint_openfhe_text = checkpoint_openfhe_slurm.read_text()
