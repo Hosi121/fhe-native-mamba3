@@ -198,12 +198,20 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
 - Encrypted sketch execution: PBI-S2-006 and PBI-S2-007 are complete; the learned/data-dependent sketch branch is complete through PBI-S2-014. PBI-S2-015 currently recommends deferring LoRA until a later chain artifact fails the existing deterministic calibration gate.
 - Decoding branch: PBI-S2-003 is complete at the current scope. PBI-S2-010 records client-side decode accounting, and PBI-S2-011 records a toy encrypted CutMax/OpenFHE path. Full-vocab encrypted generation is not claimed.
 - Development operations: PBI-OPS-001 through PBI-OPS-005 are done at their current scope. PBI-OPS-003 provides deterministic GitHub Issue sync plans from the canonical backlog, and PBI-OPS-005 collects single heavy SLURM jobs outside the safe campaign runner; GitHub Project board automation is not yet claimed.
+- `v0.3.128` adds the first model-layout handoff payload export for the
+  native/FIDESlib line. `runs/stage1-s054-tiny-rank-gate-chain-payload-v03128.json`
+  contains two sequential tiny checkpoint payloads; layer 1's residual input
+  follows layer 0's polynomial model-layout output with max handoff difference
+  `1.19e-07`. This is a payload/export contract only; the next executable
+  blocker is native multi-payload evaluation that keeps the layer-0 output
+  ciphertext alive as the layer-1 residual input.
 
 ## Near-Term Parallel Slices
 
 - Mainline A: continue PBI-S1-045 by adding model-layout layer-to-layer handoff
-  on top of the FIDESlib recurrent-state chain, then validate bootstrap
-  placement at the projected recurrent boundary.
+  execution on top of the new chain payload export and the FIDESlib
+  recurrent-state chain, then validate bootstrap placement at the projected
+  recurrent boundary.
 - Stage 2 B: PBI-S2-009 remains contingent work; PBI-S2-015 currently says
   deterministic calibration is enough, so LoRA should wait unless PBI-S1-041 or
   a later multi-layer chain exposes a new range/accuracy failure.

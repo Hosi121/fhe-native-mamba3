@@ -1,0 +1,916 @@
+{
+  "artifact": {
+    "format_version": 5,
+    "layer_indices": [
+      0,
+      1
+    ],
+    "model_layout_handoff": true,
+    "payload_count": 2,
+    "payloads": [
+      {
+        "array_order": [
+          "rms_input",
+          "effective_rank_weight",
+          "conv_bias",
+          "gate_weight",
+          "d_skip",
+          "reference_conv_pre",
+          "reference_rank_input",
+          "reference_gate_pre",
+          "reference_gate",
+          "reference_skip_update",
+          "rank_silu_coefficients",
+          "gate_silu_coefficients",
+          "reference_rank_input_poly",
+          "reference_gate_poly",
+          "reference_skip_update_poly",
+          "b_weight",
+          "c_weight",
+          "reference_b_vec_poly",
+          "reference_c_vec_poly",
+          "reference_b_state_major_poly",
+          "reference_c_state_major_poly",
+          "dt_in_weight",
+          "dt_proj_weight",
+          "dt_proj_bias",
+          "reference_dt_hidden_poly",
+          "reference_dt_pre_poly",
+          "reference_dt_state_major_poly",
+          "decay_coefficients",
+          "reference_decay_state_major_poly",
+          "reference_decay_state_major_exact",
+          "decay_metadata",
+          "residual_input",
+          "previous_state",
+          "w_out",
+          "reference_state_new_poly",
+          "reference_readout_rank_poly",
+          "reference_rank_output_poly",
+          "reference_rank_payload_poly",
+          "reference_output_model_poly",
+          "reference_output_model_exact",
+          "tail_metadata",
+          "polynomial_metadata"
+        ],
+        "arrays": {
+          "b_weight": {
+            "dtype": "float64",
+            "sha256": "1ba924803e2d597f70e42d13391bfd469fae40fbcc7dc7a6a2ebeb7a61073f81",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "c_weight": {
+            "dtype": "float64",
+            "sha256": "26b52848a74c85ec412a680b9447108f3f8a24abeb31b83d2bc6a7a5fe20e5a5",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "conv_bias": {
+            "dtype": "float64",
+            "sha256": "b9c207e7c0d1ae7bfa53230ddd3fe3e2f3b55674d3afd461318634e573466ce9",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "d_skip": {
+            "dtype": "float64",
+            "sha256": "b9c207e7c0d1ae7bfa53230ddd3fe3e2f3b55674d3afd461318634e573466ce9",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "decay_coefficients": {
+            "dtype": "float64",
+            "sha256": "5adfc9528b9d40a2b6b02fe4b53f2ebfbb9b1bf8023d1094243898809ab669aa",
+            "shape": [
+              6,
+              2,
+              6
+            ],
+            "value_count": 72
+          },
+          "decay_metadata": {
+            "dtype": "float64",
+            "sha256": "2b9df46feba2523e9c3e30ead31d024fe62a67b2809436c80e9512f225f568ae",
+            "shape": [
+              4
+            ],
+            "value_count": 4
+          },
+          "dt_in_weight": {
+            "dtype": "float64",
+            "sha256": "b0a52789556e778e3174f9eed2ddccb87304f5155f94a54a134ae2a72bfe1803",
+            "shape": [
+              4,
+              6
+            ],
+            "value_count": 24
+          },
+          "dt_proj_bias": {
+            "dtype": "float64",
+            "sha256": "b9c207e7c0d1ae7bfa53230ddd3fe3e2f3b55674d3afd461318634e573466ce9",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "dt_proj_weight": {
+            "dtype": "float64",
+            "sha256": "e2e714c8dcbb586b1a99cb8c0f9a293fde41adeebdcea1b50e6b13825873bbbc",
+            "shape": [
+              6,
+              4
+            ],
+            "value_count": 24
+          },
+          "effective_rank_weight": {
+            "dtype": "float64",
+            "sha256": "400e5edc1853f2e3a08f96e8e1a8d08ab3844b6e9950a19fa051b3ebcd4826fb",
+            "shape": [
+              6,
+              8
+            ],
+            "value_count": 48
+          },
+          "gate_silu_coefficients": {
+            "dtype": "float64",
+            "sha256": "e88c83fc6cb0b546126aa06b6708863e94e66971b5c39a8a10fcf7a7a3be873a",
+            "shape": [
+              15
+            ],
+            "value_count": 15
+          },
+          "gate_weight": {
+            "dtype": "float64",
+            "sha256": "ad45a4f9582b2d59b9e2e6e5a0f758b5225e8edf6b83275cbeb853b55b7c7bf3",
+            "shape": [
+              6,
+              8
+            ],
+            "value_count": 48
+          },
+          "polynomial_metadata": {
+            "dtype": "float64",
+            "sha256": "4e3fe71cd7de8b64b57b8ef5986dc63982b208aa32273604df7325ceecf1498b",
+            "shape": [
+              3
+            ],
+            "value_count": 3
+          },
+          "previous_state": {
+            "dtype": "float64",
+            "sha256": "d2ae8115676b5bb8e48615805c9b95f689d3443b9f1de7c51d8ff365968fddae",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "rank_silu_coefficients": {
+            "dtype": "float64",
+            "sha256": "e88c83fc6cb0b546126aa06b6708863e94e66971b5c39a8a10fcf7a7a3be873a",
+            "shape": [
+              15
+            ],
+            "value_count": 15
+          },
+          "reference_b_state_major_poly": {
+            "dtype": "float64",
+            "sha256": "978ac80b2657c0237aa594f4dbf1a50b2d39c0e761b8a727e083be87c6bf0f2d",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_b_vec_poly": {
+            "dtype": "float64",
+            "sha256": "048cfd6f9510a2add284d33732dde5663f403f3dbbcaef8114badb7ab5f359bb",
+            "shape": [
+              2
+            ],
+            "value_count": 2
+          },
+          "reference_c_state_major_poly": {
+            "dtype": "float64",
+            "sha256": "2359e3ec3f21a4cf70b9623789e5a11d1c92f600a872b4d10a1b907ba6839be8",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_c_vec_poly": {
+            "dtype": "float64",
+            "sha256": "c1d368d70d154076dbc662b535b64963477f7e7a12ddf55374d36a985bfdcea3",
+            "shape": [
+              2
+            ],
+            "value_count": 2
+          },
+          "reference_conv_pre": {
+            "dtype": "float64",
+            "sha256": "a3e0e214f86b905fbc1e1b4af7276b8097d5a2de9db85c695677d94ff412ebde",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_decay_state_major_exact": {
+            "dtype": "float64",
+            "sha256": "6e1c560ae92a2aba4d6c134bf41dacb601aa539749f422a8366eda89ca0f2d57",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_decay_state_major_poly": {
+            "dtype": "float64",
+            "sha256": "6840082b559811dfced5644728b0d4c6fb8d6dd98440cf2a61c7fda3ab7dda9f",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_dt_hidden_poly": {
+            "dtype": "float64",
+            "sha256": "b32d6f63fccb483e0af202be566730b9b0a5734e62336ac13df9c71684a55e05",
+            "shape": [
+              4
+            ],
+            "value_count": 4
+          },
+          "reference_dt_pre_poly": {
+            "dtype": "float64",
+            "sha256": "a63af1e377746a41af314d78d5bcc33220f07e88de3bcbc77d68e3f634231f9a",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_dt_state_major_poly": {
+            "dtype": "float64",
+            "sha256": "5322eb124acd9723d8f43e0976d04f341c371cb16ff12f069be7b0781a9529c3",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_gate": {
+            "dtype": "float64",
+            "sha256": "4d1c061fb26db7877af5d713e50c97393e86319eb7c8cca6885298751132e5ec",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_gate_poly": {
+            "dtype": "float64",
+            "sha256": "e11caebf47f3f3cfc32d0f844ac6e63dde1286ac91dfc57673a95e4fae61313f",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_gate_pre": {
+            "dtype": "float64",
+            "sha256": "827111e6088f89d5cca457034cfdca6f4f7f83f42dc02ed8507d080a50d3199e",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_output_model_exact": {
+            "dtype": "float64",
+            "sha256": "81ee3689e18101ff9c101858737d16873d0c43bcd8f3001cf1aa53150bf777d2",
+            "shape": [
+              8
+            ],
+            "value_count": 8
+          },
+          "reference_output_model_poly": {
+            "dtype": "float64",
+            "sha256": "449d4f19cf0195eb6ec01ac4712cc4c3a170d593a92bc3570360e3c564bfd083",
+            "shape": [
+              8
+            ],
+            "value_count": 8
+          },
+          "reference_rank_input": {
+            "dtype": "float64",
+            "sha256": "6c2fc780ca75eb023610a56360181c15843d7cbc309ed319b38f5f9c8e01e3bb",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_rank_input_poly": {
+            "dtype": "float64",
+            "sha256": "33581f8e3fd8b70779e08405224d269c705a8b740d8917e314f9662e5d4b66c5",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_rank_output_poly": {
+            "dtype": "float64",
+            "sha256": "16f26da3340a219d3dde9a0e6174a107f7ae7a2dd73ee8ba4e8a50624a541a1e",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_rank_payload_poly": {
+            "dtype": "float64",
+            "sha256": "d8e065a8380e3399e739df609f60541f0d3d8cd0e7721ada1577e3d945ae638c",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_readout_rank_poly": {
+            "dtype": "float64",
+            "sha256": "2f5e66e296937f2a10841536d6f3672445a619e623f64a8dd85d15e0bf7a080c",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_skip_update": {
+            "dtype": "float64",
+            "sha256": "c7a29021cab2ba32e7c090a3ad602ae3eb9fd252efd68900f510254b37393652",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_skip_update_poly": {
+            "dtype": "float64",
+            "sha256": "3bc8e7ae77335414ab2a8e1f7bdd5878dd27a079ccde2bcd552c77d7449b979a",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_state_new_poly": {
+            "dtype": "float64",
+            "sha256": "fcd78a2ad418a1709148078dc299518faf62f488ede924c6baee456c92e7965d",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "residual_input": {
+            "dtype": "float64",
+            "sha256": "79d3b19b0a7b288ddce46884809351f320fe8c8d71c831345c2e3d095bbce35d",
+            "shape": [
+              8
+            ],
+            "value_count": 8
+          },
+          "rms_input": {
+            "dtype": "float64",
+            "sha256": "fa7e70a1105a7775942d323e3015aa9910f4abb2c439c6ffc2c67c3c0b65af0e",
+            "shape": [
+              8
+            ],
+            "value_count": 8
+          },
+          "tail_metadata": {
+            "dtype": "float64",
+            "sha256": "9f41cab35f19e411efcc2efd0402a3fa86f5b967c9e27a70c7f724ce764e634d",
+            "shape": [
+              2
+            ],
+            "value_count": 2
+          },
+          "w_out": {
+            "dtype": "float64",
+            "sha256": "fbc96596021e0f1fb736f79d33672c93b72b02aa5d0ffdc9201d273df20d5846",
+            "shape": [
+              8,
+              6
+            ],
+            "value_count": 48
+          }
+        },
+        "binary": {
+          "path": "runs/stage1-s054-tiny-rank-gate-chain-payload-v03128/rank_gate_layer_0.bin",
+          "sha256": "9890300ca4be53b41e3004127f5768a7375b02e67c33076dcc19c788fa827891",
+          "size_bytes": 4724
+        },
+        "config": {
+          "d_model": 8,
+          "d_model_pad": 8,
+          "d_state": 2,
+          "input_scale": 0.05,
+          "mimo_rank": 6,
+          "model_baby_step": 64,
+          "rank_baby_step": 4,
+          "rank_pad": 8,
+          "seed": 0,
+          "state_scale": 0.01,
+          "weight_scale": 0.005
+        },
+        "format_version": 5,
+        "layer_index": 0,
+        "norm_eps": 1e-05,
+        "prompt_token": 1
+      },
+      {
+        "array_order": [
+          "rms_input",
+          "effective_rank_weight",
+          "conv_bias",
+          "gate_weight",
+          "d_skip",
+          "reference_conv_pre",
+          "reference_rank_input",
+          "reference_gate_pre",
+          "reference_gate",
+          "reference_skip_update",
+          "rank_silu_coefficients",
+          "gate_silu_coefficients",
+          "reference_rank_input_poly",
+          "reference_gate_poly",
+          "reference_skip_update_poly",
+          "b_weight",
+          "c_weight",
+          "reference_b_vec_poly",
+          "reference_c_vec_poly",
+          "reference_b_state_major_poly",
+          "reference_c_state_major_poly",
+          "dt_in_weight",
+          "dt_proj_weight",
+          "dt_proj_bias",
+          "reference_dt_hidden_poly",
+          "reference_dt_pre_poly",
+          "reference_dt_state_major_poly",
+          "decay_coefficients",
+          "reference_decay_state_major_poly",
+          "reference_decay_state_major_exact",
+          "decay_metadata",
+          "residual_input",
+          "previous_state",
+          "w_out",
+          "reference_state_new_poly",
+          "reference_readout_rank_poly",
+          "reference_rank_output_poly",
+          "reference_rank_payload_poly",
+          "reference_output_model_poly",
+          "reference_output_model_exact",
+          "tail_metadata",
+          "polynomial_metadata"
+        ],
+        "arrays": {
+          "b_weight": {
+            "dtype": "float64",
+            "sha256": "c4be7a6961fd76d52b38711354d3308ee4843d604689ef8a24799556607647bc",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "c_weight": {
+            "dtype": "float64",
+            "sha256": "64c62c45f8d5e87aa7c94c84d886c9d6eeb6d74b399163f0ee69dbbc5dd482fc",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "conv_bias": {
+            "dtype": "float64",
+            "sha256": "b9c207e7c0d1ae7bfa53230ddd3fe3e2f3b55674d3afd461318634e573466ce9",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "d_skip": {
+            "dtype": "float64",
+            "sha256": "b9c207e7c0d1ae7bfa53230ddd3fe3e2f3b55674d3afd461318634e573466ce9",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "decay_coefficients": {
+            "dtype": "float64",
+            "sha256": "5adfc9528b9d40a2b6b02fe4b53f2ebfbb9b1bf8023d1094243898809ab669aa",
+            "shape": [
+              6,
+              2,
+              6
+            ],
+            "value_count": 72
+          },
+          "decay_metadata": {
+            "dtype": "float64",
+            "sha256": "2b9df46feba2523e9c3e30ead31d024fe62a67b2809436c80e9512f225f568ae",
+            "shape": [
+              4
+            ],
+            "value_count": 4
+          },
+          "dt_in_weight": {
+            "dtype": "float64",
+            "sha256": "0c2f5538718b48b7a70f416050272d1ffc5c29b5fc2f2da2cde397a1112797f4",
+            "shape": [
+              4,
+              6
+            ],
+            "value_count": 24
+          },
+          "dt_proj_bias": {
+            "dtype": "float64",
+            "sha256": "b9c207e7c0d1ae7bfa53230ddd3fe3e2f3b55674d3afd461318634e573466ce9",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "dt_proj_weight": {
+            "dtype": "float64",
+            "sha256": "e2e714c8dcbb586b1a99cb8c0f9a293fde41adeebdcea1b50e6b13825873bbbc",
+            "shape": [
+              6,
+              4
+            ],
+            "value_count": 24
+          },
+          "effective_rank_weight": {
+            "dtype": "float64",
+            "sha256": "7835fd81a9d990ca67bfe8cfa538586dbf4e53d2c9232de0543275c9fea7d0df",
+            "shape": [
+              6,
+              8
+            ],
+            "value_count": 48
+          },
+          "gate_silu_coefficients": {
+            "dtype": "float64",
+            "sha256": "e88c83fc6cb0b546126aa06b6708863e94e66971b5c39a8a10fcf7a7a3be873a",
+            "shape": [
+              15
+            ],
+            "value_count": 15
+          },
+          "gate_weight": {
+            "dtype": "float64",
+            "sha256": "a6b87967d54372c1c6be299bbce05ab9cfb78075b848fe9790b09c77a3cd4581",
+            "shape": [
+              6,
+              8
+            ],
+            "value_count": 48
+          },
+          "polynomial_metadata": {
+            "dtype": "float64",
+            "sha256": "4e3fe71cd7de8b64b57b8ef5986dc63982b208aa32273604df7325ceecf1498b",
+            "shape": [
+              3
+            ],
+            "value_count": 3
+          },
+          "previous_state": {
+            "dtype": "float64",
+            "sha256": "e0c4c99859a305371fcbc82478f08b511519da5dfc3509e277bb80b865dc9a10",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "rank_silu_coefficients": {
+            "dtype": "float64",
+            "sha256": "e88c83fc6cb0b546126aa06b6708863e94e66971b5c39a8a10fcf7a7a3be873a",
+            "shape": [
+              15
+            ],
+            "value_count": 15
+          },
+          "reference_b_state_major_poly": {
+            "dtype": "float64",
+            "sha256": "d32423dadccc2723bd5d2f10fe293e82ea66733e4d43ba9caf9fc2e0722c9102",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_b_vec_poly": {
+            "dtype": "float64",
+            "sha256": "a221e475008266d6cf5587c95a314fb2725048dec5ce269220c5d845bed1b206",
+            "shape": [
+              2
+            ],
+            "value_count": 2
+          },
+          "reference_c_state_major_poly": {
+            "dtype": "float64",
+            "sha256": "199c8e6a2d5d909a1d74fc518ee31791a2347f692db0d652743c1112d5ef99e1",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_c_vec_poly": {
+            "dtype": "float64",
+            "sha256": "97cb7cf7821de543b44e521c3bd9250746b038ba4516d0945f38f5df556f0c3b",
+            "shape": [
+              2
+            ],
+            "value_count": 2
+          },
+          "reference_conv_pre": {
+            "dtype": "float64",
+            "sha256": "3a2730fd884edab6a9534faf5112a6e9058e011a4dce318a2a354ecf7d79a72e",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_decay_state_major_exact": {
+            "dtype": "float64",
+            "sha256": "e6cb327074d5f19c47f30302170e9fd6bb79279d7727d9e347b84ab4c4458341",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_decay_state_major_poly": {
+            "dtype": "float64",
+            "sha256": "a78a5334b9367b4d86b64773934d3ff0faafe4e39099d594de6cecd5ca0047f3",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_dt_hidden_poly": {
+            "dtype": "float64",
+            "sha256": "d49a81e5b4fcda10fa2d223cf045b4ef9d77d3a3890453e99176510047842e71",
+            "shape": [
+              4
+            ],
+            "value_count": 4
+          },
+          "reference_dt_pre_poly": {
+            "dtype": "float64",
+            "sha256": "c4e9247f5a16a816218ec030e312e72d753bd5ae76950773c68cef8e95faf7bc",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_dt_state_major_poly": {
+            "dtype": "float64",
+            "sha256": "5c4cd80753b33fcf6acd45cad3607263327906e8212d3df52fd1f41c27bc9336",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "reference_gate": {
+            "dtype": "float64",
+            "sha256": "b674d03601c5db5512c7d376a5ee427df5c7c01a2b6fa3267068b62770623a07",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_gate_poly": {
+            "dtype": "float64",
+            "sha256": "725e1bb98460b08396d186ea50f62c88d37e674885ba51e15f1916c2dda7136c",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_gate_pre": {
+            "dtype": "float64",
+            "sha256": "7d11f4b4e567a965cf17dcfc6e66da2a09823e5f9715490bdc4c768e6fb1fd03",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_output_model_exact": {
+            "dtype": "float64",
+            "sha256": "a912775f1b7ff1ea29144ed049322014a87cce27278a963f0b6abf68423f8553",
+            "shape": [
+              8
+            ],
+            "value_count": 8
+          },
+          "reference_output_model_poly": {
+            "dtype": "float64",
+            "sha256": "bba1fd9720e5dba53acc2914142e2a0df549723d0b9b396416665735c2a0276e",
+            "shape": [
+              8
+            ],
+            "value_count": 8
+          },
+          "reference_rank_input": {
+            "dtype": "float64",
+            "sha256": "f089d55057553ceafde79c0ff9c7ad2ff5ab116b31470a0a4dada910b4e779de",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_rank_input_poly": {
+            "dtype": "float64",
+            "sha256": "4e58414d76302ad144a1cd1e88f43fe1603e6302acb494978c89f713ab99bb5a",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_rank_output_poly": {
+            "dtype": "float64",
+            "sha256": "2409104dcc5e8f7c370fecdaa8329a2e293987abee8611b5e7f2a97a91e79901",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_rank_payload_poly": {
+            "dtype": "float64",
+            "sha256": "8663adc2103b01286480c09d70c1061cec1e89f36d34af8465ce20b3b3853c99",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_readout_rank_poly": {
+            "dtype": "float64",
+            "sha256": "f1080d0c334707e39831a708b80a9d2871ff18775468a7758a960a722bdff943",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_skip_update": {
+            "dtype": "float64",
+            "sha256": "e5d436fb031b41ccd35107b7880f40effc8b4c867e8b70f0c7d76e99bccb01ae",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_skip_update_poly": {
+            "dtype": "float64",
+            "sha256": "4d8917a6b6323f4d8f7048656686c21aee74820c83b9ec47942ed09c278df973",
+            "shape": [
+              6
+            ],
+            "value_count": 6
+          },
+          "reference_state_new_poly": {
+            "dtype": "float64",
+            "sha256": "69aecbfe89b6b393b5deacf33b3932c72030a037e10b349f9dd920058dabee1a",
+            "shape": [
+              2,
+              6
+            ],
+            "value_count": 12
+          },
+          "residual_input": {
+            "dtype": "float64",
+            "sha256": "6cf41f9e745e0773866909b5ccea3a32de3df30a679a315b8997f70ced0a2b84",
+            "shape": [
+              8
+            ],
+            "value_count": 8
+          },
+          "rms_input": {
+            "dtype": "float64",
+            "sha256": "ffabd8d58d0a99346b037efdff9716749a6f9f19869ce036054001f84dda4dbc",
+            "shape": [
+              8
+            ],
+            "value_count": 8
+          },
+          "tail_metadata": {
+            "dtype": "float64",
+            "sha256": "ddb706cf88fe1ad56b541644ec86393f340cde18fc53015e3294d3a5f46f13a1",
+            "shape": [
+              2
+            ],
+            "value_count": 2
+          },
+          "w_out": {
+            "dtype": "float64",
+            "sha256": "ca8549838e3c2003663b3a8ae6d3e6e2872559f9cfc206267d90a1ea8e510302",
+            "shape": [
+              8,
+              6
+            ],
+            "value_count": 48
+          }
+        },
+        "binary": {
+          "path": "runs/stage1-s054-tiny-rank-gate-chain-payload-v03128/rank_gate_layer_1.bin",
+          "sha256": "43c2d0313f0713c1fcfe31367e05560a7e5790f28433c55377a3c17a425afa65",
+          "size_bytes": 4724
+        },
+        "config": {
+          "d_model": 8,
+          "d_model_pad": 8,
+          "d_state": 2,
+          "input_scale": 0.05,
+          "mimo_rank": 6,
+          "model_baby_step": 64,
+          "rank_baby_step": 4,
+          "rank_pad": 8,
+          "seed": 0,
+          "state_scale": 0.01,
+          "weight_scale": 0.005
+        },
+        "format_version": 5,
+        "layer_index": 1,
+        "norm_eps": 1e-05,
+        "prompt_token": 1
+      }
+    ],
+    "prompt_tokens": [
+      1,
+      1
+    ]
+  },
+  "backend": "none",
+  "checkpoint": "runs/stage1-s017-tiny-mamba-2layer.pt",
+  "config": {
+    "input_mode": "payload-export"
+  },
+  "encrypted": false,
+  "measurement_scope": {
+    "benchmark": false,
+    "checkpoint_chain": true,
+    "claim": "Exports sequential native rank/gate payloads whose layer inputs follow the previous layer's polynomial model-layout output; this prepares a native model-layout handoff smoke but does not execute encrypted layers.",
+    "full_layer_executed": false,
+    "full_model_correctness_claimed": false,
+    "model_layout_handoff_reference": true,
+    "native_handoff_payload": true,
+    "rank_pack_first": true,
+    "recurrence_tail_executed": false,
+    "state_major_layout": true
+  },
+  "measurements": {
+    "payload_count": 2,
+    "total_binary_size_bytes": 9448,
+    "total_seconds": 1.3535462410000036
+  },
+  "operation_counts": {
+    "ct_ct_mul": 0,
+    "ct_pt_mul": 0,
+    "rotations": 0
+  },
+  "parameters": {
+    "d_model_pad": 8,
+    "d_state": 2,
+    "decay_polynomial_degree": 5,
+    "decay_polynomial_range": [
+      -0.5,
+      0.5
+    ],
+    "gate_polynomial_degree": 15,
+    "mimo_rank": 6,
+    "model_baby_step": 64,
+    "n_layers": 2,
+    "polynomial_degree": 15,
+    "polynomial_range": 8.0,
+    "previous_state_scale": 0.125,
+    "previous_state_seed": 7,
+    "prompt_token": 1,
+    "rank_baby_step": 4,
+    "rank_pad": 8,
+    "start_layer_index": 0
+  },
+  "passed": true,
+  "repo_commit": "27e0a8532552e6a0ed72c0ea6c21dde55675dc00",
+  "stage": "stage1-rank-gate-chain-payload-export",
+  "state_dict_key": "model",
+  "status": "passed",
+  "version": "0.3.128"
+}

@@ -406,6 +406,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_rank_gate_payload",
         "Stage1RankGatePayload",
     ),
+    "Stage1RankGatePayloadChain": (
+        "fhe_native_mamba3.stage1_rank_gate_payload",
+        "Stage1RankGatePayloadChain",
+    ),
     "Stage1RecurrentBootstrapReport": (
         "fhe_native_mamba3.stage1_recurrent_bootstrap_report",
         "Stage1RecurrentBootstrapReport",
@@ -717,6 +721,10 @@ _LAZY_IMPORTS = {
     "build_stage1_rank_gate_payload": (
         "fhe_native_mamba3.stage1_rank_gate_payload",
         "build_stage1_rank_gate_payload",
+    ),
+    "build_stage1_rank_gate_payload_chain": (
+        "fhe_native_mamba3.stage1_rank_gate_payload",
+        "build_stage1_rank_gate_payload_chain",
     ),
     "build_stage1_composite_rotation_report": (
         "fhe_native_mamba3.stage1_composite_rotation_report",
@@ -1121,6 +1129,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_rank_gate_payload",
         "write_stage1_rank_gate_payload_binary",
     ),
+    "write_stage1_rank_gate_payload_chain_binaries": (
+        "fhe_native_mamba3.stage1_rank_gate_payload",
+        "write_stage1_rank_gate_payload_chain_binaries",
+    ),
 }
 
 __all__ = [
@@ -1241,6 +1253,7 @@ __all__ = [
     "Stage1Plan",
     "Stage1ProfileHints",
     "Stage1RankGatePayload",
+    "Stage1RankGatePayloadChain",
     "Stage1RecurrentBootstrapReport",
     "Stage1TailGapReport",
     "Stage2LearnedSketchBaselineResult",
@@ -1305,6 +1318,7 @@ __all__ = [
     "build_stage1_grouped_chain_inventory",
     "build_stage1_plan",
     "build_stage1_rank_gate_payload",
+    "build_stage1_rank_gate_payload_chain",
     "build_stage1_recurrent_bootstrap_report",
     "build_stage1_tail_gap_report",
     "build_state_major_layout_plan",
@@ -1447,6 +1461,7 @@ __all__ = [
     "validate_benchmark_artifact",
     "write_stage1_checkpoint_tail_payload_binary",
     "write_stage1_rank_gate_payload_binary",
+    "write_stage1_rank_gate_payload_chain_binaries",
 ]
 
 

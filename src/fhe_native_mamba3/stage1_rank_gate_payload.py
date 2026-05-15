@@ -125,6 +125,35 @@ class Stage1RankGatePayload:
         return payload
 
 
+@dataclass(frozen=True)
+class Stage1RankGatePayloadChain:
+    """Sequential rank/gate payloads with model-layout handoff references."""
+
+    payloads: tuple[Stage1RankGatePayload, ...]
+
+    def to_manifest_dict(
+        self,
+        *,
+        binary_paths: tuple[str | Path, ...] | None = None,
+    ) -> dict[str, Any]:
+        if binary_paths is not None and len(binary_paths) != len(self.payloads):
+            msg = "binary_paths length must match payloads length"
+            raise ValueError(msg)
+        return {
+            "payload_count": len(self.payloads),
+            "layer_indices": [payload.layer_index for payload in self.payloads],
+            "prompt_tokens": [payload.prompt_token for payload in self.payloads],
+            "format_version": RANK_GATE_PAYLOAD_FORMAT_VERSION,
+            "model_layout_handoff": True,
+            "payloads": [
+                payload.to_manifest_dict(
+                    binary_path=None if binary_paths is None else binary_paths[index],
+                )
+                for index, payload in enumerate(self.payloads)
+            ],
+        }
+
+
 def build_stage1_rank_gate_payload(
     state_dict: dict[str, torch.Tensor],
     *,
@@ -405,6 +434,74 @@ def build_stage1_rank_gate_payload(
     )
 
 
+def build_stage1_rank_gate_payload_chain(
+    state_dict: dict[str, torch.Tensor],
+    *,
+    prompt_token: int = 0,
+    start_layer_index: int = 0,
+    n_layers: int = 2,
+    d_state: int | None = None,
+    mimo_rank: int | None = None,
+    d_model_pad: int | None = None,
+    rank_pad: int | None = None,
+    model_baby_step: int = 64,
+    rank_baby_step: int = 64,
+    norm_eps: float = 1e-5,
+    polynomial_degree: int = 15,
+    gate_polynomial_degree: int | None = None,
+    polynomial_range: float = 8.0,
+    decay_polynomial_degree: int = 5,
+    decay_polynomial_range: tuple[float, float] = (-0.5, 0.5),
+    previous_state_scale: float = 0.0,
+    previous_state_seed: int = 0,
+) -> Stage1RankGatePayloadChain:
+    """Build sequential payloads for a model-layout handoff smoke.
+
+    Each layer's plaintext reference input is the previous payload's polynomial
+    model-layout output. Native execution can then replace that reference input
+    with the previous layer's output ciphertext while reusing the same payload
+    tensors for the next layer's rank/gate projections.
+    """
+
+    if n_layers <= 0:
+        msg = "n_layers must be positive"
+        raise ValueError(msg)
+    if start_layer_index < 0:
+        msg = "start_layer_index must be non-negative"
+        raise ValueError(msg)
+    current_input = _layer_input_from_prompt_token(state_dict, prompt_token=prompt_token)
+    payloads: list[Stage1RankGatePayload] = []
+    for offset in range(n_layers):
+        layer_index = start_layer_index + offset
+        payload = build_stage1_rank_gate_payload(
+            state_dict,
+            layer_input=current_input,
+            prompt_token=prompt_token,
+            layer_index=layer_index,
+            d_state=d_state,
+            mimo_rank=mimo_rank,
+            d_model_pad=d_model_pad,
+            rank_pad=rank_pad,
+            model_baby_step=model_baby_step,
+            rank_baby_step=rank_baby_step,
+            norm_eps=norm_eps,
+            polynomial_degree=polynomial_degree,
+            gate_polynomial_degree=gate_polynomial_degree,
+            polynomial_range=polynomial_range,
+            decay_polynomial_degree=decay_polynomial_degree,
+            decay_polynomial_range=decay_polynomial_range,
+            previous_state_scale=previous_state_scale,
+            previous_state_seed=previous_state_seed + layer_index,
+        )
+        payloads.append(payload)
+        current_input = torch.tensor(
+            payload.arrays["reference_output_model_poly"],
+            dtype=current_input.dtype,
+            device=current_input.device,
+        ).view(1, 1, -1)
+    return Stage1RankGatePayloadChain(payloads=tuple(payloads))
+
+
 def write_stage1_rank_gate_payload_binary(
     payload: Stage1RankGatePayload,
     output_path: str | Path,
@@ -437,6 +534,27 @@ def write_stage1_rank_gate_payload_binary(
             handle.write(_ARRAY_LENGTH.pack(int(flat.size)))
             handle.write(flat.tobytes(order="C"))
     return path
+
+
+def write_stage1_rank_gate_payload_chain_binaries(
+    chain: Stage1RankGatePayloadChain,
+    output_dir: str | Path,
+    *,
+    prefix: str = "rank_gate_layer_",
+) -> tuple[Path, ...]:
+    """Write every payload in a chain to separate native binary files."""
+
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    output_paths: list[Path] = []
+    for payload in chain.payloads:
+        output_paths.append(
+            write_stage1_rank_gate_payload_binary(
+                payload,
+                directory / f"{prefix}{payload.layer_index}.bin",
+            )
+        )
+    return tuple(output_paths)
 
 
 def read_stage1_rank_gate_payload_binary(input_path: str | Path) -> Stage1RankGatePayload:
@@ -757,7 +875,10 @@ __all__ = [
     "RANK_GATE_PAYLOAD_FORMAT_VERSION",
     "RANK_GATE_PAYLOAD_MAGIC",
     "Stage1RankGatePayload",
+    "Stage1RankGatePayloadChain",
     "build_stage1_rank_gate_payload",
+    "build_stage1_rank_gate_payload_chain",
     "read_stage1_rank_gate_payload_binary",
     "write_stage1_rank_gate_payload_binary",
+    "write_stage1_rank_gate_payload_chain_binaries",
 ]

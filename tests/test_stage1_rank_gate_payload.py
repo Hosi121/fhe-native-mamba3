@@ -13,8 +13,10 @@ from fhe_native_mamba3.stage1_rank_gate_payload import (
     RANK_GATE_PAYLOAD_ARRAY_ORDER,
     RANK_GATE_PAYLOAD_FORMAT_VERSION,
     build_stage1_rank_gate_payload,
+    build_stage1_rank_gate_payload_chain,
     read_stage1_rank_gate_payload_binary,
     write_stage1_rank_gate_payload_binary,
+    write_stage1_rank_gate_payload_chain_binaries,
 )
 from fhe_native_mamba3.synthetic_checkpoint import (
     SyntheticMambaCheckpointConfig,
@@ -194,6 +196,43 @@ def test_rank_gate_payload_manifest_records_shapes(tmp_path) -> None:
     assert len(manifest["binary"]["sha256"]) == 64
 
 
+def test_rank_gate_payload_chain_uses_model_layout_handoff(tmp_path) -> None:
+    state_dict = build_synthetic_mamba_state_dict(
+        SyntheticMambaCheckpointConfig(d_model=8, mimo_rank=6, d_state=2, n_layers=2),
+    )
+
+    chain = build_stage1_rank_gate_payload_chain(
+        state_dict,
+        prompt_token=1,
+        n_layers=2,
+        d_state=2,
+        mimo_rank=6,
+        d_model_pad=8,
+        rank_pad=8,
+        previous_state_scale=0.125,
+        previous_state_seed=7,
+    )
+    output_paths = write_stage1_rank_gate_payload_chain_binaries(chain, tmp_path)
+    round_trips = tuple(read_stage1_rank_gate_payload_binary(path) for path in output_paths)
+    manifest = chain.to_manifest_dict(binary_paths=output_paths)
+
+    assert tuple(payload.layer_index for payload in chain.payloads) == (0, 1)
+    np.testing.assert_allclose(
+        chain.payloads[1].arrays["residual_input"],
+        chain.payloads[0].arrays["reference_output_model_poly"],
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        round_trips[1].arrays["residual_input"],
+        chain.payloads[0].arrays["reference_output_model_poly"],
+        atol=1e-6,
+    )
+    assert manifest["payload_count"] == 2
+    assert manifest["model_layout_handoff"] is True
+    assert [item["layer_index"] for item in manifest["payloads"]] == [0, 1]
+    assert all(path.exists() for path in output_paths)
+
+
 def test_export_stage1_rank_gate_payload_script_runs(tmp_path) -> None:
     checkpoint_path = tmp_path / "mamba.pt"
     output_binary = tmp_path / "rank_gate.bin"
@@ -282,3 +321,74 @@ def test_export_stage1_rank_gate_payload_script_runs(tmp_path) -> None:
     assert round_trip.arrays["reference_b_state_major_poly"].shape == (2, 6)
     assert round_trip.arrays["reference_decay_state_major_poly"].shape == (2, 6)
     assert round_trip.arrays["reference_output_model_poly"].shape == (8,)
+
+
+def test_export_stage1_rank_gate_chain_payload_script_runs(tmp_path) -> None:
+    checkpoint_path = tmp_path / "mamba.pt"
+    output_dir = tmp_path / "chain"
+    output_json = tmp_path / "chain.json"
+    torch.save(
+        {
+            "model": build_synthetic_mamba_state_dict(
+                SyntheticMambaCheckpointConfig(d_model=8, mimo_rank=6, d_state=2, n_layers=2),
+            ),
+        },
+        checkpoint_path,
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/export_stage1_rank_gate_chain_payload.py",
+            str(checkpoint_path),
+            "--state-dict-key",
+            "model",
+            "--prompt-token",
+            "1",
+            "--n-layers",
+            "2",
+            "--d-state",
+            "2",
+            "--mimo-rank",
+            "6",
+            "--d-model-pad",
+            "8",
+            "--rank-pad",
+            "8",
+            "--rank-baby-step",
+            "4",
+            "--previous-state-scale",
+            "0.125",
+            "--previous-state-seed",
+            "7",
+            "--output-dir",
+            str(output_dir),
+            "--output-json",
+            str(output_json),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    persisted = json.loads(output_json.read_text(encoding="utf-8"))
+    layer0 = read_stage1_rank_gate_payload_binary(output_dir / "rank_gate_layer_0.bin")
+    layer1 = read_stage1_rank_gate_payload_binary(output_dir / "rank_gate_layer_1.bin")
+
+    assert payload["version"] == __version__
+    assert payload["stage"] == "stage1-rank-gate-chain-payload-export"
+    assert payload["measurement_scope"]["model_layout_handoff_reference"] is True
+    assert payload["artifact"]["payload_count"] == 2
+    assert payload["artifact"]["layer_indices"] == [0, 1]
+    assert payload["measurements"]["payload_count"] == 2
+    assert (
+        persisted["artifact"]["payloads"][0]["binary"]["sha256"]
+        == payload["artifact"]["payloads"][0]["binary"]["sha256"]
+    )
+    np.testing.assert_allclose(
+        layer1.arrays["residual_input"],
+        layer0.arrays["reference_output_model_poly"],
+        atol=1e-6,
+    )
