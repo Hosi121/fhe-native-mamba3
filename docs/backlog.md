@@ -222,6 +222,23 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   rotations, `150` ct-pt multiplies, `60` ct-ct multiplies, eval `42.60s`,
   and peak RSS `13.64 GiB`. This is still tiny-shape evidence; the next
   Stage 1 scaling step is small96 or Mamba-130M-shaped model-layout handoff.
+- Job `10498` moves the same encrypted model-layout handoff to the small96
+  checkpoint shape: `runs/stage1-s056-small96-model-handoff-v03131.json`
+  passes with `d_model=64`, `mimo_rank=96`, `d_state=4`, `payload_count=2`,
+  `model_layout_ciphertext_handoff=true`, final `max_abs_error=0`, diagnostic
+  max error `2.47e-07`, handoff reference error `4.65e-10`, `56` application
+  rotation keys, `544` rotations, `1782` ct-pt multiplies, `60` ct-ct
+  multiplies, eval `142.59s`, peak RSS `30.09 GiB`, and SLURM elapsed
+  `00:03:35`. This closes the immediate tiny-only concern for model-layout
+  handoff; the next scaling step is Mamba-130M-shaped two-payload handoff or a
+  cheaper layer-boundary profiling split before launching that heavier job.
+- `v0.3.133` adds a model-layout handoff scaling report. Comparing tiny job
+  `10497` and small96 job `10498`, `ct_ct_mul` stays flat at `60` for two
+  payloads while rotations grow `110 -> 544`, ct-pt multiplications grow
+  `150 -> 1782`, eval grows `42.60s -> 142.59s`, and peak RSS grows
+  `13.64 -> 30.09 GiB`. This supports the current diagnosis that the next
+  Mamba-130M-shaped two-layer attempt is projection/rotation dominated rather
+  than recurrence-multiplication dominated.
 
 ## Near-Term Parallel Slices
 
