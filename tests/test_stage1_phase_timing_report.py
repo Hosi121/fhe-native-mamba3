@@ -7,7 +7,9 @@ from pathlib import Path
 
 from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.stage1_phase_timing_report import (
+    build_stage1_phase_timing_comparison_report,
     build_stage1_phase_timing_report,
+    stage1_phase_timing_comparison_markdown,
     stage1_phase_timing_markdown,
 )
 
@@ -64,6 +66,71 @@ def test_stage1_phase_timing_report_script_runs(tmp_path) -> None:
     assert payload["top_phases"][0]["name"] == "layer_0.output_projection"
     assert persisted["measurements"] == payload["measurements"]
     assert "Stage 1 Phase Timing Report" in output_md.read_text(encoding="utf-8")
+
+
+def test_stage1_phase_timing_comparison_report_ranks_improvements() -> None:
+    candidate = _payload()
+    candidate["timing"] = {"eval_seconds": 80.0}
+    candidate["phase_timings"] = {
+        "layer_0.conv_projection": 10.0,
+        "layer_0.output_projection": 40.0,
+        "layer_0.rank_gate_product": 11.0,
+    }
+    report = build_stage1_phase_timing_comparison_report(
+        baseline_payload=_payload(),
+        baseline_source="base.json",
+        candidate_payload=candidate,
+        candidate_source="candidate.json",
+        top_n=2,
+    )
+
+    assert report.passed is True
+    assert report.eval_speedup == 1.25
+    assert report.top_improvements[0].name == "layer_0.conv_projection"
+    assert report.top_improvements[0].delta_seconds == 15.0
+    assert "conv_projection" in stage1_phase_timing_comparison_markdown(report)
+
+
+def test_stage1_phase_timing_comparison_script_runs(tmp_path) -> None:
+    baseline_json = tmp_path / "baseline.json"
+    candidate_json = tmp_path / "candidate.json"
+    output_json = tmp_path / "comparison.json"
+    baseline_json.write_text(json.dumps(_payload()), encoding="utf-8")
+    candidate = _payload()
+    candidate["timing"] = {"eval_seconds": 80.0}
+    candidate["phase_timings"] = {
+        "layer_0.conv_projection": 10.0,
+        "layer_0.output_projection": 40.0,
+        "layer_0.rank_gate_product": 11.0,
+    }
+    candidate_json.write_text(json.dumps(candidate), encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/build_stage1_phase_timing_comparison.py",
+            "--baseline-json",
+            str(baseline_json),
+            "--candidate-json",
+            str(candidate_json),
+            "--output-json",
+            str(output_json),
+            "--top-n",
+            "2",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    persisted = json.loads(output_json.read_text(encoding="utf-8"))
+
+    assert payload["version"] == __version__
+    assert payload["stage"] == "stage1-phase-timing-comparison-report"
+    assert payload["eval_speedup"] == 1.25
+    assert persisted["top_improvements"] == payload["top_improvements"]
 
 
 def _payload() -> dict[str, object]:

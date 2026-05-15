@@ -40,6 +40,42 @@ class Stage1PhaseTimingReport:
         return payload
 
 
+@dataclass(frozen=True)
+class Stage1PhaseTimingDeltaRow:
+    """One phase-level timing delta between two native artifacts."""
+
+    name: str
+    baseline_seconds: float
+    candidate_seconds: float
+    delta_seconds: float
+    speedup: float | None
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class Stage1PhaseTimingComparisonReport:
+    """Comparison report for two native Stage 1 phase-timing artifacts."""
+
+    stage: str
+    passed: bool
+    baseline_source: str
+    candidate_source: str
+    baseline_eval_seconds: float | None
+    candidate_eval_seconds: float | None
+    eval_speedup: float | None
+    top_improvements: tuple[Stage1PhaseTimingDeltaRow, ...]
+    top_regressions: tuple[Stage1PhaseTimingDeltaRow, ...]
+    measurement_scope: dict[str, Any]
+
+    def to_json_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["top_improvements"] = [row.to_json_dict() for row in self.top_improvements]
+        payload["top_regressions"] = [row.to_json_dict() for row in self.top_regressions]
+        return payload
+
+
 def build_stage1_phase_timing_report(
     *,
     payload: dict[str, Any],
@@ -122,6 +158,66 @@ def build_stage1_phase_timing_report(
     )
 
 
+def build_stage1_phase_timing_comparison_report(
+    *,
+    baseline_payload: dict[str, Any],
+    baseline_source: str,
+    candidate_payload: dict[str, Any],
+    candidate_source: str,
+    top_n: int = 8,
+) -> Stage1PhaseTimingComparisonReport:
+    """Compare phase timings between two native Stage 1 artifacts."""
+
+    if top_n <= 0:
+        msg = "top_n must be positive"
+        raise ValueError(msg)
+    baseline_phases = _float_dict(baseline_payload.get("phase_timings"))
+    candidate_phases = _float_dict(candidate_payload.get("phase_timings"))
+    baseline_timing = _float_dict(baseline_payload.get("timing"))
+    candidate_timing = _float_dict(candidate_payload.get("timing"))
+    names = sorted(set(baseline_phases) | set(candidate_phases))
+    rows = tuple(
+        Stage1PhaseTimingDeltaRow(
+            name=name,
+            baseline_seconds=baseline_phases.get(name, 0.0),
+            candidate_seconds=candidate_phases.get(name, 0.0),
+            delta_seconds=baseline_phases.get(name, 0.0) - candidate_phases.get(name, 0.0),
+            speedup=_safe_div(
+                baseline_phases.get(name, 0.0),
+                candidate_phases.get(name, 0.0),
+            ),
+        )
+        for name in names
+    )
+    improvements = tuple(
+        sorted(rows, key=lambda row: row.delta_seconds, reverse=True)[:top_n],
+    )
+    regressions = tuple(sorted(rows, key=lambda row: row.delta_seconds)[:top_n])
+    baseline_eval = baseline_timing.get("eval_seconds")
+    candidate_eval = candidate_timing.get("eval_seconds")
+    return Stage1PhaseTimingComparisonReport(
+        stage="stage1-phase-timing-comparison-report",
+        passed=bool(baseline_phases) and bool(candidate_phases),
+        baseline_source=baseline_source,
+        candidate_source=candidate_source,
+        baseline_eval_seconds=baseline_eval,
+        candidate_eval_seconds=candidate_eval,
+        eval_speedup=_safe_div(baseline_eval, candidate_eval),
+        top_improvements=improvements,
+        top_regressions=regressions,
+        measurement_scope={
+            "report_only": True,
+            "native_phase_telemetry_comparison": True,
+            "new_encrypted_execution": False,
+            "full_model_correctness_claimed": False,
+            "claim": (
+                "Compares phase-level telemetry from two existing encrypted artifacts. "
+                "It is a reporting artifact, not a new execution."
+            ),
+        },
+    )
+
+
 def stage1_phase_timing_markdown(report: Stage1PhaseTimingReport) -> str:
     """Render a compact Markdown table."""
 
@@ -143,6 +239,36 @@ def stage1_phase_timing_markdown(report: Stage1PhaseTimingReport) -> str:
             "",
             f"- Source: `{report.source}`",
             f"- Next bottleneck: `{report.next_bottleneck}`",
+            "",
+            *rows,
+            "",
+        ],
+    )
+
+
+def stage1_phase_timing_comparison_markdown(
+    report: Stage1PhaseTimingComparisonReport,
+) -> str:
+    """Render a compact Markdown comparison table."""
+
+    rows = [
+        "| phase | baseline s | candidate s | delta s | speedup |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for row in report.top_improvements:
+        speedup = "" if row.speedup is None else f"{row.speedup:.3f}"
+        rows.append(
+            f"| `{row.name}` | {row.baseline_seconds:.3f} | "
+            f"{row.candidate_seconds:.3f} | {row.delta_seconds:.3f} | {speedup} |",
+        )
+    total_speedup = "" if report.eval_speedup is None else f"{report.eval_speedup:.3f}"
+    return "\n".join(
+        [
+            "# Stage 1 Phase Timing Comparison",
+            "",
+            f"- Baseline: `{report.baseline_source}`",
+            f"- Candidate: `{report.candidate_source}`",
+            f"- Eval speedup: `{total_speedup}`",
             "",
             *rows,
             "",
@@ -187,7 +313,7 @@ def _nested_number(payload: dict[str, Any], *keys: str) -> float | None:
     return float(current)
 
 
-def _safe_div(numerator: float, denominator: float | None) -> float | None:
-    if denominator is None or denominator == 0.0:
+def _safe_div(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator == 0.0:
         return None
     return numerator / denominator
