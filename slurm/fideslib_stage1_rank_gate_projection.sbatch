@@ -29,6 +29,7 @@ CHECKPOINT="${CHECKPOINT:-runs/stage1-s014-tiny-mamba.pt}"
 STATE_DICT_KEY="${STATE_DICT_KEY:-}"
 OUTPUT_JSON="${OUTPUT_JSON:-runs/${RUN_NAME}.json}"
 RANK_GATE_BINARY="${RANK_GATE_BINARY:-runs/${RUN_NAME}.bin}"
+RANK_GATE_CHAIN_DIR="${RANK_GATE_CHAIN_DIR:-runs/${RUN_NAME}-payloads}"
 RANK_GATE_MANIFEST="${RANK_GATE_MANIFEST:-runs/${RUN_NAME}-payload-export.json}"
 
 D_STATE="${D_STATE:-2}"
@@ -39,6 +40,7 @@ MODEL_BABY_STEP="${MODEL_BABY_STEP:-4}"
 RANK_BABY_STEP="${RANK_BABY_STEP:-4}"
 PROMPT_TOKEN="${PROMPT_TOKEN:-1}"
 LAYER_INDEX="${LAYER_INDEX:-0}"
+N_LAYERS="${N_LAYERS:-1}"
 POLYNOMIAL_DEGREE="${POLYNOMIAL_DEGREE:-15}"
 GATE_POLYNOMIAL_DEGREE="${GATE_POLYNOMIAL_DEGREE:-9}"
 POLYNOMIAL_RANGE="${POLYNOMIAL_RANGE:-8.0}"
@@ -109,30 +111,67 @@ EXPORT_ARGS=()
 if [[ -n "${STATE_DICT_KEY}" ]]; then
   EXPORT_ARGS+=(--state-dict-key "${STATE_DICT_KEY}")
 fi
-"${PYTHON}" scripts/export_stage1_rank_gate_payload.py \
-  "${CHECKPOINT}" \
-  "${EXPORT_ARGS[@]}" \
-  --layer-index "${LAYER_INDEX}" \
-  --prompt-token "${PROMPT_TOKEN}" \
-  --d-state "${D_STATE}" \
-  --mimo-rank "${MIMO_RANK}" \
-  --d-model-pad "${D_MODEL_PAD}" \
-  --rank-pad "${RANK_PAD}" \
-  --model-baby-step "${MODEL_BABY_STEP}" \
-  --rank-baby-step "${RANK_BABY_STEP}" \
-  --polynomial-degree "${POLYNOMIAL_DEGREE}" \
-  --gate-polynomial-degree "${GATE_POLYNOMIAL_DEGREE}" \
-  --polynomial-range "${POLYNOMIAL_RANGE}" \
-  --decay-polynomial-degree "${DECAY_POLYNOMIAL_DEGREE}" \
-  --decay-polynomial-range "${DECAY_POLYNOMIAL_RANGE_LOWER}" "${DECAY_POLYNOMIAL_RANGE_UPPER}" \
-  --previous-state-scale "${PREVIOUS_STATE_SCALE}" \
-  --previous-state-seed "${PREVIOUS_STATE_SEED}" \
-  --output-binary "${RANK_GATE_BINARY}" \
-  --output-json "${RANK_GATE_MANIFEST}"
+RUN_INPUT_ARGS=()
+if [[ "${N_LAYERS}" -gt 1 ]]; then
+  "${PYTHON}" scripts/export_stage1_rank_gate_chain_payload.py \
+    "${CHECKPOINT}" \
+    "${EXPORT_ARGS[@]}" \
+    --start-layer-index "${LAYER_INDEX}" \
+    --n-layers "${N_LAYERS}" \
+    --prompt-token "${PROMPT_TOKEN}" \
+    --d-state "${D_STATE}" \
+    --mimo-rank "${MIMO_RANK}" \
+    --d-model-pad "${D_MODEL_PAD}" \
+    --rank-pad "${RANK_PAD}" \
+    --model-baby-step "${MODEL_BABY_STEP}" \
+    --rank-baby-step "${RANK_BABY_STEP}" \
+    --polynomial-degree "${POLYNOMIAL_DEGREE}" \
+    --gate-polynomial-degree "${GATE_POLYNOMIAL_DEGREE}" \
+    --polynomial-range "${POLYNOMIAL_RANGE}" \
+    --decay-polynomial-degree "${DECAY_POLYNOMIAL_DEGREE}" \
+    --decay-polynomial-range "${DECAY_POLYNOMIAL_RANGE_LOWER}" "${DECAY_POLYNOMIAL_RANGE_UPPER}" \
+    --previous-state-scale "${PREVIOUS_STATE_SCALE}" \
+    --previous-state-seed "${PREVIOUS_STATE_SEED}" \
+    --output-dir "${RANK_GATE_CHAIN_DIR}" \
+    --output-json "${RANK_GATE_MANIFEST}"
+  CHAIN_INPUTS=""
+  for ((layer_offset = 0; layer_offset < N_LAYERS; layer_offset++)); do
+    layer_index=$((LAYER_INDEX + layer_offset))
+    layer_path="${RANK_GATE_CHAIN_DIR}/rank_gate_layer_${layer_index}.bin"
+    if [[ -z "${CHAIN_INPUTS}" ]]; then
+      CHAIN_INPUTS="${layer_path}"
+    else
+      CHAIN_INPUTS="${CHAIN_INPUTS},${layer_path}"
+    fi
+  done
+  RUN_INPUT_ARGS=(--input-chain "${CHAIN_INPUTS}")
+else
+  "${PYTHON}" scripts/export_stage1_rank_gate_payload.py \
+    "${CHECKPOINT}" \
+    "${EXPORT_ARGS[@]}" \
+    --layer-index "${LAYER_INDEX}" \
+    --prompt-token "${PROMPT_TOKEN}" \
+    --d-state "${D_STATE}" \
+    --mimo-rank "${MIMO_RANK}" \
+    --d-model-pad "${D_MODEL_PAD}" \
+    --rank-pad "${RANK_PAD}" \
+    --model-baby-step "${MODEL_BABY_STEP}" \
+    --rank-baby-step "${RANK_BABY_STEP}" \
+    --polynomial-degree "${POLYNOMIAL_DEGREE}" \
+    --gate-polynomial-degree "${GATE_POLYNOMIAL_DEGREE}" \
+    --polynomial-range "${POLYNOMIAL_RANGE}" \
+    --decay-polynomial-degree "${DECAY_POLYNOMIAL_DEGREE}" \
+    --decay-polynomial-range "${DECAY_POLYNOMIAL_RANGE_LOWER}" "${DECAY_POLYNOMIAL_RANGE_UPPER}" \
+    --previous-state-scale "${PREVIOUS_STATE_SCALE}" \
+    --previous-state-seed "${PREVIOUS_STATE_SEED}" \
+    --output-binary "${RANK_GATE_BINARY}" \
+    --output-json "${RANK_GATE_MANIFEST}"
+  RUN_INPUT_ARGS=(--input "${RANK_GATE_BINARY}")
+fi
 
 section "Run FIDESlib rank/gate projection"
 "${BUILD_DIR}/stage1_rank_gate_fideslib" \
-  --input "${RANK_GATE_BINARY}" \
+  "${RUN_INPUT_ARGS[@]}" \
   --artifact-version "${ARTIFACT_VERSION}" \
   --repo-commit "${REPO_COMMIT}" \
   --ring-dim "${RING_DIM}" \

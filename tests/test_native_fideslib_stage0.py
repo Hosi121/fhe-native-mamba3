@@ -144,6 +144,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
 
     rank_gate_fideslib_text = stage1_rank_gate_fideslib_source.read_text()
     assert "stage1-rank-gate-fideslib-projection" in rank_gate_fideslib_text
+    assert "--input-chain" in rank_gate_fideslib_text
     assert "--artifact-version" in rank_gate_fideslib_text
     assert "--repo-commit" in rank_gate_fideslib_text
     assert '\\"version\\"' in rank_gate_fideslib_text
@@ -165,9 +166,12 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "chain_steps" in rank_gate_fideslib_text
     assert "ciphertext_recurrent_state_chain" in rank_gate_fideslib_text
     assert "build_repeated_chain_reference" in rank_gate_fideslib_text
+    assert "model_layout_ciphertext_handoff" in rank_gate_fideslib_text
+    assert "pre_recurrence_payload_reference_per_layer" in rank_gate_fideslib_text
+    assert "payload_chain_reference_max_abs_error" in rank_gate_fideslib_text
     assert "bootstrap_before_chain_steps" in rank_gate_fideslib_text
     assert "EvalBootstrapSetup" in rank_gate_fideslib_text
-    assert "EvalBootstrap(state_new_poly_ct)" in rank_gate_fideslib_text
+    assert "EvalBootstrap(result.state_new_poly)" in rank_gate_fideslib_text
     assert "write_runtime_failure_payload" in rank_gate_fideslib_text
     assert "previous_state_nonzero" in rank_gate_fideslib_text
     assert "state_new_poly" in rank_gate_fideslib_text
@@ -193,6 +197,9 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     stage1_rank_gate_slurm_text = stage1_rank_gate_slurm.read_text()
     assert "stage1_rank_gate_fideslib" in stage1_rank_gate_slurm_text
     assert "export_stage1_rank_gate_payload.py" in stage1_rank_gate_slurm_text
+    assert "export_stage1_rank_gate_chain_payload.py" in stage1_rank_gate_slurm_text
+    assert "N_LAYERS" in stage1_rank_gate_slurm_text
+    assert "--input-chain" in stage1_rank_gate_slurm_text
     assert "ARTIFACT_VERSION" in stage1_rank_gate_slurm_text
     assert "REPO_COMMIT" in stage1_rank_gate_slurm_text
     assert "--artifact-version" in stage1_rank_gate_slurm_text

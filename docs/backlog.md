@@ -209,6 +209,13 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   payload handoff contracts. It validates the same two-payload artifact at
   `max_abs_error=6.45e-07` and `model_layout_handoff_max_abs_error=1.19e-07`
   without GPU/FIDESlib, keeping `chain_steps` separate from layer payload count.
+- `v0.3.130` wires `--input-chain` into the encrypted FIDESlib rank/gate
+  executable and SLURM path. The executable now reads a same-shape payload
+  sequence, unions rotation keys, and feeds payload N's encrypted
+  `output_model` ciphertext as payload N+1's residual while keeping each
+  layer's pre-recurrence tensors payload/reference-driven. Remote FIDESlib
+  compile on `high` passes; the next artifact should be a tiny two-payload
+  encrypted model-layout handoff run.
 
 ## Near-Term Parallel Slices
 
