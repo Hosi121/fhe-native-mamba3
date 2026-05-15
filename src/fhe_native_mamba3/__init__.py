@@ -332,6 +332,10 @@ _LAZY_IMPORTS = {
     "Stage0MimoConfig": ("fhe_native_mamba3.benchmarks.stage0_mimo", "Stage0MimoConfig"),
     "Stage0SweepConfig": ("fhe_native_mamba3.benchmarks.stage0_sweep", "Stage0SweepConfig"),
     "Stage1CandidatePlan": ("fhe_native_mamba3.stage1_plan", "Stage1CandidatePlan"),
+    "Stage1ChainScalingReport": (
+        "fhe_native_mamba3.stage1_chain_scaling_report",
+        "Stage1ChainScalingReport",
+    ),
     "Stage1ComparisonReport": (
         "fhe_native_mamba3.stage1_report",
         "Stage1ComparisonReport",
@@ -678,13 +682,17 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage0_status",
         "build_stage0_status_report",
     ),
-    "build_stage1_comparison_report": (
-        "fhe_native_mamba3.stage1_report",
-        "build_stage1_comparison_report",
+    "build_stage1_chain_scaling_report": (
+        "fhe_native_mamba3.stage1_chain_scaling_report",
+        "build_stage1_chain_scaling_report",
     ),
     "build_stage1_checkpoint_cost_report": (
         "fhe_native_mamba3.stage1_checkpoint_cost_report",
         "build_stage1_checkpoint_cost_report",
+    ),
+    "build_stage1_comparison_report": (
+        "fhe_native_mamba3.stage1_report",
+        "build_stage1_comparison_report",
     ),
     "build_stage1_grouped_chain_inventory": (
         "fhe_native_mamba3.stage1_grouped_chain",
@@ -1204,6 +1212,7 @@ __all__ = [
     "Stage0MimoConfig",
     "Stage0SweepConfig",
     "Stage1CandidatePlan",
+    "Stage1ChainScalingReport",
     "Stage1CheckpointCostReport",
     "Stage1CheckpointCostRow",
     "Stage1CheckpointGroupedGateInventoryReport",
@@ -1278,6 +1287,7 @@ __all__ = [
     "build_slot_bsgs_schedule",
     "build_srht_sketch_metadata",
     "build_stage0_status_report",
+    "build_stage1_chain_scaling_report",
     "build_stage1_checkpoint_cost_report",
     "build_stage1_checkpoint_grouped_gate_inventory",
     "build_stage1_checkpoint_tail_payload",
