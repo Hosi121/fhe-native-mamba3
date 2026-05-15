@@ -32,6 +32,7 @@ def main() -> int:
         sacct_file=args.base_sacct_file,
         pull=args.pull,
         pull_dry_run=args.pull_dry_run,
+        pull_incomplete=args.pull_incomplete,
         remote=args.remote,
         remote_dir=args.remote_dir,
     )
@@ -41,6 +42,7 @@ def main() -> int:
         sacct_file=args.extended_sacct_file,
         pull=args.pull,
         pull_dry_run=args.pull_dry_run,
+        pull_incomplete=args.pull_incomplete,
         remote=args.remote,
         remote_dir=args.remote_dir,
     )
@@ -137,13 +139,16 @@ def _collect_one(
     sacct_file: str,
     pull: bool,
     pull_dry_run: bool,
+    pull_incomplete: bool,
     remote: str,
     remote_dir: str,
 ) -> dict[str, Any]:
     from fhe_native_mamba3.artifact_validation import validate_artifact_file
 
+    rows = parse_sacct_pipe(_sacct_text(job_id=job_id, sacct_file=sacct_file, remote=remote))
+    root_state = _root_job_state(rows, job_id)
     pull_result = None
-    if pull and not artifact.exists():
+    if pull and not artifact.exists() and (_is_terminal_state(root_state) or pull_incomplete):
         pull_result = _pull_remote_artifact(
             str(artifact),
             destination=artifact,
@@ -151,8 +156,6 @@ def _collect_one(
             remote_dir=remote_dir,
             dry_run=pull_dry_run,
         )
-    rows = parse_sacct_pipe(_sacct_text(job_id=job_id, sacct_file=sacct_file, remote=remote))
-    root_state = _root_job_state(rows, job_id)
     artifact_payload = None
     validation = None
     if artifact.exists():
@@ -271,7 +274,11 @@ def _public_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _complete(row: dict[str, Any]) -> bool:
-    return row["root_state"] in _TERMINAL_STATES
+    return _is_terminal_state(row["root_state"])
+
+
+def _is_terminal_state(root_state: str | None) -> bool:
+    return root_state in _TERMINAL_STATES
 
 
 def _root_job_state(rows: list[dict[str, str]], job_id: str) -> str | None:
@@ -332,6 +339,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--remote-dir", default="~/cipher/fhe-native-mamba3")
     parser.add_argument("--pull", action="store_true")
     parser.add_argument("--pull-dry-run", action="store_true")
+    parser.add_argument("--pull-incomplete", action="store_true")
     parser.add_argument("--base-sacct-file", default="")
     parser.add_argument("--extended-sacct-file", default="")
     parser.add_argument("--require-complete", action="store_true")

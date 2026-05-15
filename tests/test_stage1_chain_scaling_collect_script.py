@@ -120,6 +120,8 @@ def test_collect_stage1_chain_scaling_allows_running_missing_pair(tmp_path) -> N
             str(base_sacct),
             "--extended-sacct-file",
             str(extended_sacct),
+            "--pull",
+            "--pull-dry-run",
             "--output-json",
             str(output),
         ],
@@ -135,6 +137,8 @@ def test_collect_stage1_chain_scaling_allows_running_missing_pair(tmp_path) -> N
     assert payload["collection_complete"] is False
     assert payload["artifact_pair_valid"] is False
     assert payload["reports"]["chain_scaling_report"] is None
+    assert payload["base"]["remote_pull"] is None
+    assert payload["extended"]["remote_pull"] is None
     assert "Pending" in payload["ledger_rows"][0]
 
 
