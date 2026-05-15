@@ -430,6 +430,14 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_tail_gap_report",
         "Stage1TailGapReport",
     ),
+    "Stage1PhaseTimingReport": (
+        "fhe_native_mamba3.stage1_phase_timing_report",
+        "Stage1PhaseTimingReport",
+    ),
+    "Stage1PhaseTimingRow": (
+        "fhe_native_mamba3.stage1_phase_timing_report",
+        "Stage1PhaseTimingRow",
+    ),
     "StateMajorLayoutPlan": (
         "fhe_native_mamba3.stage1_state_major_layout",
         "StateMajorLayoutPlan",
@@ -803,6 +811,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_tail_gap_report",
         "build_stage1_tail_gap_report",
     ),
+    "build_stage1_phase_timing_report": (
+        "fhe_native_mamba3.stage1_phase_timing_report",
+        "build_stage1_phase_timing_report",
+    ),
     "build_stage2_lora_replay_report": (
         "fhe_native_mamba3.stage2_lora_replay_report",
         "build_stage2_lora_replay_report",
@@ -1081,6 +1093,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage1_tail_gap_report",
         "stage1_tail_gap_markdown",
     ),
+    "stage1_phase_timing_markdown": (
+        "fhe_native_mamba3.stage1_phase_timing_report",
+        "stage1_phase_timing_markdown",
+    ),
     "stage1_checkpoint_cost_markdown": (
         "fhe_native_mamba3.stage1_checkpoint_cost_report",
         "stage1_checkpoint_cost_markdown",
@@ -1306,6 +1322,8 @@ __all__ = [
     "Stage1GroupedRecurrenceSmokeResult",
     "Stage1PackSweepResult",
     "Stage1PackSweepRow",
+    "Stage1PhaseTimingReport",
+    "Stage1PhaseTimingRow",
     "Stage1Plan",
     "Stage1ProfileHints",
     "Stage1RankGatePayload",
@@ -1378,6 +1396,7 @@ __all__ = [
     "build_stage1_comparison_report",
     "build_stage1_composite_rotation_report",
     "build_stage1_grouped_chain_inventory",
+    "build_stage1_phase_timing_report",
     "build_stage1_plan",
     "build_stage1_rank_gate_payload",
     "build_stage1_rank_gate_payload_chain",
@@ -1519,6 +1538,7 @@ __all__ = [
     "ssd_prefix_scan_prefill",
     "stage1_checkpoint_cost_markdown",
     "stage1_comparison_markdown",
+    "stage1_phase_timing_markdown",
     "stage1_tail_gap_markdown",
     "state_axis_rotation_steps",
     "state_major_slot",
