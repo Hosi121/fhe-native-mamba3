@@ -100,6 +100,8 @@ struct OperationCounts {
   int bootstraps = 0;
 };
 
+using BabyRotationCache = std::map<int, Ciphertext<DCRTPoly>>;
+
 auto now() -> std::chrono::steady_clock::time_point { return std::chrono::steady_clock::now(); }
 
 auto seconds_since(std::chrono::steady_clock::time_point start) -> double {
@@ -548,9 +550,23 @@ auto slot_bsgs_pre_mask(
   return mask;
 }
 
-auto slot_bsgs_linear_block0(
+auto slot_bsgs_precompute_baby_rotations(
     const CryptoContext<DCRTPoly>& cc,
     const Ciphertext<DCRTPoly>& input_ct,
+    int baby_step,
+    int& rotations) -> BabyRotationCache {
+  BabyRotationCache baby_ct;
+  baby_ct[0] = input_ct;
+  for (int baby = 1; baby < baby_step; ++baby) {
+    baby_ct[baby] = cc->EvalRotate(input_ct, baby);
+    ++rotations;
+  }
+  return baby_ct;
+}
+
+auto slot_bsgs_linear_block0_from_babies(
+    const CryptoContext<DCRTPoly>& cc,
+    const BabyRotationCache& baby_ct,
     const std::vector<double>& weights,
     int input_dim,
     int output_dim,
@@ -559,13 +575,6 @@ auto slot_bsgs_linear_block0(
     int& rotations,
     int& ct_pt_muls,
     int& adds) -> Ciphertext<DCRTPoly> {
-  std::map<int, Ciphertext<DCRTPoly>> baby_ct;
-  baby_ct[0] = input_ct;
-  for (int baby = 1; baby < baby_step; ++baby) {
-    baby_ct[baby] = cc->EvalRotate(input_ct, baby);
-    ++rotations;
-  }
-
   Ciphertext<DCRTPoly> accumulator;
   bool has_accumulator = false;
   for (const int giant : slot_bsgs_giant_with_zero(input_dim, output_dim, baby_step)) {
@@ -579,7 +588,7 @@ auto slot_bsgs_linear_block0(
       }
       auto plain = cc->MakeCKKSPackedPlaintext(mask);
       plain->SetLength(static_cast<size_t>(batch_size));
-      auto term = cc->EvalMult(baby_ct[baby], plain);
+      auto term = cc->EvalMult(baby_ct.at(baby), plain);
       ++ct_pt_muls;
       if (!has_inner) {
         inner = term;
@@ -608,6 +617,31 @@ auto slot_bsgs_linear_block0(
     throw std::runtime_error("slot BSGS produced no terms");
   }
   return accumulator;
+}
+
+auto slot_bsgs_linear_block0(
+    const CryptoContext<DCRTPoly>& cc,
+    const Ciphertext<DCRTPoly>& input_ct,
+    const std::vector<double>& weights,
+    int input_dim,
+    int output_dim,
+    int baby_step,
+    int batch_size,
+    int& rotations,
+    int& ct_pt_muls,
+    int& adds) -> Ciphertext<DCRTPoly> {
+  auto baby_ct = slot_bsgs_precompute_baby_rotations(cc, input_ct, baby_step, rotations);
+  return slot_bsgs_linear_block0_from_babies(
+      cc,
+      baby_ct,
+      weights,
+      input_dim,
+      output_dim,
+      baby_step,
+      batch_size,
+      rotations,
+      ct_pt_muls,
+      adds);
 }
 
 void align_levels(
@@ -1228,16 +1262,24 @@ auto main(int argc, char* argv[]) -> int {
         result.rms = encrypt_values(
             pack_block0(layer_payload.array("rms_input").values, layer_payload.config));
       });
-      time_phase(phase_prefix + "conv_projection", [&]() {
-        result.conv_pre = slot_bsgs_linear_block0(
+      const int model_baby_step = static_cast<int>(layer_payload.config.model_baby_step);
+      auto rms_model_babies = time_phase(phase_prefix + "rms_model_baby_rotations", [&]() {
+        return slot_bsgs_precompute_baby_rotations(
             cc,
             result.rms,
+            model_baby_step,
+            rotations);
+      });
+      time_phase(phase_prefix + "conv_projection", [&]() {
+        result.conv_pre = slot_bsgs_linear_block0_from_babies(
+            cc,
+            rms_model_babies,
             scaled_values(
                 layer_payload.array("effective_rank_weight").values,
                 args.rank_projection_scale),
             static_cast<int>(layer_payload.config.d_model),
             static_cast<int>(layer_payload.config.mimo_rank),
-            static_cast<int>(layer_payload.config.model_baby_step),
+            model_baby_step,
             batch_size,
             rotations,
             ct_pt_muls,
@@ -1266,13 +1308,13 @@ auto main(int argc, char* argv[]) -> int {
       }
 
       result.gate_pre = time_phase(phase_prefix + "gate_projection", [&]() {
-        return slot_bsgs_linear_block0(
+        return slot_bsgs_linear_block0_from_babies(
             cc,
-            result.rms,
+            rms_model_babies,
             layer_payload.array("gate_weight").values,
             static_cast<int>(layer_payload.config.d_model),
             static_cast<int>(layer_payload.config.mimo_rank),
-            static_cast<int>(layer_payload.config.model_baby_step),
+            model_baby_step,
             batch_size,
             rotations,
             ct_pt_muls,
@@ -1315,11 +1357,18 @@ auto main(int argc, char* argv[]) -> int {
       const int rank_baby_step = bounded_baby_step(
           static_cast<int>(layer_payload.config.rank_baby_step),
           static_cast<int>(layer_payload.config.mimo_rank));
-      result.dt_rank = static_cast<int>(layer_payload.array("dt_in_weight").shape.at(0));
-      result.dt_hidden_poly = time_phase(phase_prefix + "dt_hidden_projection", [&]() {
-        return slot_bsgs_linear_block0(
+      auto rank_input_babies = time_phase(phase_prefix + "rank_input_baby_rotations", [&]() {
+        return slot_bsgs_precompute_baby_rotations(
             cc,
             result.rank_input_poly,
+            rank_baby_step,
+            rotations);
+      });
+      result.dt_rank = static_cast<int>(layer_payload.array("dt_in_weight").shape.at(0));
+      result.dt_hidden_poly = time_phase(phase_prefix + "dt_hidden_projection", [&]() {
+        return slot_bsgs_linear_block0_from_babies(
+            cc,
+            rank_input_babies,
             scaled_values(layer_payload.array("dt_in_weight").values, args.dt_projection_scale),
             static_cast<int>(layer_payload.config.mimo_rank),
             result.dt_rank,
@@ -1384,9 +1433,9 @@ auto main(int argc, char* argv[]) -> int {
           "payload layer " + std::to_string(payload_index) +
           " dynamic decay projection/polynomial done");
       result.b_vec_poly = time_phase(phase_prefix + "dynamic_b_projection", [&]() {
-        return slot_bsgs_linear_block0(
+        return slot_bsgs_linear_block0_from_babies(
             cc,
-            result.rank_input_poly,
+            rank_input_babies,
             layer_payload.array("b_weight").values,
             static_cast<int>(layer_payload.config.mimo_rank),
             static_cast<int>(layer_payload.config.d_state),
@@ -1397,9 +1446,9 @@ auto main(int argc, char* argv[]) -> int {
             adds);
       });
       result.c_vec_poly = time_phase(phase_prefix + "dynamic_c_projection", [&]() {
-        return slot_bsgs_linear_block0(
+        return slot_bsgs_linear_block0_from_babies(
             cc,
-            result.rank_input_poly,
+            rank_input_babies,
             layer_payload.array("c_weight").values,
             static_cast<int>(layer_payload.config.mimo_rank),
             static_cast<int>(layer_payload.config.d_state),
