@@ -1,0 +1,202 @@
+{
+  "measurement_scope": {
+    "claim": "Summarizes per-phase native Stage 1 telemetry from an existing encrypted artifact. This report does not execute a new model path.",
+    "full_model_correctness_claimed": false,
+    "native_phase_telemetry": true,
+    "new_encrypted_execution": false,
+    "report_only": true
+  },
+  "measurements": {
+    "diagnostic_max_abs_error": 0.68849,
+    "max_abs_error": 0.0,
+    "phase_telemetry_available": true,
+    "required_application_rotation_key_count": 230.0,
+    "source_passed": true,
+    "top_phase": "layer_0.conv_projection",
+    "top_phase_fraction_of_eval": 0.26484684515359996,
+    "top_phase_seconds": 160.641
+  },
+  "next_bottleneck": "layer_0.conv_projection",
+  "operation_counts": {
+    "adds": 9861,
+    "bootstraps": 0,
+    "ct_ct_mul": 30,
+    "ct_pt_mul": 8686,
+    "rotations": 1701,
+    "unity_level_align_muls": 41
+  },
+  "passed": true,
+  "phase_count": 24,
+  "repo_commit": "1f65d459e93b11085f213d629f51d9e9af9a87fe",
+  "source": "runs/stage1-s045-dt-hidden-reduce-lora-merged-mamba130m-v03146.json",
+  "stage": "stage1-phase-timing-report",
+  "timing": {
+    "bootstrap_eval_seconds": 0.0,
+    "bootstrap_precompute_seconds": 0.0,
+    "eval_seconds": 606.543,
+    "load_context_seconds": 112.266,
+    "rotate_keygen_seconds": 84.9033,
+    "setup_seconds": 201.076,
+    "total_phase_seconds": 605.864360196,
+    "uncovered_eval_seconds": 0.6786398039999995
+  },
+  "top_phases": [
+    {
+      "fraction_of_eval": 0.26484684515359996,
+      "name": "layer_0.conv_projection",
+      "operation_counts": {
+        "adds": 2303,
+        "bootstraps": 0,
+        "ct_ct_mul": 0,
+        "ct_pt_mul": 2303,
+        "rotations": 71,
+        "unity_level_align_muls": 0
+      },
+      "seconds": 160.641
+    },
+    {
+      "fraction_of_eval": 0.26260792722032894,
+      "name": "layer_0.gate_projection",
+      "operation_counts": {
+        "adds": 2302,
+        "bootstraps": 0,
+        "ct_ct_mul": 0,
+        "ct_pt_mul": 2303,
+        "rotations": 71,
+        "unity_level_align_muls": 0
+      },
+      "seconds": 159.283
+    },
+    {
+      "fraction_of_eval": 0.2579866555215376,
+      "name": "layer_0.output_projection",
+      "operation_counts": {
+        "adds": 2302,
+        "bootstraps": 0,
+        "ct_ct_mul": 0,
+        "ct_pt_mul": 2303,
+        "rotations": 98,
+        "unity_level_align_muls": 0
+      },
+      "seconds": 156.48
+    },
+    {
+      "fraction_of_eval": 0.17724217409153184,
+      "name": "layer_0.dt_rank_projection",
+      "operation_counts": {
+        "adds": 1583,
+        "bootstraps": 0,
+        "ct_ct_mul": 0,
+        "ct_pt_mul": 1583,
+        "rotations": 79,
+        "unity_level_align_muls": 1
+      },
+      "seconds": 107.505
+    },
+    {
+      "fraction_of_eval": 0.009006781052621166,
+      "name": "layer_0.rank_silu_polynomial",
+      "operation_counts": {
+        "adds": 8,
+        "bootstraps": 0,
+        "ct_ct_mul": 14,
+        "ct_pt_mul": 0,
+        "rotations": 0,
+        "unity_level_align_muls": 8
+      },
+      "seconds": 5.463
+    },
+    {
+      "fraction_of_eval": 0.006210853970781956,
+      "name": "layer_0.dt_hidden_projection",
+      "operation_counts": {
+        "adds": 575,
+        "bootstraps": 0,
+        "ct_ct_mul": 0,
+        "ct_pt_mul": 96,
+        "rotations": 575,
+        "unity_level_align_muls": 0
+      },
+      "seconds": 3.76715
+    },
+    {
+      "fraction_of_eval": 0.0059612921095454074,
+      "name": "layer_0.decay_state_major_polynomial",
+      "operation_counts": {
+        "adds": 5,
+        "bootstraps": 0,
+        "ct_ct_mul": 5,
+        "ct_pt_mul": 0,
+        "rotations": 0,
+        "unity_level_align_muls": 5
+      },
+      "seconds": 3.61578
+    },
+    {
+      "fraction_of_eval": 0.00571230728901331,
+      "name": "layer_0.gate_silu_polynomial",
+      "operation_counts": {
+        "adds": 5,
+        "bootstraps": 0,
+        "ct_ct_mul": 8,
+        "ct_pt_mul": 0,
+        "rotations": 0,
+        "unity_level_align_muls": 5
+      },
+      "seconds": 3.46476
+    },
+    {
+      "fraction_of_eval": 0.001958476150907685,
+      "name": "layer_0.dynamic_b_projection",
+      "operation_counts": {
+        "adds": 191,
+        "bootstraps": 0,
+        "ct_ct_mul": 0,
+        "ct_pt_mul": 32,
+        "rotations": 191,
+        "unity_level_align_muls": 0
+      },
+      "seconds": 1.1879
+    },
+    {
+      "fraction_of_eval": 0.001949144578372844,
+      "name": "layer_0.dynamic_c_projection",
+      "operation_counts": {
+        "adds": 191,
+        "bootstraps": 0,
+        "ct_ct_mul": 0,
+        "ct_pt_mul": 32,
+        "rotations": 191,
+        "unity_level_align_muls": 0
+      },
+      "seconds": 1.18224
+    },
+    {
+      "fraction_of_eval": 0.0017252362981684728,
+      "name": "layer_0.dynamic_b_broadcast",
+      "operation_counts": {
+        "adds": 191,
+        "bootstraps": 0,
+        "ct_ct_mul": 0,
+        "ct_pt_mul": 16,
+        "rotations": 191,
+        "unity_level_align_muls": 0
+      },
+      "seconds": 1.04643
+    },
+    {
+      "fraction_of_eval": 0.0016965656185958784,
+      "name": "layer_0.dynamic_c_broadcast",
+      "operation_counts": {
+        "adds": 191,
+        "bootstraps": 0,
+        "ct_ct_mul": 0,
+        "ct_pt_mul": 16,
+        "rotations": 191,
+        "unity_level_align_muls": 0
+      },
+      "seconds": 1.02904
+    }
+  ],
+  "version": "0.3.148"
+}

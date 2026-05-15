@@ -143,6 +143,13 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   and min level `2` requires one prospective bootstrap before
   `recurrent-step-22`. This is a schedule derived from telemetry, not an
   executed bootstrap run.
+- `v0.3.148` adds exact FIDESlib reductions for the Mamba-130M-shaped
+  `dt_hidden` and `dt_rank` projections on the LoRA-merged layer-0 payload.
+  Jobs `10603` and `10607` both pass with final `max_abs_error=0`. The combined
+  reduction drops one-layer eval from the B/C-reduced baseline `753.84s` to
+  `493.96s`, ct-pt multiplications from `10173` to `7199`, and required
+  application rotation keys from `200` to `214`; the remaining top phases are
+  conv/gate/output dense projections at about `159s`, `150s`, and `156s`.
 
 ## Dependency Map
 
@@ -194,6 +201,10 @@ recorded OpenFHE B200 job `10116` (`encrypted=true`, `passed=true`,
   with max consumed level `28/48`. The remaining blockers are model-layout
   layer-to-layer handoff and executing the derived recurrent bootstrap schedule
   at a larger projected boundary before any full 24-layer claim.
+  The latest phase-guided one-layer optimization has also removed dynamic B/C,
+  `dt_hidden`, and `dt_rank` as major runtime bottlenecks on the Mamba-130M
+  layer-0 payload; the active exact-path bottleneck is now the dense
+  conv/gate/output projection trio.
 - Sketch/range evidence: PBI-S2-001 -> PBI-S2-012 -> PBI-S2-004 -> PBI-S2-013 is complete; PBI-S2-005 adds the first learned/data-dependent sketch baseline; PBI-S2-014 expands it to the matrix report; PBI-S2-015 adds the current range/LoRA decision gate. PBI-S2-004 and PBI-S0-010 continue to feed future PBI-S2-009 work if later encrypted chains expose a calibration failure.
 - Encrypted sketch execution: PBI-S2-006 and PBI-S2-007 are complete; the learned/data-dependent sketch branch is complete through PBI-S2-014. PBI-S2-015 currently recommends deferring LoRA until a later chain artifact fails the existing deterministic calibration gate.
 - Decoding branch: PBI-S2-003 is complete at the current scope. PBI-S2-010 records client-side decode accounting, and PBI-S2-011 records a toy encrypted CutMax/OpenFHE path. Full-vocab encrypted generation is not claimed.

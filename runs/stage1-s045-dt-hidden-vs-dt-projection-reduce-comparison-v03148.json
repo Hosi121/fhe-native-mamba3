@@ -1,0 +1,134 @@
+{
+  "baseline_eval_seconds": 606.543,
+  "baseline_source": "runs/stage1-s045-dt-hidden-reduce-lora-merged-mamba130m-v03146.json",
+  "candidate_eval_seconds": 493.956,
+  "candidate_source": "runs/stage1-s045-dt-projection-reduce-lora-merged-mamba130m-v03148.json",
+  "eval_speedup": 1.2279292082695625,
+  "measurement_scope": {
+    "claim": "Compares phase-level telemetry from two existing encrypted artifacts. It is a reporting artifact, not a new execution.",
+    "full_model_correctness_claimed": false,
+    "native_phase_telemetry_comparison": true,
+    "new_encrypted_execution": false,
+    "report_only": true
+  },
+  "passed": true,
+  "repo_commit": "1f65d459e93b11085f213d629f51d9e9af9a87fe",
+  "stage": "stage1-phase-timing-comparison-report",
+  "top_improvements": [
+    {
+      "baseline_seconds": 107.505,
+      "candidate_seconds": 7.31966,
+      "delta_seconds": 100.18534,
+      "name": "layer_0.dt_rank_projection",
+      "speedup": 14.687157600216404
+    },
+    {
+      "baseline_seconds": 159.283,
+      "candidate_seconds": 150.216,
+      "delta_seconds": 9.066999999999979,
+      "name": "layer_0.gate_projection",
+      "speedup": 1.0603597486286414
+    },
+    {
+      "baseline_seconds": 160.641,
+      "candidate_seconds": 159.319,
+      "delta_seconds": 1.3220000000000027,
+      "name": "layer_0.conv_projection",
+      "speedup": 1.0082978175861008
+    },
+    {
+      "baseline_seconds": 156.48,
+      "candidate_seconds": 155.64,
+      "delta_seconds": 0.8400000000000034,
+      "name": "layer_0.output_projection",
+      "speedup": 1.0053970701619122
+    },
+    {
+      "baseline_seconds": 3.76715,
+      "candidate_seconds": 3.21287,
+      "delta_seconds": 0.5542799999999999,
+      "name": "layer_0.dt_hidden_projection",
+      "speedup": 1.1725186515483041
+    },
+    {
+      "baseline_seconds": 5.463,
+      "candidate_seconds": 5.16506,
+      "delta_seconds": 0.29793999999999965,
+      "name": "layer_0.rank_silu_polynomial",
+      "speedup": 1.057683744235304
+    },
+    {
+      "baseline_seconds": 3.46476,
+      "candidate_seconds": 3.36599,
+      "delta_seconds": 0.09877000000000002,
+      "name": "layer_0.gate_silu_polynomial",
+      "speedup": 1.0293435215196718
+    },
+    {
+      "baseline_seconds": 3.61578,
+      "candidate_seconds": 3.52709,
+      "delta_seconds": 0.08869000000000016,
+      "name": "layer_0.decay_state_major_polynomial",
+      "speedup": 1.0251453747990553
+    }
+  ],
+  "top_regressions": [
+    {
+      "baseline_seconds": 1.02904,
+      "candidate_seconds": 1.03746,
+      "delta_seconds": -0.008420000000000094,
+      "name": "layer_0.dynamic_c_broadcast",
+      "speedup": 0.9918840244443158
+    },
+    {
+      "baseline_seconds": 0.0341168,
+      "candidate_seconds": 0.0414129,
+      "delta_seconds": -0.0072961,
+      "name": "layer_0.readout_reduce",
+      "speedup": 0.823820596963748
+    },
+    {
+      "baseline_seconds": 1.04643,
+      "candidate_seconds": 1.04943,
+      "delta_seconds": -0.0030000000000001137,
+      "name": "layer_0.dynamic_b_broadcast",
+      "speedup": 0.997141305280009
+    },
+    {
+      "baseline_seconds": 0.000263692,
+      "candidate_seconds": 0.00055633,
+      "delta_seconds": -0.00029263799999999996,
+      "name": "layer_0.input_state_term",
+      "speedup": 0.4739848650980533
+    },
+    {
+      "baseline_seconds": 0.000571986,
+      "candidate_seconds": 0.000748504,
+      "delta_seconds": -0.00017651799999999997,
+      "name": "layer_0.rank_gate_product",
+      "speedup": 0.7641722689524706
+    },
+    {
+      "baseline_seconds": 0.000660616,
+      "candidate_seconds": 0.000800758,
+      "delta_seconds": -0.000140142,
+      "name": "layer_0.rank_input_broadcast",
+      "speedup": 0.8249883235634237
+    },
+    {
+      "baseline_seconds": 0.00024914,
+      "candidate_seconds": 0.000291688,
+      "delta_seconds": -4.2548e-05,
+      "name": "layer_0.rank_skip_add",
+      "speedup": 0.8541318120731741
+    },
+    {
+      "baseline_seconds": 0.000325256,
+      "candidate_seconds": 0.000367385,
+      "delta_seconds": -4.2129000000000016e-05,
+      "name": "layer_0.residual_add",
+      "speedup": 0.8853273813574315
+    }
+  ],
+  "version": "0.3.148"
+}

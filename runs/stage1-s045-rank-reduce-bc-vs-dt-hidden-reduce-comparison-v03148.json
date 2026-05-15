@@ -1,0 +1,134 @@
+{
+  "baseline_eval_seconds": 753.839,
+  "baseline_source": "runs/stage1-s045-rank-reduce-bc-lora-merged-mamba130m-v03146.json",
+  "candidate_eval_seconds": 606.543,
+  "candidate_source": "runs/stage1-s045-dt-hidden-reduce-lora-merged-mamba130m-v03146.json",
+  "eval_speedup": 1.2428451074367357,
+  "measurement_scope": {
+    "claim": "Compares phase-level telemetry from two existing encrypted artifacts. It is a reporting artifact, not a new execution.",
+    "full_model_correctness_claimed": false,
+    "native_phase_telemetry_comparison": true,
+    "new_encrypted_execution": false,
+    "report_only": true
+  },
+  "passed": true,
+  "repo_commit": "1f65d459e93b11085f213d629f51d9e9af9a87fe",
+  "stage": "stage1-phase-timing-comparison-report",
+  "top_improvements": [
+    {
+      "baseline_seconds": 107.865,
+      "candidate_seconds": 3.76715,
+      "delta_seconds": 104.09785,
+      "name": "layer_0.dt_hidden_projection",
+      "speedup": 28.633051511089285
+    },
+    {
+      "baseline_seconds": 184.901,
+      "candidate_seconds": 160.641,
+      "delta_seconds": 24.26000000000002,
+      "name": "layer_0.conv_projection",
+      "speedup": 1.1510199762202677
+    },
+    {
+      "baseline_seconds": 181.381,
+      "candidate_seconds": 159.283,
+      "delta_seconds": 22.098000000000013,
+      "name": "layer_0.gate_projection",
+      "speedup": 1.1387342026456058
+    },
+    {
+      "baseline_seconds": 157.599,
+      "candidate_seconds": 156.48,
+      "delta_seconds": 1.1189999999999998,
+      "name": "layer_0.output_projection",
+      "speedup": 1.0071510736196319
+    },
+    {
+      "baseline_seconds": 0.0410637,
+      "candidate_seconds": 0.0,
+      "delta_seconds": 0.0410637,
+      "name": "layer_0.rank_input_baby_rotations",
+      "speedup": null
+    },
+    {
+      "baseline_seconds": 3.48204,
+      "candidate_seconds": 3.46476,
+      "delta_seconds": 0.017279999999999962,
+      "name": "layer_0.gate_silu_polynomial",
+      "speedup": 1.0049873584317528
+    },
+    {
+      "baseline_seconds": 1.05713,
+      "candidate_seconds": 1.04643,
+      "delta_seconds": 0.010699999999999932,
+      "name": "layer_0.dynamic_b_broadcast",
+      "speedup": 1.0102252420133213
+    },
+    {
+      "baseline_seconds": 1.03848,
+      "candidate_seconds": 1.02904,
+      "delta_seconds": 0.009440000000000115,
+      "name": "layer_0.dynamic_c_broadcast",
+      "speedup": 1.0091735986939285
+    }
+  ],
+  "top_regressions": [
+    {
+      "baseline_seconds": 103.416,
+      "candidate_seconds": 107.505,
+      "delta_seconds": -4.088999999999999,
+      "name": "layer_0.dt_rank_projection",
+      "speedup": 0.9619645597879168
+    },
+    {
+      "baseline_seconds": 5.31178,
+      "candidate_seconds": 5.463,
+      "delta_seconds": -0.15122000000000035,
+      "name": "layer_0.rank_silu_polynomial",
+      "speedup": 0.9723192385136371
+    },
+    {
+      "baseline_seconds": 3.55077,
+      "candidate_seconds": 3.61578,
+      "delta_seconds": -0.06501000000000001,
+      "name": "layer_0.decay_state_major_polynomial",
+      "speedup": 0.9820204769095465
+    },
+    {
+      "baseline_seconds": 0.610046,
+      "candidate_seconds": 0.655802,
+      "delta_seconds": -0.04575600000000002,
+      "name": "layer_0.encrypt_rms_input",
+      "speedup": 0.9302289410523298
+    },
+    {
+      "baseline_seconds": 0.0428035,
+      "candidate_seconds": 0.0467286,
+      "delta_seconds": -0.003925100000000001,
+      "name": "layer_0.rms_model_baby_rotations",
+      "speedup": 0.9160021913774433
+    },
+    {
+      "baseline_seconds": 1.1785,
+      "candidate_seconds": 1.18224,
+      "delta_seconds": -0.0037399999999998546,
+      "name": "layer_0.dynamic_c_projection",
+      "speedup": 0.9968365137366356
+    },
+    {
+      "baseline_seconds": 0.378252,
+      "candidate_seconds": 0.381718,
+      "delta_seconds": -0.0034660000000000246,
+      "name": "layer_0.gate_diagnostic_decrypt",
+      "speedup": 0.9909199985329483
+    },
+    {
+      "baseline_seconds": 0.000554599,
+      "candidate_seconds": 0.000660616,
+      "delta_seconds": -0.00010601700000000003,
+      "name": "layer_0.rank_input_broadcast",
+      "speedup": 0.839517965050801
+    }
+  ],
+  "version": "0.3.148"
+}
