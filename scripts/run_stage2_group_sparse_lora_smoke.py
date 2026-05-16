@@ -47,6 +47,7 @@ def main() -> int:
         mask_sweep_keep_fractions=_parse_float_csv(args.mask_sweep_keep_fractions),
         mask_sweep_output_delta_atol=args.mask_sweep_output_delta_atol,
         min_ct_pt_reduction_fraction=args.min_ct_pt_reduction_fraction,
+        min_ct_pt_reduction_count=args.min_ct_pt_reduction_count,
     )
     output = {
         "version": __version__,
@@ -98,6 +99,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mask-sweep-keep-fractions", default="1.0,0.99,0.98,0.97,0.95")
     parser.add_argument("--mask-sweep-output-delta-atol", type=float, default=5e-2)
     parser.add_argument("--min-ct-pt-reduction-fraction", type=float, default=5e-2)
+    parser.add_argument("--min-ct-pt-reduction-count", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--output-json", default="")

@@ -99,6 +99,33 @@ def test_group_sparse_lora_report_preserves_best_observed_below_threshold() -> N
     assert report.rows[0].best_observed_output_delta == 0.037
 
 
+def test_group_sparse_lora_report_accepts_absolute_reduction_count() -> None:
+    artifact = _artifact(passed=True, sweep_passed=False, fraction=0.04993486756404689)
+    artifact["merged_mask_sweep"]["rows"] = [
+        {
+            "target": "conv",
+            "passed": True,
+            "reference_output_model_poly_delta_max_abs": 0.037,
+            "estimate": {
+                "ct_pt_reduction": 115,
+                "ct_pt_reduction_fraction": 0.04993486756404689,
+            },
+        }
+    ]
+
+    report = build_group_sparse_lora_report(
+        (("borderline.json", artifact),),
+        min_useful_ct_pt_reduction_fraction=0.05,
+        min_useful_ct_pt_reduction_count=115,
+    )
+
+    assert report.passed is True
+    assert report.useful_artifact_count == 1
+    assert report.measurement_scope["min_useful_ct_pt_reduction_count"] == 115
+    assert report.rows[0].best_useful_ct_pt_reduction == 115
+    assert report.rows[0].best_useful_ct_pt_reduction_fraction == 0.04993486756404689
+
+
 def test_group_sparse_lora_report_script_runs(tmp_path: Path) -> None:
     weak = tmp_path / "weak.json"
     strong = tmp_path / "strong.json"

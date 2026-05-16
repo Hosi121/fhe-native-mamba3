@@ -13,7 +13,9 @@ class GroupSparseLoRAPlanRow:
     source: str
     layer_index: int | None
     recommended_action: str
+    best_useful_ct_pt_reduction: int
     best_useful_ct_pt_reduction_fraction: float
+    best_observed_ct_pt_reduction: int
     best_observed_ct_pt_reduction_fraction: float
     best_observed_target: str | None
     best_observed_output_delta: float | None
@@ -47,6 +49,7 @@ def build_group_sparse_lora_plan(
     report_payload: dict[str, Any],
     *,
     useful_threshold: float | None = None,
+    useful_count_threshold: int | None = None,
     borderline_fraction: float = 0.95,
 ) -> GroupSparseLoRAPlan:
     """Build a conservative next-action plan from a group-sparse LoRA report."""
@@ -57,17 +60,26 @@ def build_group_sparse_lora_plan(
     if not 0.0 < borderline_fraction <= 1.0:
         msg = "borderline_fraction must be in (0, 1]"
         raise ValueError(msg)
-    threshold = (
+    fraction_threshold = (
         _scope_threshold(report_payload) if useful_threshold is None else float(useful_threshold)
     )
-    if threshold <= 0.0:
+    count_threshold = (
+        _scope_count_threshold(report_payload)
+        if useful_count_threshold is None
+        else useful_count_threshold
+    )
+    if fraction_threshold <= 0.0:
         msg = "useful_threshold must be positive"
+        raise ValueError(msg)
+    if count_threshold is not None and count_threshold < 0:
+        msg = "useful_count_threshold must be non-negative"
         raise ValueError(msg)
 
     input_rows = tuple(row for row in report_payload.get("rows", ()) if isinstance(row, dict))
     rows = _best_plan_rows_by_layer(
         input_rows,
-        useful_threshold=threshold,
+        useful_threshold=fraction_threshold,
+        useful_count_threshold=count_threshold,
         borderline_fraction=borderline_fraction,
     )
     useful_count = sum(row.recommended_action == "expand_neighbor_layers" for row in rows)
@@ -99,7 +111,8 @@ def build_group_sparse_lora_plan(
             "encrypted_execution": False,
             "lora_training_executed": False,
             "full_model_correctness_claimed": False,
-            "useful_threshold": threshold,
+            "useful_threshold": fraction_threshold,
+            "useful_count_threshold": count_threshold,
             "borderline_fraction": borderline_fraction,
             "grouped_by_layer": True,
             "claim": (
@@ -116,6 +129,7 @@ def _best_plan_rows_by_layer(
     rows: tuple[dict[str, Any], ...],
     *,
     useful_threshold: float,
+    useful_count_threshold: int | None,
     borderline_fraction: float,
 ) -> tuple[GroupSparseLoRAPlanRow, ...]:
     best_by_layer: dict[tuple[str, int | str], GroupSparseLoRAPlanRow] = {}
@@ -124,6 +138,7 @@ def _best_plan_rows_by_layer(
         plan_row = _plan_row(
             row,
             useful_threshold=useful_threshold,
+            useful_count_threshold=useful_count_threshold,
             borderline_fraction=borderline_fraction,
         )
         key: tuple[str, int | str]
@@ -157,11 +172,19 @@ def _plan_row(
     row: dict[str, Any],
     *,
     useful_threshold: float,
+    useful_count_threshold: int | None,
     borderline_fraction: float,
 ) -> GroupSparseLoRAPlanRow:
     useful = float(row.get("best_useful_ct_pt_reduction_fraction", 0.0))
+    useful_count = int(row.get("best_useful_ct_pt_reduction", 0))
     observed = float(row.get("best_observed_ct_pt_reduction_fraction", useful))
-    if useful >= useful_threshold:
+    observed_count = int(row.get("best_observed_ct_pt_reduction", useful_count))
+    if _passes_useful_threshold(
+        fraction=useful,
+        count=useful_count,
+        min_fraction=useful_threshold,
+        min_count=useful_count_threshold,
+    ):
         action = "expand_neighbor_layers"
     elif observed >= borderline_fraction * useful_threshold:
         action = "tune_group_sparse_hyperparameters"
@@ -171,7 +194,9 @@ def _plan_row(
         source=str(row.get("source", "")),
         layer_index=_optional_int(row.get("layer_index")),
         recommended_action=action,
+        best_useful_ct_pt_reduction=useful_count,
         best_useful_ct_pt_reduction_fraction=useful,
+        best_observed_ct_pt_reduction=observed_count,
         best_observed_ct_pt_reduction_fraction=observed,
         best_observed_target=_optional_str(row.get("best_observed_target")),
         best_observed_output_delta=_optional_float(row.get("best_observed_output_delta")),
@@ -184,6 +209,24 @@ def _scope_threshold(payload: dict[str, Any]) -> float:
     if isinstance(scope, dict) and "min_useful_ct_pt_reduction_fraction" in scope:
         return float(scope["min_useful_ct_pt_reduction_fraction"])
     return 5e-2
+
+
+def _scope_count_threshold(payload: dict[str, Any]) -> int | None:
+    scope = payload.get("measurement_scope", {})
+    if isinstance(scope, dict) and "min_useful_ct_pt_reduction_count" in scope:
+        value = scope["min_useful_ct_pt_reduction_count"]
+        return None if value is None else int(value)
+    return None
+
+
+def _passes_useful_threshold(
+    *,
+    fraction: float,
+    count: int,
+    min_fraction: float,
+    min_count: int | None,
+) -> bool:
+    return fraction >= min_fraction or (min_count is not None and count >= min_count)
 
 
 def _optional_float(value: Any) -> float | None:

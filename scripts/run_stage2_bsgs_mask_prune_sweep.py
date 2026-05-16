@@ -30,6 +30,7 @@ def main() -> int:
         score_metrics=score_metrics,
         output_delta_atol=args.output_delta_atol,
         min_ct_pt_reduction_fraction=args.min_ct_pt_reduction_fraction,
+        min_ct_pt_reduction_count=args.min_ct_pt_reduction_count,
         native_coefficient_floor=args.native_coefficient_floor,
     )
     output = {
@@ -54,6 +55,7 @@ def main() -> int:
             "score_metrics": list(score_metrics),
             "output_delta_atol": args.output_delta_atol,
             "min_ct_pt_reduction_fraction": args.min_ct_pt_reduction_fraction,
+            "min_ct_pt_reduction_count": args.min_ct_pt_reduction_count,
             "native_coefficient_floor": args.native_coefficient_floor,
         },
         "measurements": {
@@ -90,6 +92,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--score-metrics", default="l2,mean_abs,max_abs")
     parser.add_argument("--output-delta-atol", type=float, default=5e-2)
     parser.add_argument("--min-ct-pt-reduction-fraction", type=float, default=5e-2)
+    parser.add_argument("--min-ct-pt-reduction-count", type=int, default=None)
     parser.add_argument("--native-coefficient-floor", type=float, default=1e-8)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()

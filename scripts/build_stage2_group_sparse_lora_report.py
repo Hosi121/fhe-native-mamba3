@@ -25,6 +25,7 @@ def main() -> int:
     report = build_group_sparse_lora_report(
         sources,
         min_useful_ct_pt_reduction_fraction=args.min_useful_ct_pt_reduction_fraction,
+        min_useful_ct_pt_reduction_count=args.min_useful_ct_pt_reduction_count,
     )
     payload = {
         "version": __version__,
@@ -58,6 +59,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("artifacts", nargs="+", type=Path)
     parser.add_argument("--min-useful-ct-pt-reduction-fraction", type=float, default=5e-2)
+    parser.add_argument("--min-useful-ct-pt-reduction-count", type=int, default=None)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()
 

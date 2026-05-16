@@ -24,6 +24,7 @@ def main() -> int:
     plan = build_group_sparse_lora_plan(
         _read_json(args.report_json),
         useful_threshold=args.useful_threshold,
+        useful_count_threshold=args.useful_count_threshold,
         borderline_fraction=args.borderline_fraction,
     )
     payload = {
@@ -60,6 +61,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("report_json", type=Path)
     parser.add_argument("--useful-threshold", type=float, default=None)
+    parser.add_argument("--useful-count-threshold", type=int, default=None)
     parser.add_argument("--borderline-fraction", type=float, default=0.95)
     parser.add_argument("--output-json", default="")
     return parser.parse_args()

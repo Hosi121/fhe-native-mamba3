@@ -31,6 +31,21 @@ def test_group_sparse_lora_plan_splits_useful_borderline_and_weak_rows() -> None
     assert plan.rows[2].recommended_action == "deprioritize_layer_or_revisit_factorization"
 
 
+def test_group_sparse_lora_plan_uses_count_threshold_from_report_scope() -> None:
+    payload = _report_payload()
+    payload["measurement_scope"]["min_useful_ct_pt_reduction_count"] = 115
+    payload["rows"][1]["best_useful_ct_pt_reduction"] = 115
+    payload["rows"][1]["best_observed_ct_pt_reduction"] = 115
+
+    plan = build_group_sparse_lora_plan(payload)
+
+    assert plan.useful_row_count == 2
+    assert plan.borderline_row_count == 0
+    assert plan.measurement_scope["useful_count_threshold"] == 115
+    assert plan.rows[1].recommended_action == "expand_neighbor_layers"
+    assert plan.rows[1].best_useful_ct_pt_reduction == 115
+
+
 def test_group_sparse_lora_plan_rejects_wrong_stage() -> None:
     with pytest.raises(ValueError, match="stage2-group-sparse-lora-report"):
         build_group_sparse_lora_plan({"stage": "other", "rows": []})
@@ -75,7 +90,9 @@ def _report_payload() -> dict:
             {
                 "source": "layer0.json",
                 "layer_index": 0,
+                "best_useful_ct_pt_reduction": 230,
                 "best_useful_ct_pt_reduction_fraction": 0.1,
+                "best_observed_ct_pt_reduction": 230,
                 "best_observed_ct_pt_reduction_fraction": 0.1,
                 "best_observed_target": "conv",
                 "best_observed_output_delta": 0.03,
@@ -83,7 +100,9 @@ def _report_payload() -> dict:
             {
                 "source": "layer12.json",
                 "layer_index": 12,
+                "best_useful_ct_pt_reduction": 0,
                 "best_useful_ct_pt_reduction_fraction": 0.0,
+                "best_observed_ct_pt_reduction": 115,
                 "best_observed_ct_pt_reduction_fraction": 0.0499,
                 "best_observed_target": "conv",
                 "best_observed_output_delta": 0.037,
@@ -91,7 +110,9 @@ def _report_payload() -> dict:
             {
                 "source": "layer12-better.json",
                 "layer_index": 12,
+                "best_useful_ct_pt_reduction": 0,
                 "best_useful_ct_pt_reduction_fraction": 0.0,
+                "best_observed_ct_pt_reduction": 115,
                 "best_observed_ct_pt_reduction_fraction": 0.0499,
                 "best_observed_target": "conv",
                 "best_observed_output_delta": 0.03,
@@ -99,7 +120,9 @@ def _report_payload() -> dict:
             {
                 "source": "layer23.json",
                 "layer_index": 23,
+                "best_useful_ct_pt_reduction": 0,
                 "best_useful_ct_pt_reduction_fraction": 0.0,
+                "best_observed_ct_pt_reduction": 23,
                 "best_observed_ct_pt_reduction_fraction": 0.01,
                 "best_observed_target": "conv",
                 "best_observed_output_delta": 0.025,

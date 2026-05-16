@@ -74,6 +74,23 @@ def test_bsgs_mask_prune_sweep_does_not_pass_when_reduction_floor_is_unmet() -> 
     assert result.best_useful_by_target["output"] is None
 
 
+def test_bsgs_mask_prune_sweep_accepts_absolute_reduction_floor() -> None:
+    payload = _payload()
+    candidate = sweep_bsgs_mask_pruning(
+        payload,
+        keep_fractions=(0.5,),
+        targets=("output",),
+        score_metrics=("l2",),
+        output_delta_atol=1e6,
+        min_ct_pt_reduction_fraction=1.0,
+        min_ct_pt_reduction_count=1,
+    )
+
+    assert candidate.passed is True
+    assert candidate.best_useful_by_target["output"]["estimate"]["ct_pt_reduction"] >= 1
+    assert candidate.measurement_scope["min_ct_pt_reduction_count"] == 1
+
+
 def test_bsgs_mask_prune_sweep_script(tmp_path: Path) -> None:
     input_binary = tmp_path / "rank_gate.bin"
     output_json = tmp_path / "mask_prune.json"

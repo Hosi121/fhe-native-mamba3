@@ -128,6 +128,7 @@ def run_group_sparse_lora_smoke(
     mask_sweep_keep_fractions: tuple[float, ...] = (1.0, 0.99, 0.98, 0.97, 0.95),
     mask_sweep_output_delta_atol: float = 5e-2,
     min_ct_pt_reduction_fraction: float = 5e-2,
+    min_ct_pt_reduction_count: int | None = None,
 ) -> Stage2GroupSparseLoRASmokeResult:
     """Train LoRA adapters with a group penalty over weak BSGS masks."""
 
@@ -145,6 +146,7 @@ def run_group_sparse_lora_smoke(
         mask_sweep_keep_fractions=mask_sweep_keep_fractions,
         mask_sweep_output_delta_atol=mask_sweep_output_delta_atol,
         min_ct_pt_reduction_fraction=min_ct_pt_reduction_fraction,
+        min_ct_pt_reduction_count=min_ct_pt_reduction_count,
     )
     return result
 
@@ -164,6 +166,7 @@ def train_group_sparse_lora_model(
     mask_sweep_keep_fractions: tuple[float, ...] = (1.0, 0.99, 0.98, 0.97, 0.95),
     mask_sweep_output_delta_atol: float = 5e-2,
     min_ct_pt_reduction_fraction: float = 5e-2,
+    min_ct_pt_reduction_count: int | None = None,
 ) -> tuple[RankGateProjectionModule, Stage2GroupSparseLoRASmokeResult]:
     """Train and return a LoRA model plus BSGS-mask diagnostics."""
 
@@ -258,6 +261,7 @@ def train_group_sparse_lora_model(
         score_metrics=(resolved_sparse.score_metric,),
         output_delta_atol=mask_sweep_output_delta_atol,
         min_ct_pt_reduction_fraction=min_ct_pt_reduction_fraction,
+        min_ct_pt_reduction_count=min_ct_pt_reduction_count,
     ).to_json_dict()
     result = Stage2GroupSparseLoRASmokeResult(
         passed=(

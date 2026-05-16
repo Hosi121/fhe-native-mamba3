@@ -111,10 +111,14 @@ def sweep_bsgs_mask_pruning(
     score_metrics: Iterable[str] = ("l2",),
     output_delta_atol: float = 5e-2,
     min_ct_pt_reduction_fraction: float = 5e-2,
+    min_ct_pt_reduction_count: int | None = None,
     native_coefficient_floor: float = DEFAULT_NATIVE_COEFFICIENT_FLOOR,
 ) -> BsgsMaskPruneSweepResult:
     """Sweep whole-mask pruning over native BSGS diagonal masks."""
 
+    if min_ct_pt_reduction_count is not None and min_ct_pt_reduction_count < 0:
+        msg = "min_ct_pt_reduction_count must be non-negative"
+        raise ValueError(msg)
     keep_values = tuple(_normalize_keep_fractions(keep_fractions))
     target_values = tuple(targets)
     metric_values = tuple(score_metrics)
@@ -132,6 +136,7 @@ def sweep_bsgs_mask_pruning(
                         target=target,
                         output_delta_atol=output_delta_atol,
                         min_ct_pt_reduction_fraction=min_ct_pt_reduction_fraction,
+                        min_ct_pt_reduction_count=min_ct_pt_reduction_count,
                         native_coefficient_floor=native_coefficient_floor,
                     )
                 )
@@ -152,6 +157,7 @@ def sweep_bsgs_mask_pruning(
             "exact_reference_preserved": False,
             "full_model_correctness_claimed": False,
             "min_ct_pt_reduction_fraction": min_ct_pt_reduction_fraction,
+            "min_ct_pt_reduction_count": min_ct_pt_reduction_count,
             "native_coefficient_floor": native_coefficient_floor,
             "claim": (
                 "Offline whole-diagonal BSGS mask pruning over public dense projection "
@@ -172,6 +178,7 @@ def evaluate_bsgs_mask_prune_row(
     target: str,
     output_delta_atol: float,
     min_ct_pt_reduction_fraction: float = 5e-2,
+    min_ct_pt_reduction_count: int | None = None,
     native_coefficient_floor: float = DEFAULT_NATIVE_COEFFICIENT_FLOOR,
 ) -> BsgsMaskPruneSweepRow:
     """Evaluate one whole-mask pruning row."""
@@ -212,9 +219,12 @@ def evaluate_bsgs_mask_prune_row(
     )
     compressed = estimate.ct_pt_reduction > 0 or estimate.projection_rotation_reduction > 0
     passed = output_delta <= output_delta_atol
-    useful = (
-        passed and compressed and estimate.ct_pt_reduction_fraction >= min_ct_pt_reduction_fraction
+    useful_by_fraction = estimate.ct_pt_reduction_fraction >= min_ct_pt_reduction_fraction
+    useful_by_count = (
+        min_ct_pt_reduction_count is not None
+        and estimate.ct_pt_reduction >= min_ct_pt_reduction_count
     )
+    useful = passed and compressed and (useful_by_fraction or useful_by_count)
     return BsgsMaskPruneSweepRow(
         keep_fraction=float(keep_fraction),
         score_metric=score_metric,
