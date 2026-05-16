@@ -69,7 +69,14 @@ def build_group_sparse_lora_report(
 ) -> GroupSparseLoRAReport:
     """Build a compact report from group-sparse LoRA smoke artifacts."""
 
-    rows = tuple(_row_from_artifact(source, payload) for source, payload in artifacts)
+    rows = tuple(
+        _row_from_artifact(
+            source,
+            payload,
+            min_useful_ct_pt_reduction_fraction=min_useful_ct_pt_reduction_fraction,
+        )
+        for source, payload in artifacts
+    )
     useful = [
         row
         for row in rows
@@ -110,11 +117,19 @@ def build_group_sparse_lora_report(
     )
 
 
-def _row_from_artifact(source: str, payload: dict[str, Any]) -> GroupSparseLoRAReportRow:
+def _row_from_artifact(
+    source: str,
+    payload: dict[str, Any],
+    *,
+    min_useful_ct_pt_reduction_fraction: float,
+) -> GroupSparseLoRAReportRow:
     if payload.get("stage") != "stage2-group-sparse-lora-smoke":
         msg = f"expected stage2-group-sparse-lora-smoke artifact, got {payload.get('stage')!r}"
         raise ValueError(msg)
-    best_target, best_fraction, best_delta = _best_useful_row(payload)
+    best_target, best_fraction, best_delta = _best_useful_row(
+        payload,
+        min_useful_ct_pt_reduction_fraction=min_useful_ct_pt_reduction_fraction,
+    )
     before = payload.get("before", {})
     after = payload.get("after", {})
     before_loss = float(before.get("mask_group_loss", 0.0))
@@ -137,14 +152,24 @@ def _row_from_artifact(source: str, payload: dict[str, Any]) -> GroupSparseLoRAR
         mask_group_loss_reduction_fraction=loss_reduction,
         range_excess_before=float(before.get("max_excess", 0.0)),
         range_excess_after=float(after.get("max_excess", 0.0)),
-        merged_mask_sweep_passed=bool(payload.get("merged_mask_sweep", {}).get("passed")),
+        merged_mask_sweep_passed=best_target is not None,
         best_useful_target=best_target,
         best_useful_ct_pt_reduction_fraction=best_fraction,
         best_useful_output_delta=best_delta,
     )
 
 
-def _best_useful_row(payload: dict[str, Any]) -> tuple[str | None, float, float | None]:
+def _best_useful_row(
+    payload: dict[str, Any],
+    *,
+    min_useful_ct_pt_reduction_fraction: float,
+) -> tuple[str | None, float, float | None]:
+    rows = payload.get("merged_mask_sweep", {}).get("rows")
+    if isinstance(rows, list):
+        return _best_useful_row_from_sweep_rows(
+            rows,
+            min_useful_ct_pt_reduction_fraction=min_useful_ct_pt_reduction_fraction,
+        )
     rows = payload.get("merged_mask_sweep", {}).get("best_useful_by_target", {})
     best_target = None
     best_fraction = 0.0
@@ -156,10 +181,33 @@ def _best_useful_row(payload: dict[str, Any]) -> tuple[str | None, float, float 
         if not isinstance(estimate, dict):
             continue
         fraction = float(estimate.get("ct_pt_reduction_fraction", 0.0))
-        if fraction > best_fraction:
+        if fraction >= min_useful_ct_pt_reduction_fraction and fraction > best_fraction:
             best_target = str(target)
             best_fraction = fraction
             best_delta = _optional_float(row.get("reference_output_model_poly_delta_max_abs"))
+    return best_target, best_fraction, best_delta
+
+
+def _best_useful_row_from_sweep_rows(
+    rows: list[Any],
+    *,
+    min_useful_ct_pt_reduction_fraction: float,
+) -> tuple[str | None, float, float | None]:
+    best_target = None
+    best_fraction = 0.0
+    best_delta = None
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("passed"):
+            continue
+        estimate = row.get("estimate", {})
+        if not isinstance(estimate, dict):
+            continue
+        fraction = float(estimate.get("ct_pt_reduction_fraction", 0.0))
+        if fraction < min_useful_ct_pt_reduction_fraction or fraction <= best_fraction:
+            continue
+        best_target = str(row.get("target")) if row.get("target") is not None else None
+        best_fraction = fraction
+        best_delta = _optional_float(row.get("reference_output_model_poly_delta_max_abs"))
     return best_target, best_fraction, best_delta
 
 
