@@ -219,6 +219,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage2_lora_range_smoke",
         "run_lora_range_smoke",
     ),
+    "run_group_sparse_lora_smoke": (
+        "fhe_native_mamba3.stage2_group_sparse_lora_smoke",
+        "run_group_sparse_lora_smoke",
+    ),
     "run_lora_range_sweep": (
         "fhe_native_mamba3.stage2_lora_range_sweep",
         "run_lora_range_sweep",
@@ -339,6 +343,18 @@ _LAZY_IMPORTS = {
     "Stage2DenseProjectionDecision": (
         "fhe_native_mamba3.stage2_dense_projection_decision",
         "Stage2DenseProjectionDecision",
+    ),
+    "GroupSparseLoRAConfig": (
+        "fhe_native_mamba3.stage2_group_sparse_lora_smoke",
+        "GroupSparseLoRAConfig",
+    ),
+    "Stage2GroupSparseLoRAMetrics": (
+        "fhe_native_mamba3.stage2_group_sparse_lora_smoke",
+        "Stage2GroupSparseLoRAMetrics",
+    ),
+    "Stage2GroupSparseLoRASmokeResult": (
+        "fhe_native_mamba3.stage2_group_sparse_lora_smoke",
+        "Stage2GroupSparseLoRASmokeResult",
     ),
     "LowRankPayloadSweepResult": (
         "fhe_native_mamba3.stage2_low_rank_payload_sweep",
@@ -1326,6 +1342,7 @@ __all__ = [
     "FheMamba3Config",
     "FheMamba3ForCausalLM",
     "GreedyBootstrapSchedule",
+    "GroupSparseLoRAConfig",
     "HeadPackCandidate",
     "HeadPackSweep",
     "IntegratedCostEstimate",
@@ -1400,6 +1417,8 @@ __all__ = [
     "Stage1RecurrentBootstrapReport",
     "Stage1TailGapReport",
     "Stage2DenseProjectionDecision",
+    "Stage2GroupSparseLoRAMetrics",
+    "Stage2GroupSparseLoRASmokeResult",
     "Stage2LearnedSketchBaselineResult",
     "Stage2LearnedSketchBaselineRow",
     "Stage2LoRAPayloadMergeMetrics",
@@ -1571,6 +1590,7 @@ __all__ = [
     "run_checkpoint_recurrence_correctness_gate",
     "run_checkpoint_sketch_matrix",
     "run_checkpoint_visible_projection_sweep",
+    "run_group_sparse_lora_smoke",
     "run_lora_range_smoke",
     "run_lora_range_sweep",
     "run_openfhe_static_recurrence",
