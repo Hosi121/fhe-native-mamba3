@@ -27,6 +27,9 @@ class GroupSparseLoRAReportRow:
     best_useful_target: str | None
     best_useful_ct_pt_reduction_fraction: float
     best_useful_output_delta: float | None
+    best_observed_target: str | None
+    best_observed_ct_pt_reduction_fraction: float
+    best_observed_output_delta: float | None
 
     def to_json_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -126,7 +129,7 @@ def _row_from_artifact(
     if payload.get("stage") != "stage2-group-sparse-lora-smoke":
         msg = f"expected stage2-group-sparse-lora-smoke artifact, got {payload.get('stage')!r}"
         raise ValueError(msg)
-    best_target, best_fraction, best_delta = _best_useful_row(
+    useful, observed = _best_rows(
         payload,
         min_useful_ct_pt_reduction_fraction=min_useful_ct_pt_reduction_fraction,
     )
@@ -152,21 +155,24 @@ def _row_from_artifact(
         mask_group_loss_reduction_fraction=loss_reduction,
         range_excess_before=float(before.get("max_excess", 0.0)),
         range_excess_after=float(after.get("max_excess", 0.0)),
-        merged_mask_sweep_passed=best_target is not None,
-        best_useful_target=best_target,
-        best_useful_ct_pt_reduction_fraction=best_fraction,
-        best_useful_output_delta=best_delta,
+        merged_mask_sweep_passed=useful[0] is not None,
+        best_useful_target=useful[0],
+        best_useful_ct_pt_reduction_fraction=useful[1],
+        best_useful_output_delta=useful[2],
+        best_observed_target=observed[0],
+        best_observed_ct_pt_reduction_fraction=observed[1],
+        best_observed_output_delta=observed[2],
     )
 
 
-def _best_useful_row(
+def _best_rows(
     payload: dict[str, Any],
     *,
     min_useful_ct_pt_reduction_fraction: float,
-) -> tuple[str | None, float, float | None]:
+) -> tuple[tuple[str | None, float, float | None], tuple[str | None, float, float | None]]:
     rows = payload.get("merged_mask_sweep", {}).get("rows")
     if isinstance(rows, list):
-        return _best_useful_row_from_sweep_rows(
+        return _best_rows_from_sweep_rows(
             rows,
             min_useful_ct_pt_reduction_fraction=min_useful_ct_pt_reduction_fraction,
         )
@@ -185,17 +191,21 @@ def _best_useful_row(
             best_target = str(target)
             best_fraction = fraction
             best_delta = _optional_float(row.get("reference_output_model_poly_delta_max_abs"))
-    return best_target, best_fraction, best_delta
+    best = (best_target, best_fraction, best_delta)
+    return best, best
 
 
-def _best_useful_row_from_sweep_rows(
+def _best_rows_from_sweep_rows(
     rows: list[Any],
     *,
     min_useful_ct_pt_reduction_fraction: float,
-) -> tuple[str | None, float, float | None]:
-    best_target = None
-    best_fraction = 0.0
-    best_delta = None
+) -> tuple[tuple[str | None, float, float | None], tuple[str | None, float, float | None]]:
+    best_useful_target = None
+    best_useful_fraction = 0.0
+    best_useful_delta = None
+    best_observed_target = None
+    best_observed_fraction = 0.0
+    best_observed_delta = None
     for row in rows:
         if not isinstance(row, dict) or not row.get("passed"):
             continue
@@ -203,12 +213,21 @@ def _best_useful_row_from_sweep_rows(
         if not isinstance(estimate, dict):
             continue
         fraction = float(estimate.get("ct_pt_reduction_fraction", 0.0))
-        if fraction < min_useful_ct_pt_reduction_fraction or fraction <= best_fraction:
+        target = str(row.get("target")) if row.get("target") is not None else None
+        delta = _optional_float(row.get("reference_output_model_poly_delta_max_abs"))
+        if fraction > best_observed_fraction:
+            best_observed_target = target
+            best_observed_fraction = fraction
+            best_observed_delta = delta
+        if fraction < min_useful_ct_pt_reduction_fraction or fraction <= best_useful_fraction:
             continue
-        best_target = str(row.get("target")) if row.get("target") is not None else None
-        best_fraction = fraction
-        best_delta = _optional_float(row.get("reference_output_model_poly_delta_max_abs"))
-    return best_target, best_fraction, best_delta
+        best_useful_target = target
+        best_useful_fraction = fraction
+        best_useful_delta = delta
+    return (
+        (best_useful_target, best_useful_fraction, best_useful_delta),
+        (best_observed_target, best_observed_fraction, best_observed_delta),
+    )
 
 
 def _optional_float(value: Any) -> float | None:

@@ -41,6 +41,7 @@ def test_group_sparse_lora_report_fails_closed_without_useful_rows() -> None:
     assert report.recommended_action == "increase_group_sparse_sweep_or_revisit_factorization"
     assert report.best_source is None
     assert report.rows[0].best_useful_ct_pt_reduction_fraction == 0.0
+    assert report.rows[0].best_observed_ct_pt_reduction_fraction == 0.0
 
 
 def test_group_sparse_lora_report_recomputes_useful_rows_from_threshold() -> None:
@@ -63,6 +64,39 @@ def test_group_sparse_lora_report_recomputes_useful_rows_from_threshold() -> Non
     assert report.rows[0].merged_mask_sweep_passed is True
     assert report.rows[0].best_useful_target == "conv"
     assert report.rows[0].best_useful_ct_pt_reduction_fraction == 0.04993486756404689
+    assert report.rows[0].best_observed_target == "conv"
+    assert report.rows[0].best_observed_ct_pt_reduction_fraction == 0.04993486756404689
+
+
+def test_group_sparse_lora_report_preserves_best_observed_below_threshold() -> None:
+    artifact = _artifact(passed=True, sweep_passed=False, fraction=0.04993486756404689)
+    artifact["merged_mask_sweep"]["rows"] = [
+        {
+            "target": "conv",
+            "passed": True,
+            "reference_output_model_poly_delta_max_abs": 0.037,
+            "estimate": {"ct_pt_reduction_fraction": 0.04993486756404689},
+        },
+        {
+            "target": "gate",
+            "passed": True,
+            "reference_output_model_poly_delta_max_abs": 0.011,
+            "estimate": {"ct_pt_reduction_fraction": 0.019},
+        },
+    ]
+
+    report = build_group_sparse_lora_report(
+        (("borderline.json", artifact),),
+        min_useful_ct_pt_reduction_fraction=0.05,
+    )
+
+    assert report.passed is False
+    assert report.rows[0].merged_mask_sweep_passed is False
+    assert report.rows[0].best_useful_target is None
+    assert report.rows[0].best_useful_ct_pt_reduction_fraction == 0.0
+    assert report.rows[0].best_observed_target == "conv"
+    assert report.rows[0].best_observed_ct_pt_reduction_fraction == 0.04993486756404689
+    assert report.rows[0].best_observed_output_delta == 0.037
 
 
 def test_group_sparse_lora_report_script_runs(tmp_path: Path) -> None:
