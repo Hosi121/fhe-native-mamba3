@@ -239,6 +239,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage2_dense_projection_decision",
         "build_stage2_dense_projection_decision",
     ),
+    "build_group_sparse_lora_report": (
+        "fhe_native_mamba3.stage2_group_sparse_lora_report",
+        "build_group_sparse_lora_report",
+    ),
     "sweep_low_rank_payload": (
         "fhe_native_mamba3.stage2_low_rank_payload_sweep",
         "sweep_low_rank_payload",
@@ -347,6 +351,14 @@ _LAZY_IMPORTS = {
     "GroupSparseLoRAConfig": (
         "fhe_native_mamba3.stage2_group_sparse_lora_smoke",
         "GroupSparseLoRAConfig",
+    ),
+    "GroupSparseLoRAReport": (
+        "fhe_native_mamba3.stage2_group_sparse_lora_report",
+        "GroupSparseLoRAReport",
+    ),
+    "GroupSparseLoRAReportRow": (
+        "fhe_native_mamba3.stage2_group_sparse_lora_report",
+        "GroupSparseLoRAReportRow",
     ),
     "Stage2GroupSparseLoRAMetrics": (
         "fhe_native_mamba3.stage2_group_sparse_lora_smoke",
@@ -1343,6 +1355,8 @@ __all__ = [
     "FheMamba3ForCausalLM",
     "GreedyBootstrapSchedule",
     "GroupSparseLoRAConfig",
+    "GroupSparseLoRAReport",
+    "GroupSparseLoRAReportRow",
     "HeadPackCandidate",
     "HeadPackSweep",
     "IntegratedCostEstimate",
@@ -1466,6 +1480,7 @@ __all__ = [
     "build_checkpoint_source_sketch_trace",
     "build_client_decode_report",
     "build_fixed_bsgs_schedule",
+    "build_group_sparse_lora_report",
     "build_lazy_bootstrap_report",
     "build_learned_sketch_report",
     "build_mamba_source_recurrence_problem",
