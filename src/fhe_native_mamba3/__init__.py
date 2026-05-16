@@ -231,6 +231,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage2_bsgs_mask_prune_sweep",
         "sweep_bsgs_mask_pruning",
     ),
+    "build_stage2_dense_projection_decision": (
+        "fhe_native_mamba3.stage2_dense_projection_decision",
+        "build_stage2_dense_projection_decision",
+    ),
     "sweep_low_rank_payload": (
         "fhe_native_mamba3.stage2_low_rank_payload_sweep",
         "sweep_low_rank_payload",
@@ -331,6 +335,10 @@ _LAZY_IMPORTS = {
     "Stage2LoRARangeSweepRow": (
         "fhe_native_mamba3.stage2_lora_range_sweep",
         "Stage2LoRARangeSweepRow",
+    ),
+    "Stage2DenseProjectionDecision": (
+        "fhe_native_mamba3.stage2_dense_projection_decision",
+        "Stage2DenseProjectionDecision",
     ),
     "LowRankPayloadSweepResult": (
         "fhe_native_mamba3.stage2_low_rank_payload_sweep",
@@ -1391,6 +1399,7 @@ __all__ = [
     "Stage1RankGatePayloadChain",
     "Stage1RecurrentBootstrapReport",
     "Stage1TailGapReport",
+    "Stage2DenseProjectionDecision",
     "Stage2LearnedSketchBaselineResult",
     "Stage2LearnedSketchBaselineRow",
     "Stage2LoRAPayloadMergeMetrics",
@@ -1463,6 +1472,7 @@ __all__ = [
     "build_stage1_rank_gate_payload_chain",
     "build_stage1_recurrent_bootstrap_report",
     "build_stage1_tail_gap_report",
+    "build_stage2_dense_projection_decision",
     "build_state_major_layout_plan",
     "build_tiny_mimo_block_problem",
     "build_weight_bundle_manifest",
