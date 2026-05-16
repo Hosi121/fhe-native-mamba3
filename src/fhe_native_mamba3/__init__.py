@@ -227,6 +227,10 @@ _LAZY_IMPORTS = {
         "fhe_native_mamba3.stage2_lora_payload_merge",
         "train_and_merge_lora_range_payload",
     ),
+    "sweep_bsgs_mask_pruning": (
+        "fhe_native_mamba3.stage2_bsgs_mask_prune_sweep",
+        "sweep_bsgs_mask_pruning",
+    ),
     "sweep_low_rank_payload": (
         "fhe_native_mamba3.stage2_low_rank_payload_sweep",
         "sweep_low_rank_payload",
@@ -339,6 +343,18 @@ _LAZY_IMPORTS = {
     "LowRankProjectionEstimate": (
         "fhe_native_mamba3.stage2_low_rank_payload_sweep",
         "LowRankProjectionEstimate",
+    ),
+    "BsgsMaskPruneEstimate": (
+        "fhe_native_mamba3.stage2_bsgs_mask_prune_sweep",
+        "BsgsMaskPruneEstimate",
+    ),
+    "BsgsMaskPruneSweepResult": (
+        "fhe_native_mamba3.stage2_bsgs_mask_prune_sweep",
+        "BsgsMaskPruneSweepResult",
+    ),
+    "BsgsMaskPruneSweepRow": (
+        "fhe_native_mamba3.stage2_bsgs_mask_prune_sweep",
+        "BsgsMaskPruneSweepRow",
     ),
     "ProjectionPruneEstimate": (
         "fhe_native_mamba3.stage2_projection_prune_sweep",
@@ -1259,6 +1275,9 @@ __all__ = [
     "BootstrapExecutionSchedule",
     "BootstrapExecutionScheduleStep",
     "BootstrapSchedule",
+    "BsgsMaskPruneEstimate",
+    "BsgsMaskPruneSweepResult",
+    "BsgsMaskPruneSweepRow",
     "BsgsSchedule",
     "CheckpointClientDecodeSmoke",
     "CheckpointEncryptedPreRecurrenceRecurrenceGate",
@@ -1584,6 +1603,7 @@ __all__ = [
     "stage1_tail_gap_markdown",
     "state_axis_rotation_steps",
     "state_major_slot",
+    "sweep_bsgs_mask_pruning",
     "sweep_head_pack_candidates",
     "sweep_low_rank_payload",
     "sweep_projection_pruning",
