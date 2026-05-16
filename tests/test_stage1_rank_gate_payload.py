@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from fhe_native_mamba3 import __version__
+from fhe_native_mamba3.artifact_validation import validate_benchmark_artifact
 from fhe_native_mamba3.stage1_rank_gate_payload import (
     RANK_GATE_PAYLOAD_ARRAY_ORDER,
     RANK_GATE_PAYLOAD_FORMAT_VERSION,
@@ -298,6 +299,10 @@ def test_export_stage1_rank_gate_payload_script_runs(tmp_path) -> None:
     assert payload["version"] == __version__
     assert payload["stage"] == "stage1-rank-gate-payload-export"
     assert payload["passed"] is True
+    assert payload["config"]["input_mode"] == "stage1-rank-gate-payload-export"
+    assert payload["operation_counts"]["rotations"] == 0
+    assert payload["rotation_count"] == 0
+    assert payload["measurement_scope"]["claim"]
     assert payload["measurement_scope"]["pre_recurrence_rank_gate_only"] is False
     assert payload["measurement_scope"]["pre_recurrence_dynamic_bc"] is True
     assert payload["measurement_scope"]["pre_recurrence_rank_gate_bc"] is True
@@ -321,6 +326,9 @@ def test_export_stage1_rank_gate_payload_script_runs(tmp_path) -> None:
     assert round_trip.arrays["reference_b_state_major_poly"].shape == (2, 6)
     assert round_trip.arrays["reference_decay_state_major_poly"].shape == (2, 6)
     assert round_trip.arrays["reference_output_model_poly"].shape == (8,)
+    validation = validate_benchmark_artifact(payload, require_commit=False)
+    assert validation.valid is True
+    assert validation.warnings == ()
 
 
 def test_export_stage1_rank_gate_chain_payload_script_runs(tmp_path) -> None:

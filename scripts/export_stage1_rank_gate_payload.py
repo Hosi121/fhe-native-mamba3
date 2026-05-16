@@ -58,6 +58,9 @@ def main() -> int:
         "state_dict_key": resolved_key,
         "backend": "none",
         "encrypted": False,
+        "config": {
+            "input_mode": "stage1-rank-gate-payload-export",
+        },
         "measurement_scope": {
             "benchmark": False,
             "checkpoint_layer": True,
@@ -72,6 +75,11 @@ def main() -> int:
             "recurrence_tail_executed": False,
             "full_layer_executed": False,
             "full_model_correctness_claimed": False,
+            "claim": (
+                "Exports a plaintext Stage 1 rank/gate payload for native parity "
+                "tests; it writes reference arrays and does not execute encrypted "
+                "inference."
+            ),
         },
         "parameters": {
             "layer_index": args.layer_index,
@@ -101,6 +109,14 @@ def main() -> int:
             "array_count": len(payload.arrays),
             "binary_size_bytes": output_binary.stat().st_size,
         },
+        "operation_counts": {
+            "rotations": 0,
+            "ct_pt_mul": 0,
+            "ct_ct_mul": 0,
+            "adds": 0,
+            "bootstraps": 0,
+        },
+        "rotation_count": 0,
         "artifact": payload.to_manifest_dict(binary_path=output_binary),
     }
     emit_json_payload(manifest, output_json=args.output_json)
