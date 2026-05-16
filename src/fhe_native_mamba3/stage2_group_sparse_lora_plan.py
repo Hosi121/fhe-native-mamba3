@@ -29,6 +29,7 @@ class GroupSparseLoRAPlan:
 
     passed: bool
     recommended_action: str
+    input_row_count: int
     row_count: int
     useful_row_count: int
     borderline_row_count: int
@@ -63,14 +64,11 @@ def build_group_sparse_lora_plan(
         msg = "useful_threshold must be positive"
         raise ValueError(msg)
 
-    rows = tuple(
-        _plan_row(
-            row,
-            useful_threshold=threshold,
-            borderline_fraction=borderline_fraction,
-        )
-        for row in report_payload.get("rows", ())
-        if isinstance(row, dict)
+    input_rows = tuple(row for row in report_payload.get("rows", ()) if isinstance(row, dict))
+    rows = _best_plan_rows_by_layer(
+        input_rows,
+        useful_threshold=threshold,
+        borderline_fraction=borderline_fraction,
     )
     useful_count = sum(row.recommended_action == "expand_neighbor_layers" for row in rows)
     borderline_count = sum(
@@ -89,6 +87,7 @@ def build_group_sparse_lora_plan(
     return GroupSparseLoRAPlan(
         passed=bool(rows),
         recommended_action=recommended_action,
+        input_row_count=len(input_rows),
         row_count=len(rows),
         useful_row_count=useful_count,
         borderline_row_count=borderline_count,
@@ -102,6 +101,7 @@ def build_group_sparse_lora_plan(
             "full_model_correctness_claimed": False,
             "useful_threshold": threshold,
             "borderline_fraction": borderline_fraction,
+            "grouped_by_layer": True,
             "claim": (
                 "Planning artifact derived from group-sparse LoRA reports. It "
                 "does not train adapters or execute encrypted inference; it "
@@ -109,6 +109,47 @@ def build_group_sparse_lora_plan(
                 "deprioritized next."
             ),
         },
+    )
+
+
+def _best_plan_rows_by_layer(
+    rows: tuple[dict[str, Any], ...],
+    *,
+    useful_threshold: float,
+    borderline_fraction: float,
+) -> tuple[GroupSparseLoRAPlanRow, ...]:
+    best_by_layer: dict[tuple[str, int | str], GroupSparseLoRAPlanRow] = {}
+    insertion_order: list[tuple[str, int | str]] = []
+    for row in rows:
+        plan_row = _plan_row(
+            row,
+            useful_threshold=useful_threshold,
+            borderline_fraction=borderline_fraction,
+        )
+        key: tuple[str, int | str]
+        if plan_row.layer_index is None:
+            key = ("source", plan_row.source)
+        else:
+            key = ("layer", plan_row.layer_index)
+        if key not in best_by_layer:
+            insertion_order.append(key)
+            best_by_layer[key] = plan_row
+            continue
+        if _row_score(plan_row) > _row_score(best_by_layer[key]):
+            best_by_layer[key] = plan_row
+    return tuple(best_by_layer[key] for key in insertion_order)
+
+
+def _row_score(row: GroupSparseLoRAPlanRow) -> tuple[int, float, float]:
+    priority = {
+        "expand_neighbor_layers": 2,
+        "tune_group_sparse_hyperparameters": 1,
+        "deprioritize_layer_or_revisit_factorization": 0,
+    }.get(row.recommended_action, 0)
+    return (
+        priority,
+        row.best_observed_ct_pt_reduction_fraction,
+        -(row.best_observed_output_delta or 0.0),
     )
 
 

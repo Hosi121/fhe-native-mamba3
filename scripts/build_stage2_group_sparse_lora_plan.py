@@ -38,6 +38,7 @@ def main() -> int:
         },
         "inputs": {"report_json": str(args.report_json)},
         "measurements": {
+            "input_row_count": plan.input_row_count,
             "row_count": plan.row_count,
             "useful_row_count": plan.useful_row_count,
             "borderline_row_count": plan.borderline_row_count,

@@ -20,11 +20,14 @@ def test_group_sparse_lora_plan_splits_useful_borderline_and_weak_rows() -> None
 
     assert plan.passed is True
     assert plan.recommended_action == "expand_useful_layers_and_tune_borderline_layers"
+    assert plan.input_row_count == 4
+    assert plan.row_count == 3
     assert plan.useful_row_count == 1
     assert plan.borderline_row_count == 1
     assert plan.weak_row_count == 1
     assert plan.rows[0].recommended_action == "expand_neighbor_layers"
     assert plan.rows[1].recommended_action == "tune_group_sparse_hyperparameters"
+    assert plan.rows[1].source == "layer12-better.json"
     assert plan.rows[2].recommended_action == "deprioritize_layer_or_revisit_factorization"
 
 
@@ -57,8 +60,11 @@ def test_group_sparse_lora_plan_script_runs(tmp_path: Path) -> None:
     assert payload["version"] == __version__
     assert payload["stage"] == "stage2-group-sparse-lora-plan"
     assert payload["passed"] is True
+    assert payload["input_row_count"] == 4
+    assert payload["row_count"] == 3
     assert payload["recommended_action"] == "expand_useful_layers_and_tune_borderline_layers"
     assert persisted["measurement_scope"]["decision_only"] is True
+    assert persisted["measurement_scope"]["grouped_by_layer"] is True
 
 
 def _report_payload() -> dict:
@@ -81,6 +87,14 @@ def _report_payload() -> dict:
                 "best_observed_ct_pt_reduction_fraction": 0.0499,
                 "best_observed_target": "conv",
                 "best_observed_output_delta": 0.037,
+            },
+            {
+                "source": "layer12-better.json",
+                "layer_index": 12,
+                "best_useful_ct_pt_reduction_fraction": 0.0,
+                "best_observed_ct_pt_reduction_fraction": 0.0499,
+                "best_observed_target": "conv",
+                "best_observed_output_delta": 0.03,
             },
             {
                 "source": "layer23.json",
