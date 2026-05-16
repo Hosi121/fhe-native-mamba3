@@ -11,6 +11,7 @@ from fhe_native_mamba3 import __version__
 from fhe_native_mamba3.range_finetune import LoRAConfig, RangeLossConfig
 from fhe_native_mamba3.stage1_rank_gate_payload import (
     build_stage1_rank_gate_payload,
+    read_stage1_rank_gate_payload_binary,
     write_stage1_rank_gate_payload_binary,
 )
 from fhe_native_mamba3.stage2_group_sparse_lora_smoke import (
@@ -57,6 +58,7 @@ def test_group_sparse_lora_smoke_reduces_mask_group_loss() -> None:
 
 def test_group_sparse_lora_smoke_script_emits_artifact(tmp_path: Path) -> None:
     binary = tmp_path / "rank_gate.bin"
+    merged_binary = tmp_path / "rank_gate_merged.bin"
     output_json = tmp_path / "group-sparse.json"
     write_stage1_rank_gate_payload_binary(_payload(), binary)
 
@@ -88,6 +90,8 @@ def test_group_sparse_lora_smoke_script_emits_artifact(tmp_path: Path) -> None:
             "0.0",
             "--device",
             "cpu",
+            "--output-binary",
+            str(merged_binary),
             "--output-json",
             str(output_json),
         ],
@@ -102,8 +106,10 @@ def test_group_sparse_lora_smoke_script_emits_artifact(tmp_path: Path) -> None:
     assert payload["version"] == __version__
     assert payload["stage"] == "stage2-group-sparse-lora-smoke"
     assert payload["backend"] == "torch"
+    assert payload["output"]["binary"] == str(merged_binary)
     assert payload["lora_parameter_count"] > 0
     assert persisted["measurement_scope"]["rank_gate_projection_only"] is True
+    assert read_stage1_rank_gate_payload_binary(merged_binary).layer_index == _payload().layer_index
 
 
 def _payload():

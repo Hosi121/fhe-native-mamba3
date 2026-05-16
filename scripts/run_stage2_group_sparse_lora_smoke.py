@@ -16,15 +16,18 @@ def main() -> int:
     from fhe_native_mamba3.artifact_validation import current_git_commit
     from fhe_native_mamba3.cli_support import emit_json_payload
     from fhe_native_mamba3.range_finetune import LoRAConfig, RangeLossConfig
-    from fhe_native_mamba3.stage1_rank_gate_payload import read_stage1_rank_gate_payload_binary
+    from fhe_native_mamba3.stage1_rank_gate_payload import (
+        read_stage1_rank_gate_payload_binary,
+        write_stage1_rank_gate_payload_binary,
+    )
     from fhe_native_mamba3.stage2_group_sparse_lora_smoke import (
         GroupSparseLoRAConfig,
-        run_group_sparse_lora_smoke,
+        train_and_merge_group_sparse_lora_payload,
     )
 
     args = _parse_args()
     payload = read_stage1_rank_gate_payload_binary(args.input_binary)
-    result = run_group_sparse_lora_smoke(
+    merged_payload, result = train_and_merge_group_sparse_lora_payload(
         payload,
         sample_count=args.sample_count,
         noise_scale=args.noise_scale,
@@ -49,6 +52,11 @@ def main() -> int:
         min_ct_pt_reduction_fraction=args.min_ct_pt_reduction_fraction,
         min_ct_pt_reduction_count=args.min_ct_pt_reduction_count,
     )
+    output_binary = (
+        write_stage1_rank_gate_payload_binary(merged_payload, args.output_binary)
+        if args.output_binary is not None
+        else None
+    )
     output = {
         "version": __version__,
         "repo_commit": current_git_commit(ROOT),
@@ -65,6 +73,12 @@ def main() -> int:
             "d_model": payload.config.d_model,
             "mimo_rank": payload.config.mimo_rank,
             "d_state": payload.config.d_state,
+        },
+        "output": {
+            "binary": None if output_binary is None else str(output_binary),
+            "manifest": None
+            if output_binary is None
+            else merged_payload.to_manifest_dict(binary_path=output_binary),
         },
         "operation_counts": {
             "rotations": 0,
@@ -100,6 +114,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mask-sweep-output-delta-atol", type=float, default=5e-2)
     parser.add_argument("--min-ct-pt-reduction-fraction", type=float, default=5e-2)
     parser.add_argument("--min-ct-pt-reduction-count", type=int, default=None)
+    parser.add_argument("--output-binary", type=Path, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--output-json", default="")

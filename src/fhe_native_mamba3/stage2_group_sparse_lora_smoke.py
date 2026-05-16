@@ -151,6 +151,51 @@ def run_group_sparse_lora_smoke(
     return result
 
 
+def train_and_merge_group_sparse_lora_payload(
+    payload: Stage1RankGatePayload,
+    *,
+    sample_count: int = 64,
+    noise_scale: float = 0.01,
+    steps: int = 100,
+    learning_rate: float = 1e-2,
+    lora_config: LoRAConfig | None = None,
+    range_loss_config: RangeLossConfig | None = None,
+    group_sparse_config: GroupSparseLoRAConfig | None = None,
+    seed: int = 0,
+    device: str = "cpu",
+    mask_sweep_keep_fractions: tuple[float, ...] = (1.0, 0.99, 0.98, 0.97, 0.95),
+    mask_sweep_output_delta_atol: float = 5e-2,
+    min_ct_pt_reduction_fraction: float = 5e-2,
+    min_ct_pt_reduction_count: int | None = None,
+) -> tuple[Stage1RankGatePayload, Stage2GroupSparseLoRASmokeResult]:
+    """Train group-sparse LoRA and return the merged public payload.
+
+    The smoke result already computes a mask-pruning sweep over the merged
+    payload. Returning the payload makes the next native replay step explicit:
+    callers can materialize the merged binary, optionally apply whole-mask
+    pruning, and then feed it to the FIDESlib rank/gate kernel.
+    """
+
+    model, result = train_group_sparse_lora_model(
+        payload,
+        sample_count=sample_count,
+        noise_scale=noise_scale,
+        steps=steps,
+        learning_rate=learning_rate,
+        lora_config=lora_config,
+        range_loss_config=range_loss_config,
+        group_sparse_config=group_sparse_config,
+        seed=seed,
+        device=device,
+        mask_sweep_keep_fractions=mask_sweep_keep_fractions,
+        mask_sweep_output_delta_atol=mask_sweep_output_delta_atol,
+        min_ct_pt_reduction_fraction=min_ct_pt_reduction_fraction,
+        min_ct_pt_reduction_count=min_ct_pt_reduction_count,
+    )
+    merged_payload, _merge_metrics = merge_lora_range_payload(payload, model)
+    return merged_payload, result
+
+
 def train_group_sparse_lora_model(
     payload: Stage1RankGatePayload,
     *,
@@ -429,5 +474,6 @@ __all__ = [
     "Stage2GroupSparseLoRAMetrics",
     "Stage2GroupSparseLoRASmokeResult",
     "run_group_sparse_lora_smoke",
+    "train_and_merge_group_sparse_lora_payload",
     "train_group_sparse_lora_model",
 ]
