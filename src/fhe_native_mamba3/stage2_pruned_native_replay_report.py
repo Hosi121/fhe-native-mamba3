@@ -134,10 +134,44 @@ def _extract_counts(payload: dict[str, Any]) -> PrunedNativeReplayCounts:
 def _materialization_summary(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     if payload is None:
         return None
+    if payload.get("step_results") is not None:
+        return {
+            "stage": payload.get("stage"),
+            "passed": payload.get("passed"),
+            "multi_step_pruning": bool(
+                payload.get("measurement_scope", {}).get("multi_step_pruning")
+            ),
+            "step_count": len(payload.get("step_results", ())),
+            "reference_output_model_poly_delta_max_abs": payload.get(
+                "cumulative_reference_output_model_poly_delta_max_abs"
+            ),
+            "estimated_ct_pt_reduction": payload.get("total_selected_ct_pt_reduction"),
+            "estimated_projection_rotation_reduction": payload.get(
+                "total_selected_projection_rotation_reduction"
+            ),
+            "steps": [
+                _materialization_step_summary(step) for step in payload.get("step_results", ())
+            ],
+        }
     metrics = payload.get("metrics", {})
     estimate = metrics.get("estimate", {})
     return {
         "stage": payload.get("stage"),
+        "passed": payload.get("passed"),
+        "target": metrics.get("target"),
+        "keep_fraction": metrics.get("keep_fraction"),
+        "reference_output_model_poly_delta_max_abs": metrics.get(
+            "reference_output_model_poly_delta_max_abs"
+        ),
+        "estimated_ct_pt_reduction": estimate.get("ct_pt_reduction"),
+        "estimated_ct_pt_reduction_fraction": estimate.get("ct_pt_reduction_fraction"),
+    }
+
+
+def _materialization_step_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    metrics = payload.get("metrics", {})
+    estimate = metrics.get("estimate", {})
+    return {
         "passed": payload.get("passed"),
         "target": metrics.get("target"),
         "keep_fraction": metrics.get("keep_fraction"),

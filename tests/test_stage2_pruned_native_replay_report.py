@@ -29,6 +29,21 @@ def test_pruned_native_replay_report_detects_ct_pt_reduction() -> None:
     assert result.materialization["estimated_ct_pt_reduction"] == 10
 
 
+def test_pruned_native_replay_report_summarizes_sequence_materialization() -> None:
+    result = build_pruned_native_replay_report(
+        _native_payload(ct_pt=100, rotations=20, eval_seconds=10.0),
+        _native_payload(ct_pt=80, rotations=20, eval_seconds=9.0),
+        materialization_payload=_sequence_materialization_payload(),
+        min_ct_pt_reduction_count=10,
+    )
+
+    assert result.passed is True
+    assert result.materialization["multi_step_pruning"] is True
+    assert result.materialization["step_count"] == 2
+    assert result.materialization["estimated_ct_pt_reduction"] == 20
+    assert [step["target"] for step in result.materialization["steps"]] == ["conv", "gate"]
+
+
 def test_pruned_native_replay_report_script(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.json"
     pruned = tmp_path / "pruned.json"
@@ -103,6 +118,38 @@ def _materialization_payload() -> dict[str, object]:
             "estimate": {
                 "ct_pt_reduction": 10,
                 "ct_pt_reduction_fraction": 0.1,
+            },
+        },
+    }
+
+
+def _sequence_materialization_payload() -> dict[str, object]:
+    return {
+        "stage": "stage2-bsgs-mask-prune-sequence-payload",
+        "passed": True,
+        "cumulative_reference_output_model_poly_delta_max_abs": 0.02,
+        "total_selected_ct_pt_reduction": 20,
+        "total_selected_projection_rotation_reduction": 0,
+        "measurement_scope": {
+            "multi_step_pruning": True,
+        },
+        "step_results": [
+            _step_materialization_payload(target="conv", ct_pt_reduction=10),
+            _step_materialization_payload(target="gate", ct_pt_reduction=10),
+        ],
+    }
+
+
+def _step_materialization_payload(*, target: str, ct_pt_reduction: int) -> dict[str, object]:
+    return {
+        "passed": True,
+        "metrics": {
+            "target": target,
+            "keep_fraction": 0.95,
+            "reference_output_model_poly_delta_max_abs": 0.01,
+            "estimate": {
+                "ct_pt_reduction": ct_pt_reduction,
+                "ct_pt_reduction_fraction": 0.05,
             },
         },
     }
