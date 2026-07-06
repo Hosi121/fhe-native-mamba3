@@ -1,0 +1,216 @@
+{
+  "config": {
+    "ring_dim": 16384,
+    "batch": 8192,
+    "depth": 40,
+    "scaling_mod_size": 59,
+    "first_mod_size": 60,
+    "scaling_technique": "FLEXIBLEAUTO",
+    "secret_key_dist": "uniform-ternary",
+    "security": "not-set (toy)",
+    "n_steps": 8,
+    "b_norm": 3.0,
+    "state_clip": 2.9,
+    "decay_range": [
+      0.85,
+      0.999
+    ],
+    "arm_e_update_scale": 0.19687440434072256,
+    "bootstrap": {
+      "slots": 8192,
+      "level_budget": [
+        4,
+        4
+      ],
+      "correction_factor": 0,
+      "forced_input_towers": 18
+    },
+    "seed": 0,
+    "error_target": 0.05,
+    "reference_measurement": "~+4e-3/token on dgx encrypted Mamba-2 decode"
+  },
+  "arms": {
+    "A_refresh_only": {
+      "errors": [
+        0.0004722873517023496,
+        0.0006867316332059836,
+        0.0008187360428412171,
+        0.0011046529150956497,
+        0.0009463426553120158,
+        0.001366894838093713,
+        0.0010480215395837766,
+        0.0014900048259501864
+      ],
+      "levels": [
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22
+      ],
+      "seconds": 136.353,
+      "notes": [],
+      "fit": {
+        "per_step_slope": 0.00012400759497140093,
+        "intercept": 0.0004336747978518072,
+        "linear_r2": 0.8075626192757291,
+        "mean_step_delta": 0.00014538821060683382
+      },
+      "projected_tokens_to_5e-2": 399.7039472749984
+    },
+    "B_decay_mult_only": {
+      "errors": [
+        7.513989430663059e-13,
+        9.250378241176804e-13,
+        1.127986593019159e-12,
+        1.1906031716080179e-12,
+        1.4501733147653795e-12,
+        1.2461143228392757e-12,
+        1.341149413747189e-12,
+        1.5081269566508126e-12
+      ],
+      "levels": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "seconds": 1.999,
+      "notes": [],
+      "fit": {
+        "per_step_slope": 9.51381830459143e-14,
+        "intercept": 7.644519937701135e-13,
+        "linear_r2": 0.8241654033116035,
+        "mean_step_delta": 1.0810400194064381e-13
+      },
+      "projected_tokens_to_5e-2": 525551344354.61346
+    },
+    "C_decay_plus_refresh": {
+      "errors": [
+        0.0006250670397494051,
+        0.0006667104111829358,
+        0.0007203923725023209,
+        0.000866562084986533,
+        0.0008449317020641778,
+        0.001464638979279953,
+        0.0016588198041826985,
+        0.0016606592221073413
+      ],
+      "levels": [
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22
+      ],
+      "seconds": 134.047,
+      "notes": [],
+      "fit": {
+        "per_step_slope": 0.00017167621046327273,
+        "intercept": 0.0002909297549221936,
+        "linear_r2": 0.8681444017654666,
+        "mean_step_delta": 0.00014794174033684802
+      },
+      "projected_tokens_to_5e-2": 289.5513019010414
+    },
+    "D_poly_in_the_loop": {
+      "errors": [
+        0.0005444411680559647,
+        0.0006006921991357217,
+        0.0007694324533090713,
+        0.0009968945456759748,
+        0.0009387647469321081,
+        0.0009998085373268406,
+        0.0010187779818649212,
+        0.0010451438362704124
+      ],
+      "levels": [
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22
+      ],
+      "seconds": 167.36,
+      "notes": [],
+      "poly_fit_max_abs_err_vs_exp": 1.6888712650597881e-12,
+      "poly": {
+        "base_degree": 24,
+        "squarings": 3,
+        "base_interval": [
+          -8.0,
+          0.0
+        ]
+      },
+      "fit": {
+        "per_step_slope": 7.414697671972112e-05,
+        "intercept": 0.0005305830383326318,
+        "linear_r2": 0.8280511150490104,
+        "mean_step_delta": 7.152895260206396e-05
+      },
+      "projected_tokens_to_5e-2": 667.1804994647856
+    },
+    "E_additive_update": {
+      "errors": [
+        0.00043421465977866447,
+        0.000619471251410153,
+        0.0007520196157452808,
+        0.0007334227013971462,
+        0.0008156323019494205,
+        0.0008084112887997152,
+        0.0009369713351133901,
+        0.0010201393094800282
+      ],
+      "levels": [
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22
+      ],
+      "seconds": 146.642,
+      "notes": [],
+      "fit": {
+        "per_step_slope": 7.071854269215847e-05,
+        "intercept": 0.0004468018658445119,
+        "linear_r2": 0.9097596733680835,
+        "mean_step_delta": 8.37035213859091e-05
+      },
+      "projected_tokens_to_5e-2": 700.710114317021
+    }
+  },
+  "component_per_step_slopes": {
+    "refresh_noise": 0.00012400759497140093,
+    "ctct_mult_noise": 9.51381830459143e-14,
+    "poly_eval_noise": -9.752923374355161e-05
+  },
+  "dominant_component": "refresh_noise",
+  "dominant_arm": "A_refresh_only",
+  "verdict": "refresh_noise dominates the per-token growth (1.240e-04/step vs refresh 1.240e-04, ct-ct mult 9.514e-14, poly-eval delta -9.753e-05); projected token horizon at 0.05 for the dominant arm (A_refresh_only): 399.7039472749984 tokens; realistic arm E: 7.072e-05/step, horizon 700.710114317021 tokens",
+  "mean_bootstrap_eval_seconds": 17.241,
+  "n_bootstraps": 32,
+  "total_seconds": 588.809,
+  "notes": [
+    "errors are max-abs over all 8192 slots vs a float64 replica of the identical circuit (fit error excluded; arm D reports its poly fit error separately)",
+    "arm B never exhausts levels (8 ct-ct mults << depth 40), so the re-encrypt fallback was not needed",
+    "poly_eval_noise component = slope(D) - slope(C): D differs from C only by sourcing the decay from an encrypted deg-24 squared-exp evaluation instead of a fresh encryption",
+    "OpenFHE EvalBootstrap on a shallow ciphertext (more towers than a bootstrap restores) returns a level-preserving, near-noiseless result (~5e-13) -- useless as a refresh model. Every refresh here first descends noiselessly (Compress to 18 towers, level 23) to force the genuine depth-exhausted refresh (~1.5e-4), matching how the kernel bootstraps",
+    "scale 59 is the validated bootstrap geometry; the dgx kernel bootstraps at scale 40 on GPU (128-bit FIDESlib), so absolute refresh noise there may differ -- attribution ratios are the transferable result"
+  ]
+}

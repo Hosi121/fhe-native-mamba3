@@ -1,0 +1,42 @@
+{
+  "experiment": "parity-vs-official-transformers",
+  "checkpoint": "checkpoints/mamba-130m-hf",
+  "device": "cuda",
+  "seq_len": 138,
+  "transformers_path": "slow_forward (mamba_ssm kernels not installed)",
+  "per_layer_hidden_max_abs_diff": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "worst_layer_diff": 0.0,
+  "logits_max_abs_diff": 0.0,
+  "chunked_vs_loop_logits_max_abs_diff": 0.00038909912109375,
+  "next_token_argmax_agrees": true,
+  "next_token": {
+    "official": 187,
+    "reference": 187
+  }
+}

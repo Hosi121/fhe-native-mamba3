@@ -1,0 +1,82 @@
+{
+  "experiment": "decode-step-budget",
+  "checkpoint": "checkpoints/mamba2-130m-hf",
+  "lowered_vs_reference_max_abs_err": 3.0517578125e-05,
+  "tokens_verified": 5,
+  "levels_per_layer_first_token": [
+    60,
+    60,
+    63,
+    60,
+    73,
+    60,
+    71,
+    60,
+    60,
+    60,
+    68,
+    60,
+    60,
+    60,
+    67,
+    60,
+    71,
+    60,
+    60,
+    66,
+    70,
+    60,
+    65,
+    67
+  ],
+  "ops_per_token": {
+    "ct_ct_mul": 2814.0,
+    "ct_pt_mul": 37106.0,
+    "rotations": 4018.0
+  },
+  "assumptions": {
+    "usable_depth": 48,
+    "exp_squarings_per_layer": [
+      0,
+      0,
+      3,
+      0,
+      13,
+      0,
+      11,
+      0,
+      0,
+      0,
+      8,
+      0,
+      0,
+      0,
+      7,
+      0,
+      11,
+      0,
+      0,
+      6,
+      10,
+      0,
+      5,
+      7
+    ],
+    "newton_iters": 2,
+    "bootstrap_sec": 0.0216,
+    "rotation_sec": 0.00042331288343558284,
+    "ct_pt_mul_sec": [
+      0.00042331288343558284,
+      5.2914110429447855e-05
+    ]
+  },
+  "bootstraps_per_token": 48,
+  "estimated_sec_per_token_single_stream": [
+    19.636321472392638,
+    5.892304601226995
+  ],
+  "estimated_sec_per_token_20_streams": [
+    0.9818160736196319,
+    0.2946152300613497
+  ]
+}

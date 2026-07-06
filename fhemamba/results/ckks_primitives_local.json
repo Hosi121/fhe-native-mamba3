@@ -1,0 +1,242 @@
+{
+  "config": {
+    "ring_dim": 16384,
+    "batch": 8192,
+    "depth": 40,
+    "scaling_mod_size": 40,
+    "first_mod_size": 60,
+    "scaling_technique": "FLEXIBLEAUTO",
+    "secret_key_dist": "uniform-ternary",
+    "security": "not-set (toy)",
+    "n_inputs": 2048,
+    "seed": 0,
+    "kernel": "native/fideslib_stage0/src/stage1_mamba2_decode_fideslib.cpp",
+    "context_setup_seconds": 0.954
+  },
+  "primitives": [
+    {
+      "name": "ps_cheb_silu_deg96",
+      "n_inputs": 2048,
+      "level_in": 0,
+      "level_out": 7,
+      "levels_consumed": 7,
+      "max_abs_err_ckks_vs_plain64": 6.087212814642751e-07,
+      "max_abs_err_plain64_vs_exact": 1.0415433523433678e-05,
+      "seconds": 8.228,
+      "degree": 96,
+      "interval": [
+        -25.0,
+        25.0
+      ]
+    },
+    {
+      "name": "sqrt_softplus_sq_deg64",
+      "n_inputs": 2048,
+      "level_in": 0,
+      "level_out": 8,
+      "levels_consumed": 8,
+      "max_abs_err_ckks_vs_plain64": 3.9726897149705565e-07,
+      "max_abs_err_plain64_vs_exact": 2.5071804449439128e-05,
+      "seconds": 9.525,
+      "degree": 64,
+      "interval": [
+        -40.0,
+        13.0
+      ]
+    },
+    {
+      "name": "squared_exp_deg24_sq3",
+      "n_inputs": 2048,
+      "level_in": 0,
+      "level_out": 8,
+      "levels_consumed": 8,
+      "max_abs_err_ckks_vs_plain64": 2.8096887416673155e-07,
+      "max_abs_err_plain64_vs_exact": 1.7020829190528275e-12,
+      "seconds": 4.983,
+      "degree": 24,
+      "squarings": 3,
+      "interval": [
+        -64.0,
+        0.0
+      ]
+    },
+    {
+      "name": "poly_newton_invsqrt_deg47_it4",
+      "n_inputs": 2048,
+      "level_in": 0,
+      "level_out": 14,
+      "levels_consumed": 14,
+      "max_abs_err_ckks_vs_plain64": 4.182015928222427e-06,
+      "max_abs_err_plain64_vs_exact": 6.697220555906824e-11,
+      "seconds": 10.582,
+      "degree": 47,
+      "iterations": 4,
+      "damping": 0.9,
+      "interval": [
+        0.05,
+        100.0
+      ]
+    },
+    {
+      "name": "sq_poly_newton_invsqrt_deg31_it4",
+      "n_inputs": 2048,
+      "level_in": 0,
+      "level_out": 16,
+      "levels_consumed": 16,
+      "max_abs_err_ckks_vs_plain64": 3.4221471505446743e-06,
+      "max_abs_err_plain64_vs_exact": 2.1205282152436666e-07,
+      "seconds": 9.873,
+      "degree": 31,
+      "iterations": 4,
+      "damping": 0.85,
+      "interval": [
+        0.05,
+        100.0
+      ]
+    },
+    {
+      "name": "state_layout_rotate_ops",
+      "block": 128,
+      "level_in": 0,
+      "reduce": {
+        "level_out": 0,
+        "max_abs_err": 1.8225040303576634e-06
+      },
+      "broadcast": {
+        "level_out": 0,
+        "max_abs_err": 3.6407389849557603e-06
+      },
+      "stride_replication": {
+        "level_out": 0,
+        "max_abs_err": 5.9599718231773124e-06
+      },
+      "seconds": 4.209
+    }
+  ],
+  "torture": {
+    "label": "pinned scale-40 context",
+    "input_interval": [
+      -3.0,
+      3.0
+    ],
+    "glue": {
+      "a": -2.0,
+      "scale": 90.0,
+      "shift": 5.0
+    },
+    "stages": [
+      {
+        "name": "silu_deg96",
+        "level": 7,
+        "max_abs_err_ckks_vs_plain64": 9.031939258719035e-07,
+        "seconds": 8.234
+      },
+      {
+        "name": "sqrt_softplus_sq_deg64",
+        "level": 16,
+        "max_abs_err_ckks_vs_plain64": 6.931441738355915e-07,
+        "seconds": 10.289
+      },
+      {
+        "name": "squared_exp_deg24_sq3",
+        "level": 25,
+        "max_abs_err_ckks_vs_plain64": 2.69020974552614e-07,
+        "seconds": 4.405
+      },
+      {
+        "name": "poly_newton_invsqrt_deg47_it4",
+        "level": 36,
+        "max_abs_err_ckks_vs_plain64": NaN,
+        "seconds": 6.279
+      }
+    ],
+    "bootstrap": {
+      "performed": true,
+      "levels_needed_estimate": 17,
+      "level_before": 25,
+      "level_after": 21,
+      "setup_seconds": 0.444,
+      "keygen_seconds": 1.585,
+      "eval_seconds": 31.893,
+      "slots": 8192,
+      "level_budget": [
+        4,
+        4
+      ],
+      "correction_factor": 20,
+      "max_abs_err_after_bootstrap": 0.3477047212378737,
+      "decode_failed": false
+    },
+    "final_level": 36,
+    "final_max_abs_err_ckks_vs_plain64": NaN,
+    "final_max_abs_err_vs_exact_chain": NaN
+  },
+  "torture_fallback_scale59": {
+    "label": "sibling scale-59 context",
+    "input_interval": [
+      -3.0,
+      3.0
+    ],
+    "glue": {
+      "a": -2.0,
+      "scale": 90.0,
+      "shift": 5.0
+    },
+    "stages": [
+      {
+        "name": "silu_deg96",
+        "level": 7,
+        "max_abs_err_ckks_vs_plain64": 1.436295526957565e-12,
+        "seconds": 9.428
+      },
+      {
+        "name": "sqrt_softplus_sq_deg64",
+        "level": 16,
+        "max_abs_err_ckks_vs_plain64": 1.049160758270773e-12,
+        "seconds": 10.622
+      },
+      {
+        "name": "squared_exp_deg24_sq3",
+        "level": 25,
+        "max_abs_err_ckks_vs_plain64": 5.785927292834003e-13,
+        "seconds": 4.597
+      },
+      {
+        "name": "poly_newton_invsqrt_deg47_it4",
+        "level": 36,
+        "max_abs_err_ckks_vs_plain64": 0.0003715132104766816,
+        "seconds": 5.893
+      }
+    ],
+    "bootstrap": {
+      "performed": true,
+      "levels_needed_estimate": 17,
+      "level_before": 25,
+      "level_after": 21,
+      "setup_seconds": 0.494,
+      "keygen_seconds": 2.097,
+      "eval_seconds": 32.356,
+      "slots": 8192,
+      "level_budget": [
+        4,
+        4
+      ],
+      "correction_factor": 0,
+      "max_abs_err_after_bootstrap": 0.00012061919956546374,
+      "decode_failed": false
+    },
+    "final_level": 36,
+    "final_max_abs_err_ckks_vs_plain64": 0.0003715132104766816,
+    "final_max_abs_err_vs_exact_chain": 0.000379048397490922
+  },
+  "total_seconds": 178.537,
+  "notes": [
+    "plain64 = float64 replica of the identical polynomial circuit; ckks-vs-plain64 isolates CKKS noise from fit error",
+    "FLEXIBLEAUTO reports scalar-multiply levels lazily: GetLevel() reads ~1 lower than the FIDESlib eager ledger at fold points",
+    "OpenFHE auto-aligns operand levels/scales; the kernel's align_levels multiply-by-1.0 ladder is unnecessary here",
+    "bootstrap level budget (4,4) instead of kernel default (5,4): at depth 40 the poly-Newton tail needs ~16 post-bootstrap levels",
+    "OpenFHE 64-bit EvalBootstrap requires correctionFactor >= FirstMod-scale (=20 here) or it throws 'Degree [20] must be less than or equal to the correction factor [9]'",
+    "even with correctionFactor=20 the scale-40/FirstMod-60 bootstrap output carries ~0 bits of message precision on 64-bit OpenFHE (probe: max err 3.3e-1 on 0.33-magnitude data; scale 59 gives 7.2e-5). The FIDESlib kernel bootstraps at scale 40 on GPU -- flagged as a cross-backend risk to verify against FIDESlib's own stage1_bootstrap_probe error output",
+    "sparse-packed bootstrap (slots << N/2) at tiny rings decoded to garbage in probes even at scale 59; fully packed slots = N/2 (as used here and by the kernel) is the validated path"
+  ]
+}

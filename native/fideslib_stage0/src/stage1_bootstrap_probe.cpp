@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -30,6 +31,11 @@ struct Config {
   int bsgs_dim_stc = 0;
   int iterations = 3;
   int seed = 0;
+  double input_magnitude = 0.5;
+  int encrypt_level = -1;  // -1: depth-1 (exhausted); else encrypt at this level
+  // Square the fresh ciphertext before bootstrapping so the bootstrap input is
+  // a real noiseScaleDeg-2 product (magnitude becomes input_magnitude^2).
+  bool square_input = false;
   bool skip_decrypt = false;
   std::string security = "128-classic";
   std::string secret_key_dist = "sparse-ternary";
@@ -83,6 +89,12 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.bsgs_dim_stc = parse_int(arg, value);
     } else if (arg == "--iterations") {
       config.iterations = parse_int(arg, value);
+    } else if (arg == "--input-magnitude") {
+      config.input_magnitude = std::stod(value);
+    } else if (arg == "--encrypt-level") {
+      config.encrypt_level = parse_int(arg, value);
+    } else if (arg == "--square-input") {
+      config.square_input = (std::string_view(value) != "0");
     } else if (arg == "--seed") {
       config.seed = parse_int(arg, value);
     } else if (arg == "--security") {
@@ -139,9 +151,9 @@ auto resolve_secret_key_dist(const std::string& value) -> SecretKeyDist {
   return SPARSE_TERNARY;
 }
 
-auto make_input(int slots, int seed) -> std::vector<double> {
+auto make_input(int slots, int seed, double magnitude) -> std::vector<double> {
   std::mt19937 rng(static_cast<uint32_t>(seed));
-  std::uniform_real_distribution<double> distribution(-0.5, 0.5);
+  std::uniform_real_distribution<double> distribution(-magnitude, magnitude);
   std::vector<double> values(static_cast<size_t>(slots));
   for (double& value : values) {
     value = distribution(rng);
@@ -160,7 +172,12 @@ auto mean(const std::vector<double>& values) -> double {
 auto max_abs_error(const std::vector<double>& expected, const std::vector<double>& actual) -> double {
   double error = 0.0;
   for (size_t i = 0; i < expected.size(); ++i) {
-    error = std::max(error, std::abs(expected[i] - actual[i]));
+    const double diff = std::abs(expected[i] - actual[i]);
+    if (!std::isfinite(diff)) {
+      // NaN must read as failure, not as zero: std::max(0.0, NaN) returns 0.0.
+      return std::numeric_limits<double>::infinity();
+    }
+    error = std::max(error, diff);
   }
   return error;
 }
@@ -214,6 +231,8 @@ auto build_payload(
   out << "\"security\":\"" << config.security << "\",";
   out << "\"secret_key_dist\":\"" << config.secret_key_dist << "\",";
   out << "\"iterations\":" << config.iterations << ",";
+  out << "\"input_magnitude\":" << config.input_magnitude << ",";
+  out << "\"encrypt_level\":" << config.encrypt_level << ",";
   out << "\"skip_decrypt\":" << (config.skip_decrypt ? "true" : "false");
   out << "},";
   out << "\"latencies_sec\":";
@@ -248,7 +267,7 @@ auto build_payload(
   out << "\"decrypt_checked\":" << (decrypt_checked ? "true" : "false") << ",";
   out << "\"decrypt_failure_count\":" << decrypt_failure_count << ",";
   out << "\"max_abs_error\":";
-  if (decrypt_checked && decrypt_failure_count == 0) {
+  if (decrypt_checked && decrypt_failure_count == 0 && std::isfinite(probe_max_abs_error)) {
     out << probe_max_abs_error;
   } else {
     out << "null";
@@ -342,7 +361,7 @@ auto main(int argc, char* argv[]) -> int {
     cc->LoadContext(keys.publicKey);
     const double precompute_seconds = seconds_since(precompute_start);
 
-    const auto input = make_input(config.num_slots, config.seed);
+    const auto input = make_input(config.num_slots, config.seed, config.input_magnitude);
     std::vector<double> latencies;
     std::vector<int> levels_after;
     latencies.reserve(static_cast<size_t>(config.iterations));
@@ -352,14 +371,29 @@ auto main(int argc, char* argv[]) -> int {
     int decrypt_failure_count = 0;
 
     for (int iteration = 0; iteration < config.iterations; ++iteration) {
+      const uint32_t encode_level =
+          config.encrypt_level >= 0
+              ? static_cast<uint32_t>(config.encrypt_level)
+              : static_cast<uint32_t>(config.multiplicative_depth - 1);
       Plaintext plaintext = cc->MakeCKKSPackedPlaintext(
           input,
           1,
-          static_cast<uint32_t>(config.multiplicative_depth - 1),
+          encode_level,
           nullptr,
           static_cast<uint32_t>(config.num_slots));
       plaintext->SetLength(static_cast<size_t>(config.num_slots));
       Ciphertext<DCRTPoly> ciphertext = cc->Encrypt(keys.publicKey, plaintext);
+      std::vector<double> expected = input;
+      if (config.square_input) {
+        // Real product: bootstrap input becomes noiseScaleDeg 2 with
+        // magnitude input_magnitude^2.
+        ciphertext = cc->EvalMult(ciphertext, ciphertext);
+        for (double& value : expected) {
+          value *= value;
+        }
+        std::cerr << "square-input: level=" << ciphertext->GetLevel()
+                  << " deg=" << ciphertext->GetNoiseScaleDeg() << std::endl;
+      }
       if (iteration == 0) {
         initial_levels_remaining = config.multiplicative_depth - static_cast<int>(ciphertext->GetLevel());
       }
@@ -378,7 +412,14 @@ auto main(int argc, char* argv[]) -> int {
         result->SetLength(static_cast<size_t>(config.num_slots));
         auto decoded = result->GetRealPackedValue();
         decoded.resize(static_cast<size_t>(config.num_slots));
-        probe_max_abs_error = std::max(probe_max_abs_error, max_abs_error(input, decoded));
+        const double iteration_error = max_abs_error(expected, decoded);
+        if (!std::isfinite(iteration_error)) {
+          // NaN/Inf in the decode is a failed refresh, not a zero-error one.
+          ++decrypt_failure_count;
+          std::cerr << "non-finite decode after bootstrap iteration " << iteration << std::endl;
+          continue;
+        }
+        probe_max_abs_error = std::max(probe_max_abs_error, iteration_error);
       } catch (const std::exception& exc) {
         ++decrypt_failure_count;
         std::cerr << "decrypt check failed after bootstrap iteration " << iteration << ": "

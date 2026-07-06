@@ -1,0 +1,67 @@
+{
+  "experiment": "ppl-substitution-ladder",
+  "checkpoint": "checkpoints/mamba2-130m-hf",
+  "window": 1024,
+  "max_windows": 6,
+  "cal_windows": 6,
+  "calibration_ranges": {
+    "rms_invsqrt": [
+      0.05317889153957367,
+      20551.10546875
+    ],
+    "conv_silu": [
+      -27.40122413635254,
+      37.4473991394043
+    ],
+    "dt_softplus": [
+      -14.248575210571289,
+      14.114455223083496
+    ],
+    "decay_exp": [
+      -212613.15625,
+      -4.306124345987428e-09
+    ],
+    "gate_silu": [
+      -15.8311128616333,
+      27.475149154663086
+    ],
+    "gated_rms_invsqrt": [
+      0.001145674497820437,
+      7136.46240234375
+    ]
+  },
+  "rows": [
+    {
+      "stage": "ref-exact",
+      "ppl": 24.312796323246506,
+      "nll_per_token": 3.191002809407075,
+      "tokens": 6138,
+      "windows": 6
+    },
+    {
+      "stage": "all",
+      "ppl": 24.33245565184405,
+      "nll_per_token": 3.1918110827274764,
+      "tokens": 6138,
+      "windows": 6,
+      "delta_ppl_vs_exact": 0.0196593285975446,
+      "out_of_range_rate": {
+        "rms_invsqrt": 0.0,
+        "gate_silu": 0.0,
+        "gated_rms_invsqrt": 0.0,
+        "conv_silu": 0.0,
+        "dt_softplus": 0.0,
+        "decay_exp": 0.0036640873661747684
+      },
+      "degrees": {
+        "conv_silu": 96,
+        "decay_exp": 24,
+        "dt_softplus": 24,
+        "gate_silu": 64,
+        "gated_rms_invsqrt": 31,
+        "rms_invsqrt": 47
+      },
+      "squarings": {}
+    }
+  ]
+}

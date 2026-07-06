@@ -15,3 +15,6 @@ logs/
 runs/
 slurm/*.out
 slurm/*.err
+fhemamba/results/m1_payload_l0/
+fhemamba/results/m2_chain_payload/
+fhemamba/results/tokens_*.pt

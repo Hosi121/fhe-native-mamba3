@@ -1,0 +1,1 @@
+{"ring_dim":131072,"ct_pt_mul_ms":2.1027,"ct_ct_mul_ms":15.5566,"rotation_ms":14.576,"add_ms":2.09974,"batch_size":65536,"multiplicative_depth":48,"scaling_mod_size":40,"first_mod_size":60,"iterations":200,"security":"not-set","secret_key_dist":"sparse-ternary"}

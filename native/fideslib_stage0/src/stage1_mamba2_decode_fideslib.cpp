@@ -1,0 +1,3560 @@
+// Full-width Mamba-2 decode on FIDESlib/CKKS GPU.
+//
+// M1 (--input DIR): one layer (mamba2-130m layer 0), looped over tokens.
+// M2 (--input-chain DIR): all (or --max-layers) layers chained per token with
+// the residual as a ciphertext handoff, per-layer persistent ciphertext state
+// and conv FIFO, an auto-bootstrap headroom policy
+// (--auto-bootstrap-headroom), and the final RMSNorm when the full chain is
+// loaded.
+//
+// Implements the verified per-layer circuit of fhemamba/src/fhemamba/lowering.py
+// looped over tokens with real ciphertext state carry:
+//   block RMSNorm -> in_proj BSGS -> mask splits -> conv FIFO + bias ->
+//   conv SiLU (Chebyshev) -> dt softplus^2 -> decay exp(dt*A) -> slot expands ->
+//   state update (3 head-group state ciphertexts) -> readout -> +D*x ->
+//   gate SiLU * y -> gated RMSNorm -> out_proj BSGS -> residual add.
+// State and conv FIFO stay ciphertext across tokens; there are zero
+// intermediate decrypts (per-token layer outputs are decrypted after the loop).
+//
+// Payload: fhemamba m1 export (meta.json + <name>.bin float32-LE row-major),
+// produced by fhemamba/src/fhemamba/m1_payload.py.
+//
+// Packing:
+//   packed layout: vectors in slots 0..k-1 (hidden 768; in_proj output 3352 =
+//     gate 1536 | xBC 1792 | dt 24; conv out 1792 = x 1536 | B 128 | C 128).
+//   state layout: 3 ciphertexts, one per head group g in {0,1,2} (8 heads
+//     each); slot index = n*512 + h_local*64 + p (n<128, h_local<8, p<64).
+//
+// Level ledger (validated by slot-level simulation against the real payload,
+// default poly degrees: rms 47 + 4 Newton, conv 96, gate 64, dt 64, exp 24,
+// gated const-Newton 14): the uncut circuit needs ~61 levels for token 0 from
+// fresh input and 64+tokens with state carry — which can NEVER run on
+// FIDESlib v2.1.0 (MAXP=64 tower cap: empirical max depth 50 at scale 40, 44
+// at scale 59). The kernel therefore runs at scale 59 / depth 44 with
+// MID-CIRCUIT bootstrap checkpoints (segment map in the pre-run log and JSON
+// "segment_requirements"): after in_proj (input segment 17), after conv_silu
+// (8), after dt (9), after decay (7 + per-layer squarings, up to 21), after
+// the state update (<=5), before the gated norm and out_proj (<=4), plus a
+// per-iteration Newton iterate refresh (2/iter). Bootstrap output sits at
+// GetLevel 18 (dgx-measured), leaving a 26-level segment budget; every
+// segment above fits. Warm GPU bootstrap is 12-14 ms.
+
+#include <fideslib.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <limits>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <set>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <type_traits>
+#include <vector>
+
+using namespace fideslib;
+
+namespace {
+
+constexpr double kPlaintextCoefficientFloor = 1e-8;
+constexpr double kChebCoefficientFloor = 1e-12;
+constexpr int kBabyStepIn = 64;
+constexpr int kBabyStepOut = 64;
+// dgx-measured FIDESlib v2.1.0 bootstrap output: GetLevel() == 18 after
+// EvalBootstrap at ring 131072/depth 44/scale 59 and ring 65536/depth 28/
+// scale 59 (fhemamba/results/dgx/bootstrap_probe_*.json, which report the
+// REMAINING levels: 26 and 10). At the default depth 44 that leaves a
+// 26-level segment budget between mid-circuit refresh points. The refresh
+// floor kMinBootstrapGain skips refreshes that cannot usefully lower a
+// ciphertext (bootstrap output would be at or above its current level).
+constexpr int kAssumedBootstrapOutputLevel = 18;
+constexpr int kMinBootstrapGain = 8;
+// Policy-bounded Newton segment: iterations pause for a refresh when the
+// iterate runs low, so a Newton run never consumes more than roughly
+// depth - bootstrap_output - headroom levels in one lineage; 14 is the value
+// entering the max-segment estimate (headroom 12, 2 levels per iteration).
+constexpr int kNewtonSegmentEstimate = 14;
+// Parallel miss-path encoding: uncached BSGS diagonals are encoded in look-
+// ahead batches of encode_threads * this many entries, bounding the in-flight
+// plaintext memory (8 threads * 8 entries ~= 1.4 GiB at ring 65536/d44).
+constexpr int kEncodeBatchPerThread = 8;
+// Number of diagonals compared serial-vs-parallel by the encode thread-safety
+// self test that gates --encode-threads > 1.
+constexpr int kEncodeSelfTestDiagonals = 32;
+
+struct Config {
+  std::string input;
+  std::string input_chain;
+  std::string output_json;
+  std::string artifact_version = "0.0.0+unknown";
+  std::string repo_commit = "unknown";
+  // FIDESlib v2.1.0 MAXP=64 tower cap: empirical max depth 50 at scale 40 and
+  // 44 at scale 59; EvalBootstrap is numerically dead below scale 54 (dgx
+  // findings). Defaults follow the working dgx geometry. Ring 65536 is also
+  // supported (batch halves; packing regroups to 6 state ciphertexts).
+  int ring_dim = 131072;
+  int multiplicative_depth = 44;
+  int scaling_mod_size = 59;
+  int first_mod_size = 60;
+  int tokens = 4;
+  int max_layers = 0;  // chain mode: 0 = all layers
+  int auto_bootstrap_headroom = 12;
+  // Token-invariant plaintext cache (dgx: per-token MakeCKKSPackedPlaintext
+  // re-encoding of BSGS diagonals is 89% of M1 wall time). "full" also caches
+  // the BSGS diagonal tables, "masks" only the small select/broadcast/tap/
+  // weight vectors, "off" disables; "auto" resolves to full (single layer) /
+  // masks (chain). The byte budget bounds the cache; entries are chosen
+  // greedily by per-token reuse count and everything else falls back to
+  // on-the-fly encoding.
+  std::string pt_cache = "auto";
+  double pt_cache_gib = 40.0;
+  // Expert knob: encode cached plaintexts at this consumption level using the
+  // 5-arg MakeCKKSPackedPlaintext overload (already used by the forensic
+  // path), shrinking entries by (depth+1-level)/(depth+1). Must be <= the
+  // minimum ciphertext level at every consumption site of every cached entry
+  // (the kernel does not derive this); 0 = full-level encode, always safe.
+  int pt_cache_level = 0;
+  // Worker threads for the BSGS cache-miss encode path. Per-diagonal
+  // MakeCKKSPackedPlaintext calls are independent host NTT work, but
+  // FIDESlib/OpenFHE encode thread-safety on a shared (read-only)
+  // CryptoContext is EXPECTED yet UNPROVEN: a startup self test encodes the
+  // same diagonals serially and in parallel and falls back to serial (with a
+  // logged warning) on any mismatch or exception. Default 1 keeps today's
+  // strictly serial behavior. Low-rank projection is refuted (SVD rank-256
+  // explodes PPL), so the 768-diagonal matmuls stay and the full 24-layer
+  // cache cannot fit dgx memory; this is the memory-free lever for the miss
+  // path (Grace has 20 cores).
+  int encode_threads = 1;
+  // Multi-stream slot packing (M4 throughput lever, single-layer mode only):
+  // S independent decode streams at stride batch/S in the packed layouts
+  // (hidden/proj/y all fit stride 4096 at ring 65536 with S=8). BSGS
+  // diagonals and packed masks are stride-periodic so the SAME plaintexts
+  // serve all streams; state ciphertexts replicate per stream (the conv FIFO
+  // is packed and needs no replication); stream-base shifts decompose into
+  // existing power-of-two rotations, so the rotation-key set is unchanged.
+  // v1 replicates the single payload prompt across streams: per-stream
+  // outputs must agree (identical data, circuit-independent lineages).
+  int streams = 1;
+  double tolerance = 5e-2;
+  std::set<int> bootstrap_before_token;
+  int bootstrap_level_budget_cts = 5;
+  int bootstrap_level_budget_stc = 4;
+  int bootstrap_bsgs_dim_cts = 0;
+  int bootstrap_bsgs_dim_stc = 0;
+  std::string security = "not-set";
+  std::string secret_key_dist = "sparse-ternary";
+  // Debug-only: decrypt at phase/bootstrap checkpoints and log value stats
+  // (max |value|, non-finite slot count). Voids the zero-intermediate-decrypt
+  // privacy claim; for NaN localization, never for reported runs.
+  bool debug_decrypt = false;
+  // Debug-only, cheap: decrypt just the residual at each layer boundary and
+  // compare against that layer's exact-op boundary vectors (error-vs-depth
+  // curve). 2 decrypts per layer per token; no refresh probes. Also voids the
+  // zero-intermediate-decrypt claim.
+  bool debug_layer_errors = false;
+  // Global multiplier on the per-checkpoint magnitude bounds used for the
+  // pre-bootstrap normalization (see checkpoint_bound).
+  double bootstrap_norm_margin = 1.5;
+};
+
+// Per-checkpoint message-magnitude bounds for the pre-bootstrap
+// normalization. FIDESlib EvalBootstrap refresh error grows polynomially
+// with magnitude on noiseScaleDeg-2 inputs (dgx GB10, 65536/d44/s59:
+// |m|=1 -> 2.2e-5, 4 -> 9.4e-4, 16 -> 6.0e-2, 24 -> 0.20/NaN) while deg-1
+// inputs tolerate |m|=24 at 2.4e-4. Values are raw --debug-decrypt
+// measurements (token 0, mamba2-130m layer 0) where available, otherwise
+// conservative fallbacks; the configurable margin multiplies them. The
+// rescale-to-deg-1 step in maybe_bootstrap is the primary guard, so a
+// moderate bound undershoot degrades gracefully instead of exploding.
+auto checkpoint_bound(const std::string& what) -> double {
+  static constexpr std::pair<const char*, double> kBounds[] = {
+      {"final_norm", 8.0},   // fallback (residual lineage)
+      {"residual", 8.0},     // fallback; expected outputs |m| <= ~2.4
+      {"conv_silu", 9.5},    // measured 9.20
+      {"state_post", 24.0},  // fallback; y readout of state measured 23.85
+      {"state", 24.0},       // fallback (matches state<g> pre-update)
+      {"fifo", 6.0},         // fifo holds proj-lineage cts; proj measured 5.73
+      {"proj", 6.0},         // measured 5.73
+      {"decay", 1.0},        // measured 1.00 (decay in [0, 1])
+      {"dt", 0.5},           // measured 0.103
+      {"y_out", 24.0},       // same lineage as y
+      {"y", 24.0},           // measured 23.85 (check after "decay": "y" substring)
+      {"newton", 4.0},       // fallback; rsqrt iterates (rms measured 0.13)
+  };
+  for (const auto& [key, bound] : kBounds) {
+    if (what.find(key) != std::string::npos) {
+      return bound;
+    }
+  }
+  return 24.0;
+}
+
+struct OperationCounts {
+  int rotations = 0;
+  int ct_pt_mul = 0;
+  int ct_ct_mul = 0;
+  int adds = 0;
+  int unity_level_align_muls = 0;
+  int bootstraps = 0;
+};
+
+using BabyRotationCache = std::map<int, Ciphertext<DCRTPoly>>;
+
+auto now() -> std::chrono::steady_clock::time_point { return std::chrono::steady_clock::now(); }
+
+auto seconds_since(std::chrono::steady_clock::time_point start) -> double {
+  return std::chrono::duration<double>(now() - start).count();
+}
+
+auto add_counts(OperationCounts lhs, const OperationCounts& rhs) -> OperationCounts {
+  lhs.rotations += rhs.rotations;
+  lhs.ct_pt_mul += rhs.ct_pt_mul;
+  lhs.ct_ct_mul += rhs.ct_ct_mul;
+  lhs.adds += rhs.adds;
+  lhs.unity_level_align_muls += rhs.unity_level_align_muls;
+  lhs.bootstraps += rhs.bootstraps;
+  return lhs;
+}
+
+auto subtract_counts(const OperationCounts& after, const OperationCounts& before)
+    -> OperationCounts {
+  return OperationCounts{
+      .rotations = after.rotations - before.rotations,
+      .ct_pt_mul = after.ct_pt_mul - before.ct_pt_mul,
+      .ct_ct_mul = after.ct_ct_mul - before.ct_ct_mul,
+      .adds = after.adds - before.adds,
+      .unity_level_align_muls =
+          after.unity_level_align_muls - before.unity_level_align_muls,
+      .bootstraps = after.bootstraps - before.bootstraps,
+  };
+}
+
+auto parse_int(std::string_view name, const char* value) -> int {
+  try {
+    return std::stoi(value);
+  } catch (const std::exception& exc) {
+    throw std::invalid_argument(std::string("invalid integer for ") + std::string(name) + ": " +
+                                exc.what());
+  }
+}
+
+auto parse_double_arg(std::string_view name, const char* value) -> double {
+  try {
+    return std::stod(value);
+  } catch (const std::exception& exc) {
+    throw std::invalid_argument(std::string("invalid float for ") + std::string(name) + ": " +
+                                exc.what());
+  }
+}
+
+auto parse_int_set(std::string_view name, std::string_view value) -> std::set<int> {
+  std::set<int> output;
+  std::string text(value);
+  std::stringstream stream(text);
+  std::string token;
+  while (std::getline(stream, token, ',')) {
+    if (token.empty()) {
+      continue;
+    }
+    output.insert(parse_int(name, token.c_str()));
+  }
+  return output;
+}
+
+auto parse_args(int argc, char* argv[]) -> Config {
+  Config config;
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg(argv[i]);
+    if (i + 1 >= argc) {
+      throw std::invalid_argument(std::string("missing value for ") + std::string(arg));
+    }
+    const char* value = argv[++i];
+    if (arg == "--debug-decrypt") {
+      config.debug_decrypt = (std::string_view(value) != "0");
+    } else if (arg == "--debug-layer-errors") {
+      config.debug_layer_errors = (std::string_view(value) != "0");
+    } else if (arg == "--bootstrap-norm-margin") {
+      config.bootstrap_norm_margin = parse_double_arg(arg, value);
+    } else if (arg == "--input") {
+      config.input = value;
+    } else if (arg == "--input-chain") {
+      config.input_chain = value;
+    } else if (arg == "--max-layers") {
+      config.max_layers = parse_int(arg, value);
+    } else if (arg == "--auto-bootstrap-headroom") {
+      config.auto_bootstrap_headroom = parse_int(arg, value);
+    } else if (arg == "--pt-cache") {
+      config.pt_cache = value;
+    } else if (arg == "--pt-cache-gib") {
+      config.pt_cache_gib = parse_double_arg(arg, value);
+    } else if (arg == "--pt-cache-level") {
+      config.pt_cache_level = parse_int(arg, value);
+    } else if (arg == "--encode-threads") {
+      config.encode_threads = parse_int(arg, value);
+    } else if (arg == "--streams") {
+      config.streams = parse_int(arg, value);
+    } else if (arg == "--output-json") {
+      config.output_json = value;
+    } else if (arg == "--artifact-version") {
+      config.artifact_version = value;
+    } else if (arg == "--repo-commit") {
+      config.repo_commit = value;
+    } else if (arg == "--ring-dim") {
+      config.ring_dim = parse_int(arg, value);
+    } else if (arg == "--depth" || arg == "--multiplicative-depth") {
+      config.multiplicative_depth = parse_int(arg, value);
+    } else if (arg == "--scaling-mod-size") {
+      config.scaling_mod_size = parse_int(arg, value);
+    } else if (arg == "--first-mod-size") {
+      config.first_mod_size = parse_int(arg, value);
+    } else if (arg == "--tokens") {
+      config.tokens = parse_int(arg, value);
+    } else if (arg == "--tolerance") {
+      config.tolerance = parse_double_arg(arg, value);
+    } else if (arg == "--bootstrap-before-token") {
+      config.bootstrap_before_token = parse_int_set(arg, value);
+    } else if (arg == "--bootstrap-level-budget-cts") {
+      config.bootstrap_level_budget_cts = parse_int(arg, value);
+    } else if (arg == "--bootstrap-level-budget-stc") {
+      config.bootstrap_level_budget_stc = parse_int(arg, value);
+    } else if (arg == "--bootstrap-bsgs-dim-cts") {
+      config.bootstrap_bsgs_dim_cts = parse_int(arg, value);
+    } else if (arg == "--bootstrap-bsgs-dim-stc") {
+      config.bootstrap_bsgs_dim_stc = parse_int(arg, value);
+    } else if (arg == "--security") {
+      config.security = value;
+    } else if (arg == "--secret-key-dist") {
+      config.secret_key_dist = value;
+    } else {
+      throw std::invalid_argument(std::string("unknown argument: ") + std::string(arg));
+    }
+  }
+  if (config.input.empty() == config.input_chain.empty()) {
+    throw std::invalid_argument("exactly one of --input or --input-chain is required");
+  }
+  if (config.ring_dim <= 0 || (config.ring_dim & (config.ring_dim - 1)) != 0) {
+    throw std::invalid_argument("ring-dim must be a positive power of two");
+  }
+  if (config.multiplicative_depth <= 0 || config.scaling_mod_size <= 0 ||
+      config.first_mod_size <= 0 || config.tokens <= 0 || config.tolerance <= 0.0 ||
+      config.max_layers < 0 || config.auto_bootstrap_headroom < 0 ||
+      config.bootstrap_level_budget_cts <= 0 || config.bootstrap_level_budget_stc <= 0 ||
+      config.bootstrap_bsgs_dim_cts < 0 || config.bootstrap_bsgs_dim_stc < 0) {
+    throw std::invalid_argument("invalid CKKS parameters");
+  }
+  for (const int token : config.bootstrap_before_token) {
+    if (token < 1 || token >= config.tokens) {
+      throw std::invalid_argument("bootstrap-before-token must be in [1, tokens-1]");
+    }
+  }
+  if (config.bootstrap_norm_margin <= 0.0) {
+    throw std::invalid_argument("bootstrap-norm-margin must be positive");
+  }
+  if (config.pt_cache != "auto" && config.pt_cache != "full" && config.pt_cache != "masks" &&
+      config.pt_cache != "off") {
+    throw std::invalid_argument("pt-cache must be auto, full, masks, or off");
+  }
+  if (config.pt_cache_gib < 0.0) {
+    throw std::invalid_argument("pt-cache-gib must be non-negative");
+  }
+  if (config.pt_cache_level < 0 || config.pt_cache_level >= config.multiplicative_depth) {
+    throw std::invalid_argument("pt-cache-level must be in [0, multiplicative-depth)");
+  }
+  if (config.encode_threads < 1 || config.encode_threads > 64) {
+    throw std::invalid_argument("encode-threads must be in [1, 64]");
+  }
+  if (config.streams < 1 || (config.streams & (config.streams - 1)) != 0) {
+    throw std::invalid_argument("streams must be a positive power of two");
+  }
+  if (config.streams > 1 && !config.input_chain.empty()) {
+    throw std::invalid_argument("streams > 1 requires --input (single-layer mode)");
+  }
+  if (config.security != "not-set" && config.security != "128-classic") {
+    throw std::invalid_argument("security must be not-set or 128-classic");
+  }
+  if (config.secret_key_dist != "sparse-ternary" &&
+      config.secret_key_dist != "uniform-ternary" &&
+      config.secret_key_dist != "sparse-encapsulated") {
+    throw std::invalid_argument(
+        "secret-key-dist must be sparse-ternary, uniform-ternary, or sparse-encapsulated");
+  }
+  return config;
+}
+
+auto resolve_security(const std::string& value) -> SecurityLevel {
+  if (value == "128-classic") {
+    return HEStd_128_classic;
+  }
+  return HEStd_NotSet;
+}
+
+auto resolve_secret_key_dist(const std::string& value) -> SecretKeyDist {
+  if (value == "uniform-ternary") {
+    return UNIFORM_TERNARY;
+  }
+  if (value == "sparse-encapsulated") {
+    return fideslib::SPARSE_ENCAPSULATED;
+  }
+  return SPARSE_TERNARY;
+}
+
+// ---------------------------------------------------------------------------
+// Minimal meta.json extraction (machine-generated JSON with known keys).
+// ---------------------------------------------------------------------------
+
+auto read_text_file(const std::string& path) -> std::string {
+  std::ifstream input(path);
+  if (!input) {
+    throw std::runtime_error("failed to open " + path);
+  }
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  return buffer.str();
+}
+
+auto find_key_value_pos(const std::string& text, const std::string& key, std::size_t from = 0)
+    -> std::size_t {
+  const std::string needle = "\"" + key + "\"";
+  const auto key_pos = text.find(needle, from);
+  if (key_pos == std::string::npos) {
+    return std::string::npos;
+  }
+  auto pos = key_pos + needle.size();
+  while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\n' || text[pos] == '\t' ||
+                               text[pos] == '\r')) {
+    ++pos;
+  }
+  if (pos >= text.size() || text[pos] != ':') {
+    return find_key_value_pos(text, key, key_pos + needle.size());
+  }
+  ++pos;
+  while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\n' || text[pos] == '\t' ||
+                               text[pos] == '\r')) {
+    ++pos;
+  }
+  return pos;
+}
+
+auto json_number(const std::string& text, const std::string& key) -> double {
+  const auto pos = find_key_value_pos(text, key);
+  if (pos == std::string::npos) {
+    throw std::runtime_error("meta.json key not found: " + key);
+  }
+  char* end = nullptr;
+  const double value = std::strtod(text.c_str() + pos, &end);
+  if (end == text.c_str() + pos) {
+    throw std::runtime_error("meta.json key is not a number: " + key);
+  }
+  return value;
+}
+
+auto json_number_or(const std::string& text, const std::string& key, double fallback) -> double {
+  const auto pos = find_key_value_pos(text, key);
+  if (pos == std::string::npos) {
+    return fallback;
+  }
+  char* end = nullptr;
+  const double value = std::strtod(text.c_str() + pos, &end);
+  if (end == text.c_str() + pos) {
+    return fallback;
+  }
+  return value;
+}
+
+auto json_string(const std::string& text, const std::string& key) -> std::string {
+  const auto pos = find_key_value_pos(text, key);
+  if (pos == std::string::npos || pos >= text.size() || text[pos] != '"') {
+    throw std::runtime_error("meta.json string key not found: " + key);
+  }
+  const auto close = text.find('"', pos + 1);
+  if (close == std::string::npos) {
+    throw std::runtime_error("meta.json unterminated string for key: " + key);
+  }
+  return text.substr(pos + 1, close - pos - 1);
+}
+
+auto json_balanced(const std::string& text, const std::string& key, char open, char close)
+    -> std::string {
+  const auto pos = find_key_value_pos(text, key);
+  if (pos == std::string::npos || pos >= text.size() || text[pos] != open) {
+    throw std::runtime_error("meta.json object/array key not found: " + key);
+  }
+  int depth = 0;
+  for (std::size_t i = pos; i < text.size(); ++i) {
+    if (text[i] == open) {
+      ++depth;
+    } else if (text[i] == close) {
+      --depth;
+      if (depth == 0) {
+        return text.substr(pos, i - pos + 1);
+      }
+    }
+  }
+  throw std::runtime_error("meta.json unbalanced value for key: " + key);
+}
+
+auto json_number_list(const std::string& array_text) -> std::vector<double> {
+  std::vector<double> values;
+  const char* cursor = array_text.c_str();
+  const char* end = cursor + array_text.size();
+  while (cursor < end) {
+    const char character = *cursor;
+    if (character == '-' || (character >= '0' && character <= '9')) {
+      char* next = nullptr;
+      const double value = std::strtod(cursor, &next);
+      if (next != cursor) {
+        values.push_back(value);
+        cursor = next;
+        continue;
+      }
+    }
+    ++cursor;
+  }
+  return values;
+}
+
+struct PolySpec {
+  std::string kind;
+  std::vector<double> coeffs;
+  double lo = 0.0;
+  double hi = 0.0;
+  int squarings = 0;
+  int iterations = 0;
+  double damping = 1.0;
+  double guess = 0.0;
+};
+
+struct M1Payload {
+  int d_model = 0;
+  int d_inner = 0;
+  int num_heads = 0;
+  int head_dim = 0;
+  int state_size = 0;
+  int n_groups = 0;
+  int conv_kernel = 0;
+  int conv_dim = 0;
+  int proj_dim = 0;
+  int n_test_tokens = 0;
+  double eps_block = 0.0;
+  double eps_gated = 0.0;
+  std::map<std::string, PolySpec> polys;
+  std::map<std::string, std::vector<double>> tensors;
+  std::map<std::string, std::vector<int>> shapes;
+};
+
+auto read_bin_tensor(const std::string& dir, const std::string& name,
+                     const std::vector<int>& shape) -> std::vector<double> {
+  std::size_t count = 1;
+  for (const int dim : shape) {
+    count *= static_cast<std::size_t>(dim);
+  }
+  const std::string path = dir + "/" + name + ".bin";
+  std::ifstream input(path, std::ios::binary | std::ios::ate);
+  if (!input) {
+    throw std::runtime_error("failed to open " + path);
+  }
+  const auto bytes = static_cast<std::size_t>(input.tellg());
+  if (bytes != count * sizeof(float)) {
+    throw std::runtime_error("tensor size mismatch for " + name + ": expected " +
+                             std::to_string(count * sizeof(float)) + " bytes, found " +
+                             std::to_string(bytes));
+  }
+  input.seekg(0);
+  std::vector<float> raw(count);
+  input.read(reinterpret_cast<char*>(raw.data()), static_cast<std::streamsize>(bytes));
+  if (!input) {
+    throw std::runtime_error("failed to read " + path);
+  }
+  return {raw.begin(), raw.end()};
+}
+
+auto parse_poly_spec(const std::string& object_text) -> PolySpec {
+  PolySpec spec;
+  spec.kind = json_string(object_text, "kind");
+  if (find_key_value_pos(object_text, "coeffs") != std::string::npos) {
+    spec.coeffs = json_number_list(json_balanced(object_text, "coeffs", '[', ']'));
+    spec.lo = json_number(object_text, "lo");
+    spec.hi = json_number(object_text, "hi");
+  }
+  spec.squarings = static_cast<int>(json_number_or(object_text, "squarings", 0.0));
+  spec.iterations = static_cast<int>(json_number_or(object_text, "iterations", 0.0));
+  spec.damping = json_number_or(object_text, "damping", 1.0);
+  spec.guess = json_number_or(object_text, "guess", 0.0);
+  return spec;
+}
+
+auto read_m1_payload(const std::string& dir) -> M1Payload {
+  M1Payload payload;
+  const auto meta = read_text_file(dir + "/meta.json");
+  if (json_string(meta, "format") != "fhemamba-m1-v1") {
+    throw std::runtime_error("unexpected payload format (want fhemamba-m1-v1)");
+  }
+  const auto dims = json_balanced(meta, "dims", '{', '}');
+  payload.d_model = static_cast<int>(json_number(dims, "d_model"));
+  payload.d_inner = static_cast<int>(json_number(dims, "d_inner"));
+  payload.num_heads = static_cast<int>(json_number(dims, "num_heads"));
+  payload.head_dim = static_cast<int>(json_number(dims, "head_dim"));
+  payload.state_size = static_cast<int>(json_number(dims, "state_size"));
+  payload.n_groups = static_cast<int>(json_number(dims, "n_groups"));
+  payload.conv_kernel = static_cast<int>(json_number(dims, "conv_kernel"));
+  payload.conv_dim = static_cast<int>(json_number(dims, "conv_dim"));
+  const auto eps = json_balanced(meta, "eps", '{', '}');
+  payload.eps_block = json_number(eps, "block_norm");
+  payload.eps_gated = json_number(eps, "gated_norm");
+  payload.n_test_tokens = static_cast<int>(json_number(meta, "n_test_tokens"));
+
+  const auto polys = json_balanced(meta, "polys", '{', '}');
+  for (const auto* name : {"conv_silu", "gate_silu", "dt_softplus", "decay_exp",
+                           "rms_invsqrt", "gated_rms_invsqrt"}) {
+    payload.polys[name] = parse_poly_spec(json_balanced(polys, name, '{', '}'));
+  }
+
+  const auto tensors = json_balanced(meta, "tensors", '{', '}');
+  for (const auto* name : {"in_proj_w", "conv_w", "conv_b", "dt_bias", "a_log", "d_skip",
+                           "block_norm_w", "gated_norm_w", "out_proj_w", "test_layer_input",
+                           "test_layer_output"}) {
+    const auto shape_values = json_number_list(json_balanced(tensors, name, '[', ']'));
+    std::vector<int> shape;
+    shape.reserve(shape_values.size());
+    for (const double value : shape_values) {
+      shape.push_back(static_cast<int>(value));
+    }
+    payload.shapes[name] = shape;
+    payload.tensors[name] = read_bin_tensor(dir, name, shape);
+  }
+  payload.proj_dim = payload.shapes.at("in_proj_w").at(0);
+  if (payload.proj_dim != payload.d_inner + payload.conv_dim + payload.num_heads) {
+    throw std::runtime_error("in_proj packing with d_mlp != 0 is not supported");
+  }
+  if (payload.d_inner != payload.num_heads * payload.head_dim) {
+    throw std::runtime_error("d_inner must equal num_heads * head_dim");
+  }
+  if (payload.n_groups != 1) {
+    throw std::runtime_error("only n_groups == 1 payloads are supported");
+  }
+  if (payload.conv_dim != payload.d_inner + 2 * payload.state_size) {
+    throw std::runtime_error("conv_dim must equal d_inner + 2 * state_size");
+  }
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// M2 chain payload: chain.json + root tensors + layer_XX/ m1 payloads.
+// ---------------------------------------------------------------------------
+
+auto json_string_list(const std::string& array_text) -> std::vector<std::string> {
+  std::vector<std::string> values;
+  std::size_t cursor = 1;  // skip '['
+  while (cursor < array_text.size()) {
+    const auto open = array_text.find('"', cursor);
+    if (open == std::string::npos) {
+      break;
+    }
+    const auto close = array_text.find('"', open + 1);
+    if (close == std::string::npos) {
+      break;
+    }
+    values.push_back(array_text.substr(open + 1, close - open - 1));
+    cursor = close + 1;
+  }
+  return values;
+}
+
+struct ChainPayload {
+  int n_layers = 0;
+  int n_test_tokens = 0;
+  double final_norm_eps = 0.0;
+  std::vector<std::string> layer_dirs;
+  std::vector<double> final_norm_w;
+  std::vector<double> input_embeddings;  // (tokens, d_model) row-major
+  std::vector<double> expected_final;    // (tokens, d_model) row-major
+};
+
+auto read_chain_payload(const std::string& dir) -> ChainPayload {
+  ChainPayload chain;
+  const auto meta = read_text_file(dir + "/chain.json");
+  if (json_string(meta, "format") != "fhemamba-m2-chain-v1") {
+    throw std::runtime_error("unexpected chain payload format (want fhemamba-m2-chain-v1)");
+  }
+  chain.n_layers = static_cast<int>(json_number(meta, "n_layers"));
+  chain.n_test_tokens = static_cast<int>(json_number(meta, "n_test_tokens"));
+  chain.final_norm_eps = json_number(meta, "final_norm_eps");
+  chain.layer_dirs = json_string_list(json_balanced(meta, "layer_dirs", '[', ']'));
+  if (chain.n_layers <= 0 ||
+      chain.layer_dirs.size() != static_cast<std::size_t>(chain.n_layers)) {
+    throw std::runtime_error("chain.json layer_dirs does not match n_layers");
+  }
+  const auto tensors = json_balanced(meta, "tensors", '{', '}');
+  for (const auto* name : {"final_norm_w", "chain_input_embeddings", "chain_expected_final"}) {
+    const auto shape_values = json_number_list(json_balanced(tensors, name, '[', ']'));
+    std::vector<int> shape;
+    shape.reserve(shape_values.size());
+    for (const double value : shape_values) {
+      shape.push_back(static_cast<int>(value));
+    }
+    auto values = read_bin_tensor(dir, name, shape);
+    if (std::string_view(name) == "final_norm_w") {
+      chain.final_norm_w = std::move(values);
+    } else if (std::string_view(name) == "chain_input_embeddings") {
+      chain.input_embeddings = std::move(values);
+    } else {
+      chain.expected_final = std::move(values);
+    }
+  }
+  return chain;
+}
+
+void require_same_layer_dims(const M1Payload& expected, const M1Payload& actual,
+                             std::size_t index) {
+  if (expected.d_model == actual.d_model && expected.d_inner == actual.d_inner &&
+      expected.num_heads == actual.num_heads && expected.head_dim == actual.head_dim &&
+      expected.state_size == actual.state_size && expected.n_groups == actual.n_groups &&
+      expected.conv_kernel == actual.conv_kernel && expected.conv_dim == actual.conv_dim &&
+      expected.proj_dim == actual.proj_dim) {
+    return;
+  }
+  throw std::runtime_error("chain layer payload dims mismatch at index " +
+                           std::to_string(index));
+}
+
+// Per-layer host-side plaintext constants (folded weights, masks, poly
+// affines); built once per layer, reused every token.
+struct LayerPlan {
+  double eps_block = 0.0;
+  double eps_gated = 0.0;
+  double b_gate = 0.0;
+  double b_exp = 0.0;
+  double b_rms = 0.0;
+  double a_rms_v = 0.0;
+  double gated_guess_v = 0.0;
+  int rms_iterations = 0;
+  int gated_iterations = 0;
+  int exp_squarings = 0;
+  std::vector<double> rms_coeffs;
+  std::vector<double> conv_coeffs;
+  std::vector<double> gate_coeffs;
+  std::vector<double> dt_coeffs;
+  std::vector<double> exp_coeffs;
+  std::vector<double> in_w_folded;
+  std::vector<double> out_w_folded;
+  std::vector<std::vector<double>> conv_tap_masks;
+  std::vector<double> conv_const;
+  std::vector<double> gate_mask;
+  std::vector<double> dt_mask;
+  std::vector<double> dt_const;
+  std::vector<double> a_vec;
+  std::vector<double> d_vec;
+  std::vector<double> test_layer_output;  // (tokens, d_model) row-major
+  // Mid-circuit bootstrap checkpoint requirements: levels the named value
+  // still consumes before its lineage reaches the next checkpoint.
+  int req_residual = 0;    // layer input -> proj
+  int req_proj = 0;        // proj -> conv/gate/dt polynomial outputs
+  int req_fifo = 0;        // FIFO entry -> conv_silu output
+  int req_conv = 0;        // conv_silu output -> expands/update/readout
+  int req_dt = 0;          // dt -> decay polynomial (+ squarings)
+  int req_decay = 0;       // decay -> expand + state multiply
+  int req_state_pre = 0;   // carried state -> update + readout tail
+  int req_state_tail = 0;  // updated state -> readout -> y
+  int req_y = 0;           // y -> variance + out_proj entry
+  int req_out = 0;         // y at out_proj -> final multiply + residual add
+  // Plaintext-cache wiring: key prefix ("L00." ...) for this layer's
+  // token-invariant vectors, and encode-once BSGS diagonal tables (null when
+  // the cache mode excludes them).
+  std::string cache_prefix;
+  const std::vector<Plaintext>* in_proj_table = nullptr;
+  const std::vector<Plaintext>* out_proj_table = nullptr;
+};
+
+// Per-layer persistent ciphertext state carried across tokens.
+struct LayerRuntime {
+  std::vector<Ciphertext<DCRTPoly>> state_cts;
+  bool has_state = false;
+  std::vector<Ciphertext<DCRTPoly>> conv_fifo;
+};
+
+// ---------------------------------------------------------------------------
+// Rotation-index generators. Every rotation used anywhere is produced here and
+// EvalRotateKeyGen'ed once up front.
+// ---------------------------------------------------------------------------
+
+auto python_mod(int value, int modulus) -> int {
+  const int result = value % modulus;
+  return result < 0 ? result + modulus : result;
+}
+
+auto slot_bsgs_giant_with_zero(int input_dim, int output_dim, int baby_step) -> std::vector<int> {
+  std::set<int> values;
+  const int min_offset = -(output_dim - 1);
+  const int max_offset = input_dim - 1;
+  for (int offset = min_offset; offset <= max_offset; ++offset) {
+    values.insert(offset - python_mod(offset, baby_step));
+  }
+  return {values.begin(), values.end()};
+}
+
+auto slot_bsgs_rotations(int input_dim, int output_dim, int baby_step) -> std::vector<int32_t> {
+  std::set<int32_t> rotations;
+  for (int baby = 1; baby < baby_step; ++baby) {
+    rotations.insert(static_cast<int32_t>(baby));
+  }
+  for (const int giant : slot_bsgs_giant_with_zero(input_dim, output_dim, baby_step)) {
+    if (giant != 0) {
+      rotations.insert(static_cast<int32_t>(giant));
+    }
+  }
+  return {rotations.begin(), rotations.end()};
+}
+
+struct PackingDims {
+  int batch = 0;
+  int group_count = 0;   // number of state ciphertexts (3)
+  int group_heads = 0;   // heads per state ciphertext (8)
+  int group_block = 0;   // group_heads * head_dim (512)
+  int xbc0 = 0;          // start of xBC inside proj layout (d_inner)
+  int dt0 = 0;           // start of dt inside proj layout (d_inner + conv_dim)
+  int b_base = 0;        // start of B inside packed conv layout (d_inner)
+  int c_base = 0;        // start of C inside packed conv layout (d_inner + state)
+};
+
+auto derive_packing(const M1Payload& payload, int batch) -> PackingDims {
+  PackingDims dims;
+  dims.batch = batch;
+  const int per_head = payload.head_dim * payload.state_size;
+  if (per_head <= 0 || batch % per_head != 0) {
+    throw std::runtime_error("batch is not a multiple of head_dim * state_size");
+  }
+  dims.group_heads = batch / per_head;
+  if (dims.group_heads <= 0 || payload.num_heads % dims.group_heads != 0) {
+    throw std::runtime_error("num_heads is not divisible by heads-per-group");
+  }
+  dims.group_count = payload.num_heads / dims.group_heads;
+  dims.group_block = dims.group_heads * payload.head_dim;
+  dims.xbc0 = payload.d_inner;
+  dims.dt0 = payload.d_inner + payload.conv_dim;
+  dims.b_base = payload.d_inner;
+  dims.c_base = payload.d_inner + payload.state_size;
+  auto power_of_two = [](int value) { return value > 0 && (value & (value - 1)) == 0; };
+  if (!power_of_two(payload.state_size) || !power_of_two(payload.head_dim) ||
+      !power_of_two(dims.group_block) || !power_of_two(batch)) {
+    throw std::runtime_error("state_size/head_dim/group_block/batch must be powers of two");
+  }
+  return dims;
+}
+
+auto int_log2(int value) -> int {
+  int log = 0;
+  while ((1 << log) < value) {
+    ++log;
+  }
+  return log;
+}
+
+auto required_rotations(const M1Payload& payload, const PackingDims& dims)
+    -> std::vector<int32_t> {
+  std::set<int32_t> rotations;
+  auto insert_all = [&](const std::vector<int32_t>& values) {
+    rotations.insert(values.begin(), values.end());
+  };
+  // in_proj / out_proj BSGS (rectangular pre-mask scheme, reused as-is).
+  insert_all(slot_bsgs_rotations(payload.d_model, payload.proj_dim, kBabyStepIn));
+  insert_all(slot_bsgs_rotations(payload.d_inner, payload.d_model, kBabyStepOut));
+  // Full-batch rotate-sum for the two RMS variances (broadcast total to all slots).
+  for (int k = 0; k < int_log2(dims.batch); ++k) {
+    rotations.insert(static_cast<int32_t>(1 << k));
+  }
+  // Rotate-add doubling fills: within a 512 block (B/C), across p (dt/decay,
+  // subset), across n (x/dt/decay expands).
+  for (int k = 0; k < int_log2(dims.group_block); ++k) {
+    rotations.insert(static_cast<int32_t>(-(1 << k)));
+  }
+  for (int k = 0; k < int_log2(payload.state_size); ++k) {
+    rotations.insert(static_cast<int32_t>(-(dims.group_block << k)));
+  }
+  // conv output shift from proj coordinates into the packed layout.
+  rotations.insert(static_cast<int32_t>(dims.xbc0));
+  // x expand: bring group block to slot 0.
+  for (int g = 1; g < dims.group_count; ++g) {
+    rotations.insert(static_cast<int32_t>(dims.group_block * g));
+  }
+  // Readout rotate-sum and group placement.
+  for (int k = 0; k < int_log2(payload.state_size); ++k) {
+    rotations.insert(static_cast<int32_t>(dims.group_block << k));
+  }
+  for (int g = 1; g < dims.group_count; ++g) {
+    rotations.insert(static_cast<int32_t>(-dims.group_block * g));
+  }
+  // B/C placement, slot (base + n) -> slot group_block*n, n = group_heads*a + b:
+  // rotation = base - (group_block-1)*n = baby(base, b) + giant(a) with
+  //   baby = base - (group_block-1)*b, giant = -group_heads*(group_block-1)*a.
+  const int stride = dims.group_block - 1;  // 511
+  const int giant_stride = dims.group_heads * stride;  // 4088
+  for (const int base : {dims.b_base, dims.c_base}) {
+    for (int b = 0; b < dims.group_heads; ++b) {
+      const int baby = base - stride * b;
+      if (baby != 0) {
+        rotations.insert(static_cast<int32_t>(baby));
+      }
+    }
+  }
+  for (int a = 1; a < payload.state_size / dims.group_heads; ++a) {
+    rotations.insert(static_cast<int32_t>(-giant_stride * a));
+  }
+  // dt/decay head placement: rotate whole dt block of group g to slot 0, then
+  // move head h_local from slot h_local to slot h_local*head_dim.
+  for (int g = 0; g < dims.group_count; ++g) {
+    rotations.insert(static_cast<int32_t>(dims.dt0 + dims.group_heads * g));
+  }
+  for (int h = 1; h < dims.group_heads; ++h) {
+    rotations.insert(static_cast<int32_t>(-(payload.head_dim - 1) * h));
+  }
+  rotations.erase(0);
+  return {rotations.begin(), rotations.end()};
+}
+
+// ---------------------------------------------------------------------------
+// BSGS ct-pt matmul machinery (copied from stage1_rank_gate_fideslib.cpp).
+// ---------------------------------------------------------------------------
+
+// stride == batch_size reproduces the single-stream mask exactly. For
+// multi-stream packing the diagonal placement is computed modulo the stream
+// stride and tiled across all strides: every stream's elements sit at the
+// same in-stride offsets, and the shared cyclic rotations move them
+// identically, so ONE periodic plaintext serves all streams (requires
+// output_dim <= stride, validated by the caller).
+auto slot_bsgs_pre_mask(
+    const std::vector<double>& weights,
+    int input_dim,
+    int output_dim,
+    int batch_size,
+    int stride,
+    int giant,
+    int offset) -> std::vector<double> {
+  std::vector<double> mask(static_cast<size_t>(batch_size), 0.0);
+  for (int output = 0; output < output_dim; ++output) {
+    const int input = output + offset;
+    if (input < 0 || input >= input_dim) {
+      continue;
+    }
+    const int source_slot = python_mod(output + giant, stride);
+    const double value = weights[static_cast<size_t>(output) * input_dim + input];
+    const double floored = std::abs(value) < kPlaintextCoefficientFloor ? 0.0 : value;
+    for (int copy = source_slot; copy < batch_size; copy += stride) {
+      mask[static_cast<size_t>(copy)] = floored;
+    }
+  }
+  return mask;
+}
+
+auto slot_bsgs_precompute_baby_rotations(
+    const CryptoContext<DCRTPoly>& cc,
+    const Ciphertext<DCRTPoly>& input_ct,
+    int baby_step,
+    int& rotations) -> BabyRotationCache {
+  BabyRotationCache baby_ct;
+  baby_ct[0] = input_ct;
+  for (int baby = 1; baby < baby_step; ++baby) {
+    baby_ct[baby] = cc->EvalRotate(input_ct, baby);
+    ++rotations;
+  }
+  return baby_ct;
+}
+
+// plain_table (optional): encode-once plaintexts for the token-invariant
+// diagonal masks, indexed giant-major/baby-minor over the same enumeration
+// (null entries fall back to on-the-fly encoding). cache_hits/cache_misses
+// are only counted when a table is supplied. encode_threads > 1 pre-encodes
+// the next uncached diagonals in look-ahead worker batches (bounded by
+// encode_threads * kEncodeBatchPerThread in-flight plaintexts); the math and
+// counters are identical to the serial path — only where and when the host
+// NTT encode happens changes. Callers must have passed the encode
+// thread-safety self test before requesting threads > 1.
+auto slot_bsgs_linear_block0_from_babies(
+    const CryptoContext<DCRTPoly>& cc,
+    const BabyRotationCache& baby_ct,
+    const std::vector<double>& weights,
+    int input_dim,
+    int output_dim,
+    int baby_step,
+    int batch_size,
+    int& rotations,
+    int& ct_pt_muls,
+    int& adds,
+    const std::vector<Plaintext>* plain_table,
+    long long* cache_hits,
+    long long* cache_misses,
+    int encode_threads,
+    int stride) -> Ciphertext<DCRTPoly> {
+  Ciphertext<DCRTPoly> accumulator;
+  bool has_accumulator = false;
+  const auto giants = slot_bsgs_giant_with_zero(input_dim, output_dim, baby_step);
+  const auto total_positions = giants.size() * static_cast<std::size_t>(baby_step);
+  auto in_persistent_table = [&](std::size_t table_index) {
+    return plain_table != nullptr && table_index < plain_table->size() &&
+           (*plain_table)[table_index];
+  };
+  // Look-ahead buffer for encode_threads > 1: a present-but-null entry marks
+  // an all-zero mask (skip), mirroring the serial path's zero test.
+  std::map<std::size_t, Plaintext> prefetched;
+  auto prefetch_from = [&](std::size_t start_position) {
+    struct PendingEncode {
+      std::size_t position = 0;
+      int giant = 0;
+      int offset = 0;
+    };
+    std::vector<PendingEncode> pending;
+    const auto batch_target =
+        static_cast<std::size_t>(encode_threads) * kEncodeBatchPerThread;
+    for (std::size_t position = start_position;
+         position < total_positions && pending.size() < batch_target; ++position) {
+      if (in_persistent_table(position) || prefetched.count(position) > 0) {
+        continue;
+      }
+      const auto giant_index = position / static_cast<std::size_t>(baby_step);
+      const int baby = static_cast<int>(position % static_cast<std::size_t>(baby_step));
+      pending.push_back(PendingEncode{position, giants[giant_index],
+                                      giants[giant_index] + baby});
+    }
+    if (pending.empty()) {
+      return;
+    }
+    std::vector<Plaintext> results(pending.size());
+    const auto worker_count = std::min<std::size_t>(
+        static_cast<std::size_t>(encode_threads), pending.size());
+    std::vector<std::exception_ptr> worker_errors(worker_count);
+    std::vector<std::thread> workers;
+    workers.reserve(worker_count);
+    for (std::size_t worker = 0; worker < worker_count; ++worker) {
+      workers.emplace_back([&, worker]() {
+        try {
+          for (std::size_t job = worker; job < pending.size(); job += worker_count) {
+            auto mask = slot_bsgs_pre_mask(weights, input_dim, output_dim, batch_size,
+                                           stride, pending[job].giant, pending[job].offset);
+            if (std::all_of(mask.begin(), mask.end(),
+                            [](double value) { return value == 0.0; })) {
+              continue;  // leave results[job] null = known-zero marker
+            }
+            auto plain = cc->MakeCKKSPackedPlaintext(mask);
+            plain->SetLength(static_cast<size_t>(batch_size));
+            results[job] = plain;
+          }
+        } catch (...) {
+          worker_errors[worker] = std::current_exception();
+        }
+      });
+    }
+    for (auto& worker : workers) {
+      worker.join();
+    }
+    for (const auto& error : worker_errors) {
+      if (error) {
+        std::rethrow_exception(error);
+      }
+    }
+    for (std::size_t job = 0; job < pending.size(); ++job) {
+      prefetched[pending[job].position] = results[job];
+    }
+  };
+  for (std::size_t giant_index = 0; giant_index < giants.size(); ++giant_index) {
+    const int giant = giants[giant_index];
+    Ciphertext<DCRTPoly> inner;
+    bool has_inner = false;
+    for (int baby = 0; baby < baby_step; ++baby) {
+      const int offset = giant + baby;
+      const auto table_index = giant_index * static_cast<std::size_t>(baby_step) +
+                               static_cast<std::size_t>(baby);
+      Plaintext plain;
+      if (in_persistent_table(table_index)) {
+        plain = (*plain_table)[table_index];
+        if (cache_hits != nullptr) {
+          ++*cache_hits;
+        }
+      } else if (encode_threads > 1) {
+        auto ready = prefetched.find(table_index);
+        if (ready == prefetched.end()) {
+          prefetch_from(table_index);
+          ready = prefetched.find(table_index);
+        }
+        if (ready == prefetched.end()) {
+          continue;  // defensive: nothing pending at or past this position
+        }
+        plain = ready->second;
+        prefetched.erase(ready);
+        if (!plain) {
+          continue;  // all-zero mask
+        }
+        if (cache_misses != nullptr) {
+          ++*cache_misses;
+        }
+      } else {
+        auto mask = slot_bsgs_pre_mask(weights, input_dim, output_dim, batch_size, stride,
+                                       giant, offset);
+        if (std::all_of(mask.begin(), mask.end(), [](double value) { return value == 0.0; })) {
+          continue;
+        }
+        plain = cc->MakeCKKSPackedPlaintext(mask);
+        plain->SetLength(static_cast<size_t>(batch_size));
+        if (cache_misses != nullptr) {
+          ++*cache_misses;
+        }
+      }
+      auto term = cc->EvalMult(baby_ct.at(baby), plain);
+      ++ct_pt_muls;
+      if (!has_inner) {
+        inner = term;
+        has_inner = true;
+      } else {
+        inner = cc->EvalAdd(inner, term);
+        ++adds;
+      }
+    }
+    if (!has_inner) {
+      continue;
+    }
+    if (giant != 0) {
+      inner = cc->EvalRotate(inner, giant);
+      ++rotations;
+    }
+    if (!has_accumulator) {
+      accumulator = inner;
+      has_accumulator = true;
+    } else {
+      accumulator = cc->EvalAdd(accumulator, inner);
+      ++adds;
+    }
+  }
+  if (!has_accumulator) {
+    throw std::runtime_error("slot BSGS produced no terms");
+  }
+  return accumulator;
+}
+
+void align_levels(
+    const CryptoContext<DCRTPoly>& cc,
+    Ciphertext<DCRTPoly>& lhs,
+    Ciphertext<DCRTPoly>& rhs,
+    int& unity_multiplies) {
+  for (int guard = 0; guard < 128 && lhs->GetLevel() < rhs->GetLevel(); ++guard) {
+    const auto before = lhs->GetLevel();
+    cc->EvalMultInPlace(lhs, 1.0);
+    ++unity_multiplies;
+    if (lhs->GetLevel() == before) {
+      break;
+    }
+  }
+  for (int guard = 0; guard < 128 && rhs->GetLevel() < lhs->GetLevel(); ++guard) {
+    const auto before = rhs->GetLevel();
+    cc->EvalMultInPlace(rhs, 1.0);
+    ++unity_multiplies;
+    if (rhs->GetLevel() == before) {
+      break;
+    }
+  }
+}
+
+auto decrypt_slots(
+    const CryptoContext<DCRTPoly>& cc,
+    const PrivateKey<DCRTPoly>& secret_key,
+    Ciphertext<DCRTPoly> ciphertext,
+    size_t length) -> std::vector<double> {
+  Plaintext plaintext;
+  cc->Decrypt(secret_key, ciphertext, &plaintext);
+  plaintext->SetLength(length);
+  auto values = plaintext->GetRealPackedValue();
+  values.resize(length);
+  return values;
+}
+
+// ---------------------------------------------------------------------------
+// Chebyshev Paterson-Stockmeyer (log-depth) with a host-side self check.
+//
+// Split at giant k (power of two >= (n+1)/2, multiple of the baby size m):
+//   p = A'(u) + T_k(u) * Btil(u)
+//   Btil_j = 2*c_{k+j} (j>=1), Btil_0 = c_k
+//   A'_i   = c_i (i<k), then A'_{2k-i} -= c_i for i in (k, n]
+// Both children have degree <= k-1, so the recursion halves. Baby T_0..T_{m-1}
+// and giant T_{m*2^j} ciphertexts are produced with the double-angle rules
+// T_{2i} = 2*T_i^2 - 1 and T_{2i+1} = 2*T_{i+1}*T_i - T_1.
+// ---------------------------------------------------------------------------
+
+auto ceil_log2(int value) -> int {
+  int log = 0;
+  while ((1 << log) < value) {
+    ++log;
+  }
+  return log;
+}
+
+auto cheb_baby_size(int degree) -> int {
+  const int levels = std::max(1, ceil_log2(degree + 1));
+  return 1 << ((levels + 1) / 2);
+}
+
+auto cheb_clenshaw_host(const std::vector<double>& coeffs, double t) -> double {
+  double b1 = 0.0;
+  double b2 = 0.0;
+  for (std::size_t index = coeffs.size(); index-- > 1;) {
+    const double next = 2.0 * t * b1 - b2 + coeffs[index];
+    b2 = b1;
+    b1 = next;
+  }
+  return t * b1 - b2 + coeffs[0];
+}
+
+auto cheb_ps_host(const std::vector<double>& coeffs, double u, int m) -> double {
+  std::vector<double> t_values(std::max<std::size_t>(coeffs.size() + 1, 2), 0.0);
+  t_values[0] = 1.0;
+  t_values[1] = u;
+  for (std::size_t i = 2; i < t_values.size(); ++i) {
+    t_values[i] = 2.0 * u * t_values[i - 1] - t_values[i - 2];
+  }
+  std::function<double(std::vector<double>)> rec = [&](std::vector<double> c) -> double {
+    const int n = static_cast<int>(c.size()) - 1;
+    if (n < m) {
+      double sum = 0.0;
+      for (int i = 0; i <= n; ++i) {
+        sum += c[static_cast<std::size_t>(i)] * t_values[static_cast<std::size_t>(i)];
+      }
+      return sum;
+    }
+    int k = m;
+    while (2 * k - 1 < n) {
+      k *= 2;
+    }
+    std::vector<double> btil(static_cast<std::size_t>(n - k + 1), 0.0);
+    for (int j = 0; j <= n - k; ++j) {
+      btil[static_cast<std::size_t>(j)] = 2.0 * c[static_cast<std::size_t>(k + j)];
+    }
+    btil[0] = c[static_cast<std::size_t>(k)];
+    std::vector<double> aprime(c.begin(), c.begin() + k);
+    for (int i = k + 1; i <= n; ++i) {
+      aprime[static_cast<std::size_t>(2 * k - i)] -= c[static_cast<std::size_t>(i)];
+    }
+    return rec(aprime) + t_values[static_cast<std::size_t>(k)] * rec(btil);
+  };
+  return rec(coeffs);
+}
+
+void verify_cheb_ps_host(const std::string& name, const std::vector<double>& coeffs) {
+  const int m = cheb_baby_size(static_cast<int>(coeffs.size()) - 1);
+  double max_error = 0.0;
+  for (int sample = 0; sample <= 400; ++sample) {
+    const double u = -1.0 + 2.0 * sample / 400.0;
+    const double reference = cheb_clenshaw_host(coeffs, u);
+    const double value = cheb_ps_host(coeffs, u, m);
+    max_error = std::max(max_error, std::abs(reference - value));
+  }
+  if (max_error > 1e-6) {
+    throw std::runtime_error("Chebyshev PS self-check failed for " + name + ": max error " +
+                             std::to_string(max_error));
+  }
+}
+
+// Level ledger of the PS recursion (levels above the level of u), used only
+// for the pre-run depth estimate.
+auto cheb_ps_depth(int degree) -> int {
+  const int m = cheb_baby_size(degree);
+  std::map<int, int> t_level;
+  std::function<int(int)> level_of = [&](int i) -> int {
+    if (i <= 1) {
+      return 0;
+    }
+    auto found = t_level.find(i);
+    if (found != t_level.end()) {
+      return found->second;
+    }
+    int level = 0;
+    if (i % 2 == 0) {
+      level = level_of(i / 2) + 1;
+    } else {
+      level = std::max(level_of((i + 1) / 2), level_of(i / 2)) + 1;
+    }
+    t_level[i] = level;
+    return level;
+  };
+  std::function<int(int)> rec = [&](int n) -> int {
+    if (n == 0) {
+      return 0;  // constant term: fresh low-level ciphertext, aligned upward
+    }
+    if (n < m) {
+      int deepest = 0;
+      for (int i = 1; i <= n; ++i) {
+        deepest = std::max(deepest, level_of(i));
+      }
+      return deepest + 1;  // scalar coefficient multiply
+    }
+    int k = m;
+    while (2 * k - 1 < n) {
+      k *= 2;
+    }
+    const int giant_term = std::max(level_of(k), rec(n - k)) + 1;
+    return std::max(rec(k - 1), giant_term);
+  };
+  return rec(degree);
+}
+
+// ---------------------------------------------------------------------------
+// Process telemetry + JSON writers (conventions of the rank/gate kernel).
+// ---------------------------------------------------------------------------
+
+auto read_status_kib(const std::string& key) -> long long {
+  std::ifstream status("/proc/self/status");
+  std::string line;
+  while (std::getline(status, line)) {
+    if (line.rfind(key + ":", 0) != 0) {
+      continue;
+    }
+    std::stringstream stream(line.substr(key.size() + 1));
+    long long value = 0;
+    std::string unit;
+    stream >> value >> unit;
+    return value;
+  }
+  return 0;
+}
+
+auto rss_gib() -> double { return static_cast<double>(read_status_kib("VmRSS")) / (1024.0 * 1024.0); }
+
+auto peak_rss_gib() -> double {
+  return static_cast<double>(read_status_kib("VmHWM")) / (1024.0 * 1024.0);
+}
+
+void log_phase(const std::string& message) {
+  std::cerr << "[stage1_mamba2_decode_fideslib] " << message << " rss_gib=" << rss_gib()
+            << " peak_rss_gib=" << peak_rss_gib() << std::endl;
+}
+
+void write_payload(const std::string& output_json, const std::string& payload) {
+  if (output_json.empty()) {
+    std::cout << payload << std::endl;
+    return;
+  }
+  std::ofstream output(output_json);
+  if (!output) {
+    throw std::runtime_error("failed to open output-json path");
+  }
+  output << payload << std::endl;
+}
+
+auto payload_file_exists(const std::string& output_json) -> bool {
+  if (output_json.empty()) {
+    return false;
+  }
+  std::ifstream input(output_json, std::ios::ate);
+  return input && input.tellg() > 0;
+}
+
+auto json_escape(std::string_view value) -> std::string {
+  std::string output;
+  output.reserve(value.size());
+  for (const char character : value) {
+    switch (character) {
+      case '\\':
+        output += "\\\\";
+        break;
+      case '"':
+        output += "\\\"";
+        break;
+      case '\n':
+        output += "\\n";
+        break;
+      case '\r':
+        output += "\\r";
+        break;
+      case '\t':
+        output += "\\t";
+        break;
+      default:
+        output.push_back(character);
+        break;
+    }
+  }
+  return output;
+}
+
+void write_int_set_json(std::ostringstream& out, const std::set<int>& values) {
+  out << "[";
+  bool first = true;
+  for (const int value : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    out << value;
+  }
+  out << "]";
+}
+
+void write_double_vector_json(std::ostringstream& out, const std::vector<double>& values) {
+  out << "[";
+  bool first = true;
+  for (const double value : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    if (std::isfinite(value)) {
+      out << value;
+    } else {
+      // Bare nan/inf tokens are invalid JSON; keep the evidence as a string.
+      out << "\"" << (std::isnan(value) ? "NaN" : (value > 0 ? "Inf" : "-Inf")) << "\"";
+    }
+  }
+  out << "]";
+}
+
+void write_int_vector_json(std::ostringstream& out, const std::vector<int>& values) {
+  out << "[";
+  bool first = true;
+  for (const int value : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    out << value;
+  }
+  out << "]";
+}
+
+void write_double_map_json(
+    std::ostringstream& out,
+    const std::map<std::string, double>& values) {
+  out << "{";
+  bool first = true;
+  for (const auto& [name, value] : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    out << "\"" << json_escape(name) << "\":" << value;
+  }
+  out << "}";
+}
+
+void write_int_map_json(
+    std::ostringstream& out,
+    const std::map<std::string, int>& values) {
+  out << "{";
+  bool first = true;
+  for (const auto& [name, value] : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    out << "\"" << json_escape(name) << "\":" << value;
+  }
+  out << "}";
+}
+
+void write_operation_counts_json(std::ostringstream& out, const OperationCounts& counts) {
+  out << "{";
+  out << "\"rotations\":" << counts.rotations << ",";
+  out << "\"ct_pt_mul\":" << counts.ct_pt_mul << ",";
+  out << "\"ct_ct_mul\":" << counts.ct_ct_mul << ",";
+  out << "\"adds\":" << counts.adds << ",";
+  out << "\"unity_level_align_muls\":" << counts.unity_level_align_muls << ",";
+  out << "\"bootstraps\":" << counts.bootstraps;
+  out << "}";
+}
+
+void write_phase_operation_counts_json(
+    std::ostringstream& out,
+    const std::map<std::string, OperationCounts>& values) {
+  out << "{";
+  bool first = true;
+  for (const auto& [name, counts] : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    out << "\"" << json_escape(name) << "\":";
+    write_operation_counts_json(out, counts);
+  }
+  out << "}";
+}
+
+void write_artifact_prefix(std::ostringstream& out, const Config& args) {
+  out << "\"version\":\"" << json_escape(args.artifact_version) << "\",";
+  out << "\"repo_commit\":\"" << json_escape(args.repo_commit) << "\",";
+  out << "\"stage\":\"stage1-mamba2-decode-fideslib\",";
+  out << "\"backend\":\"fideslib-gpu\",";
+  out << "\"encrypted\":true,";
+  out << "\"config\":{\"input_mode\":\"fhemamba-m1-payload\"},";
+}
+
+void write_runtime_failure_payload(
+    const Config& args,
+    std::string_view phase,
+    std::string_view message) {
+  if (args.output_json.empty()) {
+    return;
+  }
+  std::ostringstream out;
+  out << "{";
+  write_artifact_prefix(out, args);
+  out << "\"status\":\"failed\",";
+  out << "\"passed\":false,";
+  out << "\"failure_phase\":\"" << json_escape(phase) << "\",";
+  out << "\"error_message\":\"" << json_escape(message) << "\",";
+  out << "\"parameters\":{";
+  out << "\"ring_dimension\":" << args.ring_dim << ",";
+  out << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
+  out << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
+  out << "\"tokens\":" << args.tokens << ",";
+  out << "\"bootstrap_before_token\":";
+  write_int_set_json(out, args.bootstrap_before_token);
+  out << "},";
+  out << "\"measurement_scope\":{";
+  out << "\"non_success_probe\":true,";
+  out << "\"full_model_correctness_claimed\":false,";
+  out << "\"claim\":\"Native FIDESlib Mamba-2 decode kernel failed before final decrypt; "
+         "this artifact preserves the failure phase for collection.\"";
+  out << "}";
+  out << "}";
+  write_payload(args.output_json, out.str());
+}
+
+// Per-token depth estimate from the poly degrees (mirrors the ciphertext
+// program's level arithmetic; validated against a slot-level simulation).
+struct DepthEstimate {
+  std::vector<int> token_output_levels;
+  int required_depth = 0;
+  int proj_level = 0;    // fresh-input level of the in_proj output
+  int update_level = 0;  // fresh-input level of the token-0 state update
+  // Segment requirements for the mid-circuit bootstrap checkpoints (same
+  // formulas as LayerPlan; used for the pre-run geometry warning).
+  int req_residual = 0;
+  int req_proj = 0;
+  int req_fifo = 0;
+  int req_conv = 0;
+  int req_dt = 0;
+  int req_decay = 0;
+  int req_state_pre = 0;
+  int req_state_tail = 0;
+  int req_y = 0;
+  int req_out = 0;
+  int max_segment = 0;
+};
+
+auto estimate_levels(
+    const M1Payload& payload,
+    int tokens,
+    const std::set<int>& bootstrap_before_token,
+    int streams) -> DepthEstimate {
+  // streams > 1 costs one extra level in each RMS variance reduction (the
+  // stream-base mask before the in-stride broadcast).
+  const int norm_extra = streams > 1 ? 1 : 0;
+  const auto& rms = payload.polys.at("rms_invsqrt");
+  const auto& gated = payload.polys.at("gated_rms_invsqrt");
+  const int rms_depth = cheb_ps_depth(static_cast<int>(rms.coeffs.size()) - 1);
+  const int conv_depth = cheb_ps_depth(
+      static_cast<int>(payload.polys.at("conv_silu").coeffs.size()) - 1);
+  const int gate_depth = cheb_ps_depth(
+      static_cast<int>(payload.polys.at("gate_silu").coeffs.size()) - 1);
+  const int dt_depth = cheb_ps_depth(
+      static_cast<int>(payload.polys.at("dt_softplus").coeffs.size()) - 1);
+  const auto& exp_spec = payload.polys.at("decay_exp");
+  const int exp_depth = cheb_ps_depth(static_cast<int>(exp_spec.coeffs.size()) - 1);
+
+  const int inv1 = 2 + norm_extra + rms_depth + 2 * rms.iterations;
+  const int proj = std::max(inv1, 1) + 1;
+  const int xconv = proj + 1 + conv_depth;
+  const int gate_lvl = proj + 1 + gate_depth;
+  const int dt_lvl = proj + 1 + dt_depth + 1;
+  const int decay_lvl = dt_lvl + 1 + exp_depth + exp_spec.squarings;
+  const int x_exp = xconv + 1;
+  const int bc_exp = xconv + 1;
+  const int dt_exp = dt_lvl + 1;
+  const int decay_exp_lvl = decay_lvl + 1;
+  const int dtx = std::max(x_exp, dt_exp) + 1;
+  const int update = std::max(dtx, bc_exp) + 1;
+
+  DepthEstimate estimate;
+  estimate.proj_level = proj;
+  estimate.update_level = update;
+  estimate.req_residual = proj + 1;
+  estimate.req_proj =
+      1 + std::max(conv_depth, std::max(gate_depth + 2, dt_depth + 1));
+  estimate.req_fifo = 2 + conv_depth;
+  estimate.req_conv = 6;
+  estimate.req_dt = 2 + exp_depth + exp_spec.squarings;
+  estimate.req_decay = 3;
+  estimate.req_state_pre = 5;
+  estimate.req_state_tail = 4;
+  estimate.req_y = 4 + norm_extra;
+  estimate.req_out = 2;
+  estimate.max_segment = std::max(
+      {estimate.req_residual, estimate.req_proj, estimate.req_fifo, estimate.req_conv,
+       estimate.req_dt, estimate.req_decay, estimate.req_state_pre,
+       estimate.req_state_tail, estimate.req_y, kNewtonSegmentEstimate});
+  int state = 0;
+  bool has_state = false;
+  for (int token = 0; token < tokens; ++token) {
+    if (has_state && bootstrap_before_token.count(token) > 0) {
+      state = std::min(state, kAssumedBootstrapOutputLevel);
+    }
+    state = has_state ? std::max(decay_exp_lvl, state) + 1 : update;
+    has_state = true;
+    const int readout = std::max(state, bc_exp) + 2;  // *C then packed mask
+    const int y = std::max(readout, gate_lvl) + 1;
+    const int variance = y + 1 + norm_extra;
+    const int inv2 = variance + 1 + 2 * (gated.iterations - 1);
+    const int out = std::max(y + 1, inv2) + 1;
+    estimate.token_output_levels.push_back(out);
+    estimate.required_depth = std::max(estimate.required_depth, out);
+  }
+  return estimate;
+}
+
+}  // namespace
+
+auto main(int argc, char* argv[]) -> int {
+  Config args;
+  bool args_available = false;
+  try {
+    args = parse_args(argc, argv);
+    args_available = true;
+
+    const bool chain_mode = !args.input_chain.empty();
+    ChainPayload chain;
+    std::vector<M1Payload> layer_payloads;
+    if (chain_mode) {
+      chain = read_chain_payload(args.input_chain);
+      const int layers_to_load =
+          args.max_layers > 0 ? std::min(args.max_layers, chain.n_layers) : chain.n_layers;
+      layer_payloads.reserve(static_cast<std::size_t>(layers_to_load));
+      for (int layer = 0; layer < layers_to_load; ++layer) {
+        layer_payloads.push_back(read_m1_payload(
+            args.input_chain + "/" + chain.layer_dirs[static_cast<std::size_t>(layer)]));
+      }
+      if (args.tokens > chain.n_test_tokens) {
+        throw std::runtime_error("--tokens exceeds n_test_tokens in the chain payload");
+      }
+    } else {
+      layer_payloads.push_back(read_m1_payload(args.input));
+    }
+    const auto& dims_payload = layer_payloads.front();
+    const int layers_loaded = static_cast<int>(layer_payloads.size());
+    const bool full_chain = chain_mode && layers_loaded == chain.n_layers;
+    for (std::size_t index = 0; index < layer_payloads.size(); ++index) {
+      require_same_layer_dims(dims_payload, layer_payloads[index], index);
+      if (args.tokens > layer_payloads[index].n_test_tokens) {
+        throw std::runtime_error("--tokens exceeds n_test_tokens in layer payload " +
+                                 std::to_string(index));
+      }
+      for (const auto& [name, spec] : layer_payloads[index].polys) {
+        if (!spec.coeffs.empty()) {
+          verify_cheb_ps_host(name, spec.coeffs);
+        }
+      }
+    }
+    const int batch_size = args.ring_dim / 2;
+    const auto packing = derive_packing(dims_payload, batch_size);
+    // Multi-stream packing geometry: S streams at stride batch/S. Every
+    // packed-layout vector (hidden, proj, y) must fit inside one stride so
+    // stride-periodic plaintexts and shared rotations serve all streams.
+    const int stream_stride = batch_size / args.streams;
+    if (args.streams > 1 && stream_stride < dims_payload.proj_dim) {
+      throw std::runtime_error(
+          "streams do not fit: batch/streams must be >= proj_dim (" +
+          std::to_string(stream_stride) + " < " + std::to_string(dims_payload.proj_dim) + ")");
+    }
+    // Rotation indices depend only on dims/packing, which are asserted equal
+    // across layers, so single-layer and chain mode share one key set.
+    const auto rotation_indices = required_rotations(dims_payload, packing);
+    // Depth estimate per layer (degrees are frozen across layers, but the
+    // decay range-reduction squarings differ); merge to the worst layer for
+    // the segment map and geometry warning.
+    auto depth_estimate = estimate_levels(dims_payload, args.tokens,
+                                          args.bootstrap_before_token, args.streams);
+    for (std::size_t index = 1; index < layer_payloads.size(); ++index) {
+      const auto candidate = estimate_levels(layer_payloads[index], args.tokens,
+                                             args.bootstrap_before_token, args.streams);
+      depth_estimate.required_depth =
+          std::max(depth_estimate.required_depth, candidate.required_depth);
+      depth_estimate.req_dt = std::max(depth_estimate.req_dt, candidate.req_dt);
+      depth_estimate.max_segment =
+          std::max(depth_estimate.max_segment, candidate.max_segment);
+    }
+    const int final_norm_requirement = 12;
+    {
+      std::ostringstream estimate_text;
+      estimate_text << "no-bootstrap ledger per token output:";
+      for (const int level : depth_estimate.token_output_levels) {
+        estimate_text << " " << level;
+      }
+      estimate_text << "; segment map: residual->" << depth_estimate.req_residual
+                    << " proj->" << depth_estimate.req_proj
+                    << " fifo->" << depth_estimate.req_fifo
+                    << " conv->" << depth_estimate.req_conv
+                    << " dt->" << depth_estimate.req_dt
+                    << " decay->" << depth_estimate.req_decay
+                    << " state_pre->" << depth_estimate.req_state_pre
+                    << " state_tail->" << depth_estimate.req_state_tail
+                    << " y->" << depth_estimate.req_y
+                    << " newton->" << kNewtonSegmentEstimate
+                    << " (max segment " << depth_estimate.max_segment
+                    << " + bootstrap output " << kAssumedBootstrapOutputLevel
+                    << " vs depth " << args.multiplicative_depth << ")";
+      log_phase(estimate_text.str());
+      if (kAssumedBootstrapOutputLevel + depth_estimate.max_segment >
+          args.multiplicative_depth) {
+        log_phase("WARNING: max circuit segment does not fit between bootstrap refreshes "
+                  "at the configured depth; expect level exhaustion");
+      }
+    }
+    log_phase(
+        "payload loaded d_model=" + std::to_string(dims_payload.d_model) +
+        " proj_dim=" + std::to_string(dims_payload.proj_dim) +
+        " groups=" + std::to_string(packing.group_count) +
+        " layers=" + std::to_string(layers_loaded) +
+        (chain_mode ? "/" + std::to_string(chain.n_layers) : std::string()) +
+        " rotation_keys=" + std::to_string(rotation_indices.size()));
+
+    // -----------------------------------------------------------------------
+    // Context setup (ordering per stage1_rank_gate_fideslib.cpp).
+    // -----------------------------------------------------------------------
+    // Mid-circuit bootstrap checkpoints are mandatory under the FIDESlib
+    // MAXP=64 depth ceiling, so bootstrapping is always provisioned.
+    const bool bootstrap_available = true;
+    const auto setup_start = now();
+    log_phase("context setup begin");
+    CCParams<CryptoContextCKKSRNS> parameters;
+    parameters.SetSecretKeyDist(resolve_secret_key_dist(args.secret_key_dist));
+    parameters.SetSecurityLevel(resolve_security(args.security));
+    parameters.SetRingDim(static_cast<uint32_t>(args.ring_dim));
+    parameters.SetScalingTechnique(FLEXIBLEAUTO);
+    parameters.SetFirstModSize(static_cast<uint32_t>(args.first_mod_size));
+    parameters.SetKeySwitchTechnique(HYBRID);
+    parameters.SetMultiplicativeDepth(static_cast<uint32_t>(args.multiplicative_depth));
+    parameters.SetScalingModSize(static_cast<uint32_t>(args.scaling_mod_size));
+    parameters.SetBatchSize(static_cast<uint32_t>(batch_size));
+    parameters.SetDevices({0});
+    parameters.SetPlaintextAutoload(false);
+    parameters.SetCiphertextAutoload(true);
+    if (args.secret_key_dist == "sparse-ternary" ||
+        args.secret_key_dist == "sparse-encapsulated") {
+      parameters.SetNumLargeDigits(3);
+    }
+
+    CryptoContext<DCRTPoly> cc = GenCryptoContext(parameters);
+    cc->Enable(PKE);
+    cc->Enable(KEYSWITCH);
+    cc->Enable(LEVELEDSHE);
+    if (bootstrap_available) {
+      cc->Enable(ADVANCEDSHE);
+      cc->Enable(FHE);
+    }
+    auto keys = cc->KeyGen();
+    cc->EvalMultKeyGen(keys.secretKey);
+    log_phase("context setup done");
+    const auto keygen_start = now();
+    log_phase("rotation keygen begin count=" + std::to_string(rotation_indices.size()));
+    cc->EvalRotateKeyGen(keys.secretKey, rotation_indices);
+    const double rotate_keygen_seconds = seconds_since(keygen_start);
+    log_phase("rotation keygen done");
+    double bootstrap_precompute_seconds = 0.0;
+    if (bootstrap_available) {
+      const auto bootstrap_precompute_start = now();
+      log_phase("bootstrap setup/keygen begin");
+      const std::vector<uint32_t> level_budget = {
+          static_cast<uint32_t>(args.bootstrap_level_budget_cts),
+          static_cast<uint32_t>(args.bootstrap_level_budget_stc),
+      };
+      const std::vector<uint32_t> bsgs_dim = {
+          static_cast<uint32_t>(args.bootstrap_bsgs_dim_cts),
+          static_cast<uint32_t>(args.bootstrap_bsgs_dim_stc),
+      };
+      cc->EvalBootstrapSetup(level_budget, bsgs_dim, static_cast<uint32_t>(batch_size), 0);
+      cc->EvalBootstrapKeyGen(keys.secretKey, static_cast<uint32_t>(batch_size));
+      bootstrap_precompute_seconds = seconds_since(bootstrap_precompute_start);
+      log_phase("bootstrap setup/keygen done");
+    }
+    const auto load_start = now();
+    log_phase("load context begin");
+    cc->LoadContext(keys.publicKey);
+    const double load_context_seconds = seconds_since(load_start);
+    log_phase("load context done");
+    const double setup_seconds = seconds_since(setup_start);
+
+    // -----------------------------------------------------------------------
+    // Counters, phase timing, elementary helpers.
+    // -----------------------------------------------------------------------
+    int rotations = 0;
+    int ct_pt_muls = 0;
+    int ct_ct_muls = 0;
+    int adds = 0;
+    int unity_multiplies = 0;
+    int bootstraps = 0;
+    double bootstrap_eval_seconds = 0.0;
+    std::map<std::string, double> phase_timings;
+    std::map<std::string, OperationCounts> phase_operation_counts;
+    std::map<std::string, int> ckks_levels;
+
+    auto current_operation_counts = [&]() {
+      return OperationCounts{
+          .rotations = rotations,
+          .ct_pt_mul = ct_pt_muls,
+          .ct_ct_mul = ct_ct_muls,
+          .adds = adds,
+          .unity_level_align_muls = unity_multiplies,
+          .bootstraps = bootstraps,
+      };
+    };
+    auto record_phase = [&](
+                            const std::string& name,
+                            std::chrono::steady_clock::time_point phase_start,
+                            const OperationCounts& before) {
+      phase_timings[name] += seconds_since(phase_start);
+      phase_operation_counts[name] = add_counts(
+          phase_operation_counts[name],
+          subtract_counts(current_operation_counts(), before));
+    };
+    auto time_phase = [&](const std::string& name, auto&& work)
+        -> std::invoke_result_t<decltype(work)&> {
+      using Result = std::invoke_result_t<decltype(work)&>;
+      const auto before = current_operation_counts();
+      const auto phase_start = now();
+      if constexpr (std::is_void_v<Result>) {
+        work();
+        record_phase(name, phase_start, before);
+      } else {
+        Result result = work();
+        record_phase(name, phase_start, before);
+        return result;
+      }
+    };
+
+    auto make_plain = [&](const std::vector<double>& values) {
+      auto plain = cc->MakeCKKSPackedPlaintext(values);
+      plain->SetLength(static_cast<size_t>(batch_size));
+      return plain;
+    };
+    auto encrypt_values = [&](const std::vector<double>& values) {
+      auto plain = make_plain(values);
+      return cc->Encrypt(keys.publicKey, plain);
+    };
+    auto ones_ct = encrypt_values(std::vector<double>(static_cast<size_t>(batch_size), 1.0));
+
+    // -----------------------------------------------------------------------
+    // Token-invariant plaintext cache. dgx profiling: the per-token host NTT
+    // re-encode of token-invariant masks/diagonals (MakeCKKSPackedPlaintext,
+    // ~100 ms each on GB10) is 89% of M1 wall time; the encode-once tables
+    // remove it for cached entries. Cache stores mutable Plaintexts so the
+    // existing non-const Plaintext& call pattern is unchanged. Entries are
+    // registered with a per-token reuse count and a builder, then encoded
+    // greedily (reuse desc, registration order asc) until the byte budget is
+    // exhausted; the rest falls back to per-use encoding. Registration and
+    // encoding happen after the layer plans are built (see below).
+    // -----------------------------------------------------------------------
+    // "auto" resolves to "full" in BOTH modes: dgx chain telemetry (masks
+    // mode, hits=2588 misses=0) showed BSGS diagonals bypassing cache and
+    // pool entirely (1203->1086 s instead of ~5x). Chain mode admits hot
+    // diagonals frequency-greedy across ALL layers within the byte budget
+    // (uses are uniform, so the budget fills layer 0 upward in registration
+    // order) instead of a rolling current+next-layer window: a window only
+    // helps tokens >= 2 and swapping a layer's table in/out per token costs
+    // exactly the per-diagonal encodes the cache exists to avoid; the
+    // parallel-encode pool covers the uncached remainder either way.
+    const std::string pt_cache_mode =
+        args.pt_cache == "auto" ? std::string("full") : args.pt_cache;
+    // 1-arg MakeCKKSPackedPlaintext encodes at full level: (depth+1) towers of
+    // ring_dim 8-byte words per entry. --pt-cache-level shrinks entries via
+    // the 5-arg overload when the caller guarantees the consumption level.
+    const double pt_plain_bytes =
+        static_cast<double>(args.ring_dim) *
+        static_cast<double>(args.multiplicative_depth + 1 - args.pt_cache_level) * 8.0;
+    const auto pt_cache_capacity = static_cast<std::size_t>(
+        pt_cache_mode == "off"
+            ? 0.0
+            : args.pt_cache_gib * 1024.0 * 1024.0 * 1024.0 / std::max(1.0, pt_plain_bytes));
+    struct PlainCacheEntry {
+      int uses_per_token = 0;
+      int order = 0;
+      std::function<std::vector<double>()> build;
+      Plaintext plain;  // non-null once selected and encoded
+    };
+    std::map<std::string, PlainCacheEntry> plain_cache;
+    long long pt_cache_hits = 0;
+    long long pt_cache_misses = 0;
+    int pt_cache_order = 0;
+    auto register_plain = [&](const std::string& key, int uses_per_token,
+                              std::function<std::vector<double>()> build) {
+      if (pt_cache_mode == "off") {
+        return;
+      }
+      auto [entry, inserted] = plain_cache.try_emplace(key);
+      if (inserted) {
+        entry->second.order = pt_cache_order++;
+        entry->second.build = std::move(build);
+      }
+      entry->second.uses_per_token += uses_per_token;
+    };
+    auto encode_cache_plain = [&](const std::vector<double>& values) {
+      if (args.pt_cache_level == 0) {
+        return make_plain(values);
+      }
+      // Proven overload (used by the forensic path): scaleDeg 1 at a target
+      // level; slots passed explicitly instead of SetLength.
+      return cc->MakeCKKSPackedPlaintext(values, 1,
+                                         static_cast<uint32_t>(args.pt_cache_level), nullptr,
+                                         static_cast<uint32_t>(batch_size));
+    };
+    // Lookup for the small keyed vectors; values are only built/encoded on a
+    // miss, so caching cannot change the math, only where encoding happens.
+    auto cached_plain = [&](const std::string& key,
+                            const std::vector<double>& values) -> Plaintext {
+      auto entry = plain_cache.find(key);
+      if (entry != plain_cache.end() && entry->second.plain) {
+        ++pt_cache_hits;
+        return entry->second.plain;
+      }
+      ++pt_cache_misses;
+      return make_plain(values);
+    };
+
+    // ct * scalar via Clone + EvalMultInPlace (only API forms proven in the
+    // rank/gate kernel are used). Consumes one level.
+    auto scaled_clone = [&](const Ciphertext<DCRTPoly>& ciphertext, double scalar) {
+      auto output = ciphertext->Clone();
+      cc->EvalMultInPlace(output, scalar);
+      ++ct_pt_muls;
+      return output;
+    };
+    // Mutating aligned add: both handles may be level-boosted in place.
+    auto add_aligned = [&](Ciphertext<DCRTPoly> lhs, Ciphertext<DCRTPoly> rhs) {
+      align_levels(cc, lhs, rhs, unity_multiplies);
+      ++adds;
+      return cc->EvalAdd(lhs, rhs);
+    };
+    auto mul_aligned = [&](Ciphertext<DCRTPoly> lhs, Ciphertext<DCRTPoly> rhs) {
+      align_levels(cc, lhs, rhs, unity_multiplies);
+      ++ct_ct_muls;
+      return cc->EvalMult(lhs, rhs);
+    };
+    auto add_scalar = [&](const Ciphertext<DCRTPoly>& ciphertext, double scalar) {
+      return add_aligned(ciphertext, scaled_clone(ones_ct, scalar));
+    };
+    auto add_const_vector = [&](const Ciphertext<DCRTPoly>& ciphertext,
+                                const std::string& key, const std::vector<double>& values) {
+      auto plain = cached_plain(key, values);
+      return add_aligned(ciphertext, cc->Encrypt(keys.publicKey, plain));
+    };
+    auto mul_mask = [&](const Ciphertext<DCRTPoly>& ciphertext, const std::string& key,
+                        const std::vector<double>& mask) {
+      ++ct_pt_muls;
+      // FIDESlib EvalMult takes Plaintext by non-const reference; a
+      // MakeCKKSPackedPlaintext temporary cannot bind to it (the cache stores
+      // mutable Plaintexts for the same reason).
+      auto plain = cached_plain(key, mask);
+      return cc->EvalMult(ciphertext, plain);
+    };
+    auto rotate = [&](const Ciphertext<DCRTPoly>& ciphertext, int amount) {
+      if (amount == 0) {
+        return ciphertext;
+      }
+      ++rotations;
+      return cc->EvalRotate(ciphertext, amount);
+    };
+    // ct += rot(ct, -stride) doubling ladder.
+    auto doubling_fill = [&](Ciphertext<DCRTPoly> ciphertext, int base_stride, int steps) {
+      for (int k = 0; k < steps; ++k) {
+        ciphertext = add_aligned(ciphertext, rotate(ciphertext, -(base_stride << k)));
+      }
+      return ciphertext;
+    };
+    auto full_batch_sum = [&](Ciphertext<DCRTPoly> ciphertext) {
+      for (int k = 0; k < int_log2(batch_size); ++k) {
+        ciphertext = add_aligned(ciphertext, rotate(ciphertext, 1 << k));
+      }
+      return ciphertext;
+    };
+    // Per-stream RMS variance reduction. streams == 1 keeps the exact
+    // single-stream path (full cyclic sum, no mask, no extra level). For
+    // streams > 1 the in-stride window sum is only correct at each stream
+    // base slot (the squared vector is zero elsewhere in the stride), so the
+    // bases are masked out (one tiled plaintext, +1 level) and re-broadcast
+    // across the stride with existing power-of-two rotations.
+    std::vector<double> stream_base_mask(static_cast<std::size_t>(batch_size), 0.0);
+    for (int stream = 0; stream < args.streams; ++stream) {
+      stream_base_mask[static_cast<std::size_t>(stream * stream_stride)] = 1.0;
+    }
+    auto norm_variance_sum = [&](Ciphertext<DCRTPoly> ciphertext) {
+      if (args.streams == 1) {
+        return full_batch_sum(std::move(ciphertext));
+      }
+      for (int k = 0; k < int_log2(stream_stride); ++k) {
+        ciphertext = add_aligned(ciphertext, rotate(ciphertext, 1 << k));
+      }
+      ciphertext = mul_mask(ciphertext, "mask.streambase", stream_base_mask);
+      return doubling_fill(ciphertext, 1, int_log2(stream_stride));
+    };
+    // Stream-base shifts (s * stride) decomposed into power-of-two rotations
+    // so the rotation-key set is unchanged by multi-stream packing.
+    auto rotate_composite = [&](Ciphertext<DCRTPoly> ciphertext, int amount) {
+      const int sign = amount < 0 ? -1 : 1;
+      const int magnitude = std::abs(amount);
+      for (int bit = 0; (1 << bit) <= magnitude; ++bit) {
+        if ((magnitude & (1 << bit)) != 0) {
+          ciphertext = rotate(ciphertext, sign * (1 << bit));
+        }
+      }
+      return ciphertext;
+    };
+
+    // -----------------------------------------------------------------------
+    // Chebyshev PS ciphertext evaluator. Input u must already be normalized to
+    // [-1, 1] (callers fold the affine domain map into the producing op).
+    // -----------------------------------------------------------------------
+    auto eval_chebyshev = [&](const Ciphertext<DCRTPoly>& u,
+                              const std::vector<double>& coeffs) -> Ciphertext<DCRTPoly> {
+      const int degree = static_cast<int>(coeffs.size()) - 1;
+      if (degree < 1) {
+        return scaled_clone(ones_ct, coeffs.empty() ? 0.0 : coeffs[0]);
+      }
+      const int m = cheb_baby_size(degree);
+      std::map<int, Ciphertext<DCRTPoly>> t_cache;
+      t_cache[1] = u;
+      auto neg_u = scaled_clone(u, -1.0);
+      std::function<Ciphertext<DCRTPoly>(int)> get_t = [&](int i) -> Ciphertext<DCRTPoly> {
+        auto found = t_cache.find(i);
+        if (found != t_cache.end()) {
+          return found->second;
+        }
+        Ciphertext<DCRTPoly> value;
+        if (i % 2 == 0) {
+          auto half = get_t(i / 2);
+          auto square = mul_aligned(half->Clone(), half->Clone());
+          ++adds;
+          auto doubled = cc->EvalAdd(square, square);
+          value = add_aligned(doubled, scaled_clone(ones_ct, -1.0));
+        } else {
+          auto high = get_t((i + 1) / 2);
+          auto low = get_t(i / 2);
+          auto product = mul_aligned(high->Clone(), low->Clone());
+          ++adds;
+          auto doubled = cc->EvalAdd(product, product);
+          value = add_aligned(doubled, neg_u->Clone());
+        }
+        t_cache[i] = value;
+        return value;
+      };
+      std::function<Ciphertext<DCRTPoly>(std::vector<double>)> rec =
+          [&](std::vector<double> c) -> Ciphertext<DCRTPoly> {
+        const int n = static_cast<int>(c.size()) - 1;
+        if (n < m) {
+          Ciphertext<DCRTPoly> accumulator;
+          bool has_accumulator = false;
+          for (int i = 1; i <= n; ++i) {
+            if (std::abs(c[static_cast<std::size_t>(i)]) < kChebCoefficientFloor) {
+              continue;
+            }
+            auto term = scaled_clone(get_t(i), c[static_cast<std::size_t>(i)]);
+            if (!has_accumulator) {
+              accumulator = term;
+              has_accumulator = true;
+            } else {
+              accumulator = add_aligned(accumulator, term);
+            }
+          }
+          if (!has_accumulator) {
+            return scaled_clone(ones_ct, c[0]);
+          }
+          if (std::abs(c[0]) >= kChebCoefficientFloor) {
+            accumulator = add_scalar(accumulator, c[0]);
+          }
+          return accumulator;
+        }
+        int k = m;
+        while (2 * k - 1 < n) {
+          k *= 2;
+        }
+        std::vector<double> btil(static_cast<std::size_t>(n - k + 1), 0.0);
+        for (int j = 0; j <= n - k; ++j) {
+          btil[static_cast<std::size_t>(j)] = 2.0 * c[static_cast<std::size_t>(k + j)];
+        }
+        btil[0] = c[static_cast<std::size_t>(k)];
+        std::vector<double> aprime(c.begin(), c.begin() + k);
+        for (int i = k + 1; i <= n; ++i) {
+          aprime[static_cast<std::size_t>(2 * k - i)] -= c[static_cast<std::size_t>(i)];
+        }
+        auto giant_term = mul_aligned(get_t(k)->Clone(), rec(btil));
+        return add_aligned(rec(aprime), giant_term);
+      };
+      return rec(coeffs);
+    };
+
+    // -----------------------------------------------------------------------
+    // Debug value telemetry (--debug-decrypt): decrypt and log max |value|
+    // and non-finite slot counts at phase/bootstrap checkpoints to localize
+    // numeric blowups. No-op unless the flag is set.
+    // -----------------------------------------------------------------------
+    auto debug_value_stats = [&](const Ciphertext<DCRTPoly>& ciphertext,
+                                 const std::string& tag) {
+      if (!args.debug_decrypt) {
+        return;
+      }
+      Plaintext plaintext;
+      auto ciphertext_handle = ciphertext;  // Decrypt takes a non-const ref
+      cc->Decrypt(keys.secretKey, ciphertext_handle, &plaintext);
+      plaintext->SetLength(static_cast<std::size_t>(batch_size));
+      const auto complex_slots = plaintext->GetCKKSPackedValue();
+      double max_real = 0.0;
+      double max_imag = 0.0;  // CKKS bootstrap assumes real inputs; large
+                              // imaginary mass is a blowup suspect on its own.
+      int non_finite = 0;
+      for (const auto& value : complex_slots) {
+        if (!std::isfinite(value.real()) || !std::isfinite(value.imag())) {
+          ++non_finite;
+          continue;
+        }
+        max_real = std::max(max_real, std::abs(value.real()));
+        max_imag = std::max(max_imag, std::abs(value.imag()));
+      }
+      log_phase("DEBUG " + tag + " level=" + std::to_string(ciphertext->GetLevel()) +
+                " deg=" + std::to_string(ciphertext->GetNoiseScaleDeg()) +
+                " max_abs=" + std::to_string(max_real) +
+                " max_imag=" + std::to_string(max_imag) +
+                " non_finite=" + std::to_string(non_finite));
+      // Lineage refresh probe: test-bootstrap a normalized clone to find the
+      // earliest op whose output poisons EvalBootstrap (values are known
+      // clean here; a NaN probe means the ciphertext state is the trigger).
+      if (non_finite == 0 && std::isfinite(max_real)) {
+        // Repeat the probe: identical inputs sometimes refresh clean and
+        // sometimes NaN, so count outcomes to expose nondeterminism.
+        int poisoned_runs = 0;
+        constexpr int kProbeRepeats = 4;
+        for (int repeat = 0; repeat < kProbeRepeats; ++repeat) {
+          try {
+            auto probe = ciphertext->Clone();
+            cc->EvalMultInPlace(probe, 1.0 / std::max(1.0, 1.5 * max_real));
+            while (probe->GetNoiseScaleDeg() > 1) {
+              cc->RescaleInPlace(probe);
+            }
+            auto refreshed = cc->EvalBootstrap(probe);
+            Plaintext probe_plain;
+            cc->Decrypt(keys.secretKey, refreshed, &probe_plain);
+            probe_plain->SetLength(static_cast<std::size_t>(batch_size));
+            auto probe_values = probe_plain->GetRealPackedValue();
+            for (const double value : probe_values) {
+              if (!std::isfinite(value)) {
+                ++poisoned_runs;
+                break;
+              }
+            }
+          } catch (const std::exception& exc) {
+            log_phase("DEBUG refresh_probe." + tag + " EXCEPTION " + exc.what());
+          }
+        }
+        log_phase("DEBUG refresh_probe." + tag + " poisoned_runs=" +
+                  std::to_string(poisoned_runs) + "/" + std::to_string(kProbeRepeats));
+      }
+    };
+
+    // -----------------------------------------------------------------------
+    // Auto-bootstrap policy: refresh a ciphertext when its remaining levels
+    // cannot cover the estimated downstream requirement plus headroom. Uses
+    // runtime GetLevel(); the assumed-bootstrap-output constant plus the
+    // minimum-gain floor guard against refreshing near-fresh ciphertexts.
+    // -----------------------------------------------------------------------
+    auto maybe_bootstrap = [&](Ciphertext<DCRTPoly>& ciphertext, int requirement,
+                               const std::string& what, int& counter) {
+      if (!bootstrap_available) {
+        return;
+      }
+      const int level = static_cast<int>(ciphertext->GetLevel());
+      if (args.multiplicative_depth - level >= requirement + args.auto_bootstrap_headroom) {
+        return;
+      }
+      if (level < kAssumedBootstrapOutputLevel + kMinBootstrapGain) {
+        return;  // bootstrapping cannot usefully improve a near-fresh ciphertext
+      }
+      debug_value_stats(ciphertext, "pre_bootstrap." + what);
+      // FIDESlib EvalBootstrap needs noiseScaleDeg-1 inputs with |m| <~ 1:
+      // deg-2 refresh error grows polynomially with magnitude (all-NaN at the
+      // measured |m|~24 y checkpoint). Normalize by the per-checkpoint bound,
+      // force rescale to deg 1, refresh, then undo the normalization.
+      const double bound = checkpoint_bound(what) * args.bootstrap_norm_margin;
+      const auto bootstrap_start = now();
+      time_phase("bootstrap", [&]() {
+        cc->EvalMultInPlace(ciphertext, 1.0 / bound);
+        ++ct_pt_muls;
+        while (ciphertext->GetNoiseScaleDeg() > 1) {
+          cc->RescaleInPlace(ciphertext);
+        }
+        debug_value_stats(ciphertext, "norm_bootstrap_in." + what);
+        if (args.debug_decrypt) {
+          // Forensic split (debug only): bootstrap a fresh re-encryption of
+          // the exact same values at the same level. If the fresh copy
+          // refreshes cleanly while the original NaNs, the failure lives in
+          // the ciphertext state (noise / GPU-side metadata), not the values.
+          Plaintext forensic_plain;
+          auto forensic_handle = ciphertext;
+          cc->Decrypt(keys.secretKey, forensic_handle, &forensic_plain);
+          forensic_plain->SetLength(static_cast<std::size_t>(batch_size));
+          auto forensic_values = forensic_plain->GetRealPackedValue();
+          forensic_values.resize(static_cast<std::size_t>(batch_size));
+          Plaintext reencoded = cc->MakeCKKSPackedPlaintext(
+              forensic_values, 1, ciphertext->GetLevel(), nullptr,
+              static_cast<uint32_t>(batch_size));
+          auto fresh = cc->Encrypt(keys.publicKey, reencoded);
+          auto fresh_refreshed = cc->EvalBootstrap(fresh);
+          debug_value_stats(fresh_refreshed, "forensic_fresh_bootstrap." + what);
+        }
+        ciphertext = cc->EvalBootstrap(ciphertext);
+        ++bootstraps;
+        ++counter;
+        cc->EvalMultInPlace(ciphertext, bound);
+        ++ct_pt_muls;
+      });
+      debug_value_stats(ciphertext, "post_bootstrap." + what);
+      bootstrap_eval_seconds += seconds_since(bootstrap_start);
+      log_phase("auto bootstrap " + what + " level_before=" + std::to_string(level) +
+                " level_after=" + std::to_string(ciphertext->GetLevel()));
+    };
+
+    // Newton inverse-sqrt refinement: y <- 1.5*y + (-0.5*v*y)*(y*y). Each
+    // iteration consumes 2 levels; under the MAXP=64 depth ceiling the
+    // iterate is refreshed mid-run whenever it cannot cover the next
+    // iteration plus headroom (v_neg_half stays at its low input level).
+    auto newton_refine = [&](Ciphertext<DCRTPoly> y,
+                             const Ciphertext<DCRTPoly>& v_neg_half,
+                             int iterations, const std::string& tag, int& counter) {
+      for (int iteration = 0; iteration < iterations; ++iteration) {
+        maybe_bootstrap(y, 2, tag + ".iter" + std::to_string(iteration), counter);
+        ++ct_ct_muls;
+        auto y_squared = cc->EvalMult(y, y);
+        auto vy = mul_aligned(v_neg_half->Clone(), y->Clone());
+        auto product = mul_aligned(vy, y_squared);
+        auto y_scaled = scaled_clone(y, 1.5);
+        y = add_aligned(y_scaled, product);
+      }
+      return y;
+    };
+
+    // -----------------------------------------------------------------------
+    // Host-side plaintext constants (folds validated by simulation).
+    // -----------------------------------------------------------------------
+    const int d_model = dims_payload.d_model;
+    const int d_inner = dims_payload.d_inner;
+    const int heads = dims_payload.num_heads;
+    const int head_dim = dims_payload.head_dim;
+    const int state_size = dims_payload.state_size;
+    const int conv_dim = dims_payload.conv_dim;
+    const int conv_kernel = dims_payload.conv_kernel;
+    const int proj_dim = dims_payload.proj_dim;
+    const int group_count = packing.group_count;
+    const int group_heads = packing.group_heads;
+    const int group_block = packing.group_block;
+    const int xbc0 = packing.xbc0;
+    const int dt0 = packing.dt0;
+    const std::size_t batch = static_cast<std::size_t>(batch_size);
+
+    auto affine = [](double lo, double hi) {
+      return std::pair<double, double>{2.0 / (hi - lo), -(lo + hi) / (hi - lo)};
+    };
+    // Norms run on V = sum(x^2) + width*eps; rsqrt(V) = rsqrt(var+eps)/sqrt(w).
+    auto make_layer_plan = [&](const M1Payload& payload) {
+      LayerPlan plan;
+      plan.eps_block = payload.eps_block;
+      plan.eps_gated = payload.eps_gated;
+      const auto& p_conv = payload.polys.at("conv_silu");
+      const auto& p_gate = payload.polys.at("gate_silu");
+      const auto& p_dt = payload.polys.at("dt_softplus");
+      const auto& p_exp = payload.polys.at("decay_exp");
+      const auto& p_rms = payload.polys.at("rms_invsqrt");
+      const auto& p_gated = payload.polys.at("gated_rms_invsqrt");
+      const auto [a_conv, b_conv] = affine(p_conv.lo, p_conv.hi);
+      const auto [a_gate, b_gate] = affine(p_gate.lo, p_gate.hi);
+      const auto [a_dt, b_dt] = affine(p_dt.lo, p_dt.hi);
+      const auto [a_exp_raw, b_exp] = affine(p_exp.lo, p_exp.hi);
+      const double a_exp = a_exp_raw / std::pow(2.0, p_exp.squarings);
+      const auto [a_rms, b_rms] = affine(p_rms.lo, p_rms.hi);
+      plan.b_gate = b_gate;
+      plan.b_exp = b_exp;
+      plan.b_rms = b_rms;
+      plan.a_rms_v = a_rms / static_cast<double>(d_model);
+      plan.rms_iterations = p_rms.iterations;
+      plan.gated_iterations = p_gated.iterations;
+      plan.exp_squarings = p_exp.squarings;
+      plan.conv_coeffs = p_conv.coeffs;
+      plan.gate_coeffs = p_gate.coeffs;
+      plan.dt_coeffs = p_dt.coeffs;
+      plan.exp_coeffs = p_exp.coeffs;
+      plan.rms_coeffs = p_rms.coeffs;
+      for (double& coefficient : plan.rms_coeffs) {
+        coefficient *= p_rms.damping / std::sqrt(static_cast<double>(d_model));
+      }
+      plan.gated_guess_v = p_gated.guess / std::sqrt(static_cast<double>(d_inner));
+
+      const auto& in_proj_w = payload.tensors.at("in_proj_w");
+      const auto& block_norm_w = payload.tensors.at("block_norm_w");
+      plan.in_w_folded.assign(in_proj_w.size(), 0.0);
+      for (int output = 0; output < proj_dim; ++output) {
+        for (int input = 0; input < d_model; ++input) {
+          const auto index = static_cast<std::size_t>(output) * d_model + input;
+          plan.in_w_folded[index] =
+              in_proj_w[index] * block_norm_w[static_cast<std::size_t>(input)] *
+              std::sqrt(static_cast<double>(d_model));
+        }
+      }
+      const auto& out_proj_w = payload.tensors.at("out_proj_w");
+      const auto& gated_norm_w = payload.tensors.at("gated_norm_w");
+      plan.out_w_folded.assign(out_proj_w.size(), 0.0);
+      for (int output = 0; output < d_model; ++output) {
+        for (int input = 0; input < d_inner; ++input) {
+          const auto index = static_cast<std::size_t>(output) * d_inner + input;
+          plan.out_w_folded[index] =
+              out_proj_w[index] * gated_norm_w[static_cast<std::size_t>(input)] *
+              std::sqrt(static_cast<double>(d_inner));
+        }
+      }
+
+      const auto& conv_w = payload.tensors.at("conv_w");  // (conv_dim, conv_kernel)
+      const auto& conv_b = payload.tensors.at("conv_b");
+      // All packed-layout vectors are tiled once per stream stride (a single
+      // copy when streams == 1).
+      plan.conv_tap_masks.assign(static_cast<std::size_t>(conv_kernel), {});
+      for (int tap = 0; tap < conv_kernel; ++tap) {
+        std::vector<double> mask(batch, 0.0);
+        for (int stream = 0; stream < args.streams; ++stream) {
+          const auto base = static_cast<std::size_t>(stream * stream_stride);
+          for (int channel = 0; channel < conv_dim; ++channel) {
+            mask[base + static_cast<std::size_t>(xbc0 + channel)] =
+                a_conv * conv_w[static_cast<std::size_t>(channel) * conv_kernel + tap];
+          }
+        }
+        plan.conv_tap_masks[static_cast<std::size_t>(tap)] = std::move(mask);
+      }
+      plan.conv_const.assign(batch, b_conv);
+      for (int stream = 0; stream < args.streams; ++stream) {
+        const auto base = static_cast<std::size_t>(stream * stream_stride);
+        for (int channel = 0; channel < conv_dim; ++channel) {
+          plan.conv_const[base + static_cast<std::size_t>(xbc0 + channel)] =
+              a_conv * conv_b[static_cast<std::size_t>(channel)] + b_conv;
+        }
+      }
+
+      plan.gate_mask.assign(batch, 0.0);
+      const auto& dt_bias = payload.tensors.at("dt_bias");
+      plan.dt_mask.assign(batch, 0.0);
+      plan.dt_const.assign(batch, 0.0);
+      const auto& a_log = payload.tensors.at("a_log");
+      plan.a_vec.assign(batch, 0.0);
+      const auto& d_skip = payload.tensors.at("d_skip");
+      plan.d_vec.assign(batch, 0.0);
+      for (int stream = 0; stream < args.streams; ++stream) {
+        const auto base = static_cast<std::size_t>(stream * stream_stride);
+        for (int slot = 0; slot < d_inner; ++slot) {
+          plan.gate_mask[base + static_cast<std::size_t>(slot)] = a_gate;
+        }
+        for (int head = 0; head < heads; ++head) {
+          plan.dt_mask[base + static_cast<std::size_t>(dt0 + head)] = a_dt;
+          plan.dt_const[base + static_cast<std::size_t>(dt0 + head)] =
+              a_dt * dt_bias[static_cast<std::size_t>(head)] + b_dt;
+          plan.a_vec[base + static_cast<std::size_t>(dt0 + head)] =
+              a_exp * (-std::exp(a_log[static_cast<std::size_t>(head)]));
+          for (int position = 0; position < head_dim; ++position) {
+            plan.d_vec[base + static_cast<std::size_t>(head * head_dim + position)] =
+                d_skip[static_cast<std::size_t>(head)];
+          }
+        }
+      }
+      plan.test_layer_output = payload.tensors.at("test_layer_output");
+
+      // Segment requirements for the mid-circuit bootstrap checkpoints (same
+      // formulas as estimate_levels, using this layer's fits).
+      const int rms_depth = cheb_ps_depth(static_cast<int>(p_rms.coeffs.size()) - 1);
+      const int conv_depth = cheb_ps_depth(static_cast<int>(p_conv.coeffs.size()) - 1);
+      const int gate_depth = cheb_ps_depth(static_cast<int>(p_gate.coeffs.size()) - 1);
+      const int dt_depth = cheb_ps_depth(static_cast<int>(p_dt.coeffs.size()) - 1);
+      const int exp_depth = cheb_ps_depth(static_cast<int>(p_exp.coeffs.size()) - 1);
+      const int norm_extra = args.streams > 1 ? 1 : 0;
+      const int inv1 = 2 + norm_extra + rms_depth + 2 * p_rms.iterations;
+      plan.req_residual = std::max(inv1, 1) + 2;
+      plan.req_proj = 1 + std::max(conv_depth, std::max(gate_depth + 2, dt_depth + 1));
+      plan.req_fifo = 2 + conv_depth;
+      plan.req_conv = 6;
+      plan.req_dt = 2 + exp_depth + p_exp.squarings;
+      plan.req_decay = 3;
+      plan.req_state_pre = 5;
+      plan.req_state_tail = 4;
+      plan.req_y = 4 + norm_extra;
+      plan.req_out = 2;
+      return plan;
+    };
+    std::vector<LayerPlan> layer_plans;
+    layer_plans.reserve(layer_payloads.size());
+    for (const auto& layer_payload : layer_payloads) {
+      layer_plans.push_back(make_layer_plan(layer_payload));
+      std::string layer_text = std::to_string(layer_plans.size() - 1);
+      if (layer_text.size() < 2) {
+        layer_text.insert(layer_text.begin(), '0');
+      }
+      layer_plans.back().cache_prefix = "L" + layer_text + ".";
+    }
+
+    // Final RMSNorm constants (full chain only). No projection follows norm_f,
+    // so the inverse is applied directly and final_norm_w (with the sqrt(w)
+    // variance fold) is a plaintext multiply. The inverse-sqrt uses the last
+    // layer's rms_invsqrt fit: its calibrated variance domain is the closest
+    // available to the final hidden state (no dedicated fit is exported).
+    std::vector<double> final_rms_coeffs;
+    double final_a_rms_v = 0.0;
+    double final_b_rms = 0.0;
+    int final_rms_iterations = 0;
+    std::vector<double> final_w_vec;
+    if (full_chain) {
+      const auto& p_rms_final = layer_payloads.back().polys.at("rms_invsqrt");
+      const auto [a_rms_f, b_rms_f] = affine(p_rms_final.lo, p_rms_final.hi);
+      final_a_rms_v = a_rms_f / static_cast<double>(d_model);
+      final_b_rms = b_rms_f;
+      final_rms_iterations = p_rms_final.iterations;
+      final_rms_coeffs = p_rms_final.coeffs;
+      for (double& coefficient : final_rms_coeffs) {
+        coefficient *= p_rms_final.damping / std::sqrt(static_cast<double>(d_model));
+      }
+      final_w_vec.assign(batch, 0.0);
+      for (int slot = 0; slot < d_model; ++slot) {
+        final_w_vec[static_cast<std::size_t>(slot)] =
+            chain.final_norm_w[static_cast<std::size_t>(slot)] *
+            std::sqrt(static_cast<double>(d_model));
+      }
+    }
+
+    std::vector<double> group_mask(batch, 0.0);
+    for (int slot = 0; slot < group_block; ++slot) {
+      group_mask[static_cast<std::size_t>(slot)] = 1.0;
+    }
+    auto unit_mask = [&](int slot) {
+      std::vector<double> mask(batch, 0.0);
+      mask[static_cast<std::size_t>(slot)] = 1.0;
+      return mask;
+    };
+    auto block_mask = [&](int start, int length) {
+      std::vector<double> mask(batch, 0.0);
+      for (int slot = 0; slot < length; ++slot) {
+        mask[static_cast<std::size_t>(start + slot)] = 1.0;
+      }
+      return mask;
+    };
+
+    // -----------------------------------------------------------------------
+    // Encode thread-safety self test. FIDESlib/OpenFHE MakeCKKSPackedPlaintext
+    // on a shared CryptoContext is expected to be read-only but is unproven:
+    // encode the same diagonals serially and in parallel and compare decoded
+    // values exactly. Any mismatch or exception falls back to serial encoding
+    // with a logged warning (crash-type failures cannot be intercepted; the
+    // default --encode-threads 1 never runs this test). Runs before the cache
+    // build so the one-time build can use the pool too.
+    // -----------------------------------------------------------------------
+    int effective_encode_threads = 1;
+    std::string encode_selftest_result = "skipped";
+    if (args.encode_threads > 1) {
+      const auto& test_weights = layer_plans.front().in_w_folded;
+      const auto test_giants = slot_bsgs_giant_with_zero(d_model, proj_dim, kBabyStepIn);
+      std::vector<std::pair<int, int>> test_diagonals;  // (giant, offset)
+      for (std::size_t giant_index = 0;
+           giant_index < test_giants.size() &&
+           test_diagonals.size() < static_cast<std::size_t>(kEncodeSelfTestDiagonals);
+           ++giant_index) {
+        for (int baby = 0;
+             baby < kBabyStepIn &&
+             test_diagonals.size() < static_cast<std::size_t>(kEncodeSelfTestDiagonals);
+             ++baby) {
+          const int giant = test_giants[giant_index];
+          auto mask = slot_bsgs_pre_mask(test_weights, d_model, proj_dim, batch_size,
+                                         stream_stride, giant, giant + baby);
+          if (std::all_of(mask.begin(), mask.end(),
+                          [](double value) { return value == 0.0; })) {
+            continue;
+          }
+          test_diagonals.emplace_back(giant, giant + baby);
+        }
+      }
+      try {
+        auto decoded_values = [&](const Plaintext& plain) {
+          auto handle = plain;
+          handle->SetLength(static_cast<std::size_t>(batch_size));
+          auto values = handle->GetRealPackedValue();
+          values.resize(static_cast<std::size_t>(batch_size));
+          return values;
+        };
+        std::vector<std::vector<double>> serial_values;
+        serial_values.reserve(test_diagonals.size());
+        for (const auto& [giant, offset] : test_diagonals) {
+          serial_values.push_back(decoded_values(make_plain(slot_bsgs_pre_mask(
+              test_weights, d_model, proj_dim, batch_size, stream_stride, giant, offset))));
+        }
+        std::vector<Plaintext> parallel_plains(test_diagonals.size());
+        const auto worker_count = std::min<std::size_t>(
+            static_cast<std::size_t>(args.encode_threads), test_diagonals.size());
+        std::vector<std::exception_ptr> worker_errors(worker_count);
+        std::vector<std::thread> workers;
+        workers.reserve(worker_count);
+        for (std::size_t worker = 0; worker < worker_count; ++worker) {
+          workers.emplace_back([&, worker]() {
+            try {
+              for (std::size_t job = worker; job < test_diagonals.size();
+                   job += worker_count) {
+                auto mask = slot_bsgs_pre_mask(test_weights, d_model, proj_dim, batch_size,
+                                               stream_stride, test_diagonals[job].first,
+                                               test_diagonals[job].second);
+                auto plain = cc->MakeCKKSPackedPlaintext(mask);
+                plain->SetLength(static_cast<size_t>(batch_size));
+                parallel_plains[job] = plain;
+              }
+            } catch (...) {
+              worker_errors[worker] = std::current_exception();
+            }
+          });
+        }
+        for (auto& worker : workers) {
+          worker.join();
+        }
+        for (const auto& error : worker_errors) {
+          if (error) {
+            std::rethrow_exception(error);
+          }
+        }
+        bool matches = true;
+        for (std::size_t job = 0; job < test_diagonals.size() && matches; ++job) {
+          if (!parallel_plains[job]) {
+            matches = false;
+            break;
+          }
+          const auto parallel_decoded = decoded_values(parallel_plains[job]);
+          matches = parallel_decoded == serial_values[job];
+        }
+        if (matches) {
+          effective_encode_threads = args.encode_threads;
+          encode_selftest_result = "passed";
+          log_phase("encode self test passed threads=" +
+                    std::to_string(effective_encode_threads) + " diagonals=" +
+                    std::to_string(test_diagonals.size()));
+        } else {
+          encode_selftest_result = "failed-mismatch";
+          log_phase("WARNING: parallel encode self test MISMATCH; falling back to serial "
+                    "encoding (FIDESlib encode is not thread-safe on this build)");
+        }
+      } catch (const std::exception& exc) {
+        encode_selftest_result = std::string("failed-exception: ") + exc.what();
+        log_phase(std::string("WARNING: parallel encode self test threw (") + exc.what() +
+                  "); falling back to serial encoding");
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Plaintext cache: register every token-invariant plaintext with its
+    // per-token reuse count, then encode greedily until the byte budget is
+    // spent. BSGS diagonal tables (mode "full") are indexed giant-major/
+    // baby-minor over the exact enumeration the evaluation walks.
+    // -----------------------------------------------------------------------
+    std::vector<std::vector<Plaintext>> in_proj_tables(layer_plans.size());
+    std::vector<std::vector<Plaintext>> out_proj_tables(layer_plans.size());
+    // key -> (layer, 0=in/1=out, table index) links resolved after selection.
+    std::vector<std::tuple<std::string, std::size_t, int, std::size_t>> bsgs_links;
+    double pt_cache_encode_seconds = 0.0;
+    std::size_t pt_cache_entries_cached = 0;
+    if (pt_cache_mode != "off") {
+      const int layers_count = static_cast<int>(layer_plans.size());
+      // Shared select/broadcast masks (layer-independent slot patterns).
+      for (int a = 0; a < state_size / group_heads; ++a) {
+        for (int b = 0; b < group_heads; ++b) {
+          const int slot = group_heads * a + group_block * b;
+          register_plain("mask.unit." + std::to_string(slot), 2 * layers_count,
+                         [unit_mask, slot]() { return unit_mask(slot); });
+        }
+      }
+      for (int h_local = 0; h_local < group_heads; ++h_local) {
+        register_plain("mask.unit." + std::to_string(h_local),
+                       2 * group_count * layers_count,
+                       [unit_mask, h_local]() { return unit_mask(h_local); });
+      }
+      for (int group = 0; group < group_count; ++group) {
+        register_plain("mask.xblock." + std::to_string(group), layers_count,
+                       [block_mask, group_block, group]() {
+                         return block_mask(group_block * group, group_block);
+                       });
+      }
+      register_plain("mask.group", group_count * layers_count,
+                     [&group_mask]() { return group_mask; });
+      if (args.streams > 1) {
+        register_plain("mask.streambase", 2 * layers_count,
+                       [&stream_base_mask]() { return stream_base_mask; });
+      }
+      if (full_chain) {
+        register_plain("final.norm_w", 1, [&final_w_vec]() { return final_w_vec; });
+      }
+      // Per-layer token-invariant vectors.
+      for (const auto& plan : layer_plans) {
+        for (int tap = 0; tap < conv_kernel; ++tap) {
+          register_plain(plan.cache_prefix + "tap" + std::to_string(tap), 1,
+                         [&plan, tap]() {
+                           return plan.conv_tap_masks[static_cast<std::size_t>(tap)];
+                         });
+        }
+        register_plain(plan.cache_prefix + "conv_const", 1,
+                       [&plan]() { return plan.conv_const; });
+        register_plain(plan.cache_prefix + "gate_mask", 1,
+                       [&plan]() { return plan.gate_mask; });
+        register_plain(plan.cache_prefix + "dt_mask", 1, [&plan]() { return plan.dt_mask; });
+        register_plain(plan.cache_prefix + "dt_const", 1,
+                       [&plan]() { return plan.dt_const; });
+        register_plain(plan.cache_prefix + "a_vec", 1, [&plan]() { return plan.a_vec; });
+        register_plain(plan.cache_prefix + "d_vec", 1, [&plan]() { return plan.d_vec; });
+      }
+      // BSGS diagonal tables (the dominant cost; mode "full" only).
+      if (pt_cache_mode == "full") {
+        for (std::size_t layer = 0; layer < layer_plans.size(); ++layer) {
+          const auto& plan = layer_plans[layer];
+          const auto register_bsgs = [&](int which, const std::vector<double>& weights,
+                                         int input_dim, int output_dim, int baby_step,
+                                         std::vector<Plaintext>& table) {
+            const auto giants = slot_bsgs_giant_with_zero(input_dim, output_dim, baby_step);
+            table.assign(giants.size() * static_cast<std::size_t>(baby_step), Plaintext());
+            for (std::size_t giant_index = 0; giant_index < giants.size(); ++giant_index) {
+              const int giant = giants[giant_index];
+              for (int baby = 0; baby < baby_step; ++baby) {
+                const int offset = giant + baby;
+                auto mask = slot_bsgs_pre_mask(weights, input_dim, output_dim, batch_size,
+                                               stream_stride, giant, offset);
+                if (std::all_of(mask.begin(), mask.end(),
+                                [](double value) { return value == 0.0; })) {
+                  continue;
+                }
+                const auto table_index =
+                    giant_index * static_cast<std::size_t>(baby_step) +
+                    static_cast<std::size_t>(baby);
+                const std::string key = plan.cache_prefix +
+                                        (which == 0 ? "bsgs_in." : "bsgs_out.") +
+                                        std::to_string(table_index);
+                register_plain(key, 1, [&weights, input_dim, output_dim, giant, offset,
+                                        this_batch = batch_size,
+                                        this_stride = stream_stride]() {
+                  return slot_bsgs_pre_mask(weights, input_dim, output_dim, this_batch,
+                                            this_stride, giant, offset);
+                });
+                bsgs_links.emplace_back(key, layer, which, table_index);
+              }
+            }
+          };
+          register_bsgs(0, plan.in_w_folded, d_model, proj_dim, kBabyStepIn,
+                        in_proj_tables[layer]);
+          register_bsgs(1, plan.out_w_folded, d_inner, d_model, kBabyStepOut,
+                        out_proj_tables[layer]);
+        }
+      }
+      // Greedy selection: reuse count desc, registration order asc.
+      std::vector<std::map<std::string, PlainCacheEntry>::iterator> selection;
+      selection.reserve(plain_cache.size());
+      for (auto entry = plain_cache.begin(); entry != plain_cache.end(); ++entry) {
+        selection.push_back(entry);
+      }
+      std::stable_sort(selection.begin(), selection.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs->second.uses_per_token != rhs->second.uses_per_token) {
+          return lhs->second.uses_per_token > rhs->second.uses_per_token;
+        }
+        return lhs->second.order < rhs->second.order;
+      });
+      const auto encode_start = now();
+      const auto to_encode = std::min(pt_cache_capacity, selection.size());
+      log_phase("pt cache encode begin mode=" + pt_cache_mode +
+                " registered=" + std::to_string(plain_cache.size()) +
+                " capacity=" + std::to_string(pt_cache_capacity) +
+                " entry_mib=" + std::to_string(pt_plain_bytes / (1024.0 * 1024.0)) +
+                " threads=" + std::to_string(effective_encode_threads));
+      if (effective_encode_threads > 1 && to_encode > 1) {
+        // One-time build through the (self-tested) worker pool: entries are
+        // independent; each worker fills disjoint striped slots.
+        const auto worker_count = std::min<std::size_t>(
+            static_cast<std::size_t>(effective_encode_threads), to_encode);
+        std::vector<std::exception_ptr> worker_errors(worker_count);
+        std::vector<std::thread> workers;
+        workers.reserve(worker_count);
+        for (std::size_t worker = 0; worker < worker_count; ++worker) {
+          workers.emplace_back([&, worker]() {
+            try {
+              for (std::size_t job = worker; job < to_encode; job += worker_count) {
+                selection[job]->second.plain =
+                    encode_cache_plain(selection[job]->second.build());
+              }
+            } catch (...) {
+              worker_errors[worker] = std::current_exception();
+            }
+          });
+        }
+        for (auto& worker : workers) {
+          worker.join();
+        }
+        for (const auto& error : worker_errors) {
+          if (error) {
+            std::rethrow_exception(error);
+          }
+        }
+        pt_cache_entries_cached = to_encode;
+      } else {
+        for (const auto& entry : selection) {
+          if (pt_cache_entries_cached >= pt_cache_capacity) {
+            break;
+          }
+          entry->second.plain = encode_cache_plain(entry->second.build());
+          ++pt_cache_entries_cached;
+          if (pt_cache_entries_cached % 1000 == 0) {
+            log_phase("pt cache encode progress " +
+                      std::to_string(pt_cache_entries_cached) + "/" +
+                      std::to_string(to_encode));
+          }
+        }
+      }
+      // Wire the selected BSGS entries into the per-layer tables.
+      for (const auto& [key, layer, which, table_index] : bsgs_links) {
+        const auto entry = plain_cache.find(key);
+        if (entry == plain_cache.end() || !entry->second.plain) {
+          continue;
+        }
+        auto& table = which == 0 ? in_proj_tables[layer] : out_proj_tables[layer];
+        table[table_index] = entry->second.plain;
+      }
+      pt_cache_encode_seconds = seconds_since(encode_start);
+      log_phase("pt cache encode done cached=" + std::to_string(pt_cache_entries_cached) +
+                "/" + std::to_string(plain_cache.size()) + " bytes_gib=" +
+                std::to_string(pt_cache_entries_cached * pt_plain_bytes /
+                               (1024.0 * 1024.0 * 1024.0)));
+    }
+    // Wire tables in every mode except "off": empty tables route the BSGS
+    // eval through the miss counter and the parallel-encode pool ("masks"
+    // mode previously bypassed both — the dgx chain-mode gap).
+    for (std::size_t layer = 0; layer < layer_plans.size(); ++layer) {
+      if (pt_cache_mode != "off") {
+        layer_plans[layer].in_proj_table = &in_proj_tables[layer];
+        layer_plans[layer].out_proj_table = &out_proj_tables[layer];
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Shared-plaintext reuse check: cached Plaintexts are handed to EvalMult
+    // repeatedly through the non-const Plaintext& interface. dgx decode
+    // errors already matched with caching on; this cheap assertion pins the
+    // "EvalMult does not mutate the plaintext" contract anyway: multiply a
+    // reduced-level ciphertext by a cached plaintext and verify the decoded
+    // plaintext is unchanged. On mismatch the cache is dropped (all entries
+    // fall back to per-use encoding) with a logged warning.
+    // -----------------------------------------------------------------------
+    std::string pt_reuse_check_result = "skipped";
+    if (pt_cache_entries_cached > 0) {
+      try {
+        Plaintext probe_plain;
+        for (auto& [key, entry] : plain_cache) {
+          if (entry.plain) {
+            probe_plain = entry.plain;
+            break;
+          }
+        }
+        if (probe_plain) {
+          auto decoded_before = [&]() {
+            auto handle = probe_plain;
+            handle->SetLength(static_cast<std::size_t>(batch_size));
+            auto values = handle->GetRealPackedValue();
+            values.resize(static_cast<std::size_t>(batch_size));
+            return values;
+          }();
+          // Reduced-level ciphertext: the risky case is the library adjusting
+          // the plaintext's towers in place to match a consumed ciphertext.
+          // Self-check ops, intentionally outside the telemetry counters.
+          auto probe_ct = ones_ct->Clone();
+          for (int reduction = 0; reduction < 3; ++reduction) {
+            cc->EvalMultInPlace(probe_ct, 1.0);
+          }
+          auto product = cc->EvalMult(probe_ct, probe_plain);
+          (void)product;
+          auto decoded_after = [&]() {
+            auto handle = probe_plain;
+            handle->SetLength(static_cast<std::size_t>(batch_size));
+            auto values = handle->GetRealPackedValue();
+            values.resize(static_cast<std::size_t>(batch_size));
+            return values;
+          }();
+          if (decoded_before == decoded_after) {
+            pt_reuse_check_result = "passed";
+            log_phase("pt reuse check passed (EvalMult left the shared plaintext intact)");
+          } else {
+            pt_reuse_check_result = "failed-mutation";
+            log_phase("WARNING: EvalMult MUTATED a shared plaintext; dropping the "
+                      "plaintext cache (per-use encoding only)");
+            for (auto& [key, entry] : plain_cache) {
+              entry.plain = Plaintext();
+            }
+            for (auto& table : in_proj_tables) {
+              std::fill(table.begin(), table.end(), Plaintext());
+            }
+            for (auto& table : out_proj_tables) {
+              std::fill(table.begin(), table.end(), Plaintext());
+            }
+            pt_cache_entries_cached = 0;
+          }
+        }
+      } catch (const std::exception& exc) {
+        pt_reuse_check_result = std::string("failed-exception: ") + exc.what();
+        log_phase(std::string("WARNING: pt reuse check threw (") + exc.what() + ")");
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Packing primitives.
+    // -----------------------------------------------------------------------
+    // Slot (base + n) -> slot group_block*n for n in [0, state), then fill the
+    // 512 block by doubling. Rotations are decomposed as baby (b = n mod 8)
+    // plus giant (a = n div 8) so the shared key set stays small; the slot map
+    // is identical to 128 single mask+rotate pairs with indices
+    // base - (group_block-1)*n.
+    auto place_state_blocks = [&](const Ciphertext<DCRTPoly>& conv_packed, int base) {
+      const int stride = group_block - 1;
+      const int giant_stride = group_heads * stride;
+      std::vector<Ciphertext<DCRTPoly>> baby_rotations;
+      baby_rotations.reserve(static_cast<std::size_t>(group_heads));
+      for (int b = 0; b < group_heads; ++b) {
+        baby_rotations.push_back(rotate(conv_packed, base - stride * b));
+      }
+      Ciphertext<DCRTPoly> accumulator;
+      bool has_accumulator = false;
+      for (int a = 0; a < state_size / group_heads; ++a) {
+        Ciphertext<DCRTPoly> inner;
+        bool has_inner = false;
+        for (int b = 0; b < group_heads; ++b) {
+          const int slot = group_heads * a + group_block * b;
+          auto term = mul_mask(baby_rotations[static_cast<std::size_t>(b)],
+                               "mask.unit." + std::to_string(slot), unit_mask(slot));
+          if (!has_inner) {
+            inner = term;
+            has_inner = true;
+          } else {
+            ++adds;
+            inner = cc->EvalAdd(inner, term);
+          }
+        }
+        inner = rotate(inner, -giant_stride * a);
+        if (!has_accumulator) {
+          accumulator = inner;
+          has_accumulator = true;
+        } else {
+          ++adds;
+          accumulator = cc->EvalAdd(accumulator, inner);
+        }
+      }
+      return doubling_fill(accumulator, 1, int_log2(group_block));
+    };
+
+    // Head value of group g at proj slot dt0 + group_heads*g + h_local ->
+    // all slots n*group_block + h_local*head_dim + p.
+    auto place_heads = [&](const Ciphertext<DCRTPoly>& source, int group) {
+      auto shifted = rotate(source, dt0 + group_heads * group);
+      Ciphertext<DCRTPoly> accumulator;
+      bool has_accumulator = false;
+      for (int h_local = 0; h_local < group_heads; ++h_local) {
+        auto term = mul_mask(shifted, "mask.unit." + std::to_string(h_local),
+                             unit_mask(h_local));
+        term = rotate(term, -(head_dim - 1) * h_local);
+        if (!has_accumulator) {
+          accumulator = term;
+          has_accumulator = true;
+        } else {
+          ++adds;
+          accumulator = cc->EvalAdd(accumulator, term);
+        }
+      }
+      accumulator = doubling_fill(accumulator, 1, int_log2(head_dim));
+      return doubling_fill(accumulator, group_block, int_log2(state_size));
+    };
+
+    auto expand_x = [&](const Ciphertext<DCRTPoly>& conv_packed, int group) {
+      auto masked = mul_mask(conv_packed, "mask.xblock." + std::to_string(group),
+                             block_mask(group_block * group, group_block));
+      masked = rotate(masked, group_block * group);
+      return doubling_fill(masked, group_block, int_log2(state_size));
+    };
+
+    // -----------------------------------------------------------------------
+    // One full layer circuit (block norm ... residual add). State and conv
+    // FIFO live in the per-layer runtime and stay ciphertext across tokens.
+    // Mid-circuit bootstrap checkpoints (after in_proj, after conv_silu,
+    // after dt, after decay, after the state update, before the gated norm,
+    // before out_proj, plus the per-iteration Newton check) keep every
+    // ciphertext lineage within the depth-44 MAXP=64 geometry.
+    // -----------------------------------------------------------------------
+    auto run_layer = [&](const LayerPlan& plan, LayerRuntime& runtime,
+                         const Ciphertext<DCRTPoly>& hidden_ct, const std::string& tag,
+                         int& layer_bootstraps) -> Ciphertext<DCRTPoly> {
+      // Block RMSNorm inverse sqrt on V = sum(x^2) + d_model*eps; the sqrt(w)
+      // and norm weights are folded into the in_proj plaintexts, so proj =
+      // BSGS(h) * inv (inv is a uniform broadcast and commutes with matmul).
+      auto inv_block = time_phase("block_norm", [&]() {
+        ++ct_ct_muls;
+        auto squared = cc->EvalMult(hidden_ct, hidden_ct);
+        auto variance = norm_variance_sum(squared);
+        variance = add_scalar(variance, d_model * plan.eps_block);
+        auto u = add_scalar(scaled_clone(variance, plan.a_rms_v), plan.b_rms);
+        auto guess = eval_chebyshev(u, plan.rms_coeffs);
+        auto v_neg_half = scaled_clone(variance, -0.5);
+        return newton_refine(guess, v_neg_half, plan.rms_iterations,
+                             tag + "rms_newton", layer_bootstraps);
+      });
+      ckks_levels[tag + "block_inv"] = static_cast<int>(inv_block->GetLevel());
+      debug_value_stats(inv_block, tag + "block_inv");
+
+      auto proj_ct = time_phase("in_proj_bsgs", [&]() {
+        auto babies = slot_bsgs_precompute_baby_rotations(cc, hidden_ct, kBabyStepIn, rotations);
+        auto linear = slot_bsgs_linear_block0_from_babies(
+            cc, babies, plan.in_w_folded, d_model, proj_dim, kBabyStepIn, batch_size,
+            rotations, ct_pt_muls, adds, plan.in_proj_table, &pt_cache_hits,
+            &pt_cache_misses, effective_encode_threads, stream_stride);
+        return mul_aligned(linear, inv_block);
+      });
+      // Checkpoint: proj feeds the conv FIFO and the conv/gate/dt branches.
+      maybe_bootstrap(proj_ct, plan.req_proj, tag + "proj", layer_bootstraps);
+      ckks_levels[tag + "proj"] = static_cast<int>(proj_ct->GetLevel());
+      debug_value_stats(proj_ct, tag + "proj");
+
+      // Conv FIFO: taps multiply xBC slots of the raw proj ciphertexts, the
+      // silu-domain affine map is folded into taps/bias, and the poly output
+      // is rotated from proj coordinates into the packed x|B|C layout.
+      runtime.conv_fifo.push_back(proj_ct);
+      if (static_cast<int>(runtime.conv_fifo.size()) > conv_kernel) {
+        runtime.conv_fifo.erase(runtime.conv_fifo.begin());
+      }
+      for (std::size_t position = 0; position < runtime.conv_fifo.size(); ++position) {
+        maybe_bootstrap(runtime.conv_fifo[position], plan.req_fifo,
+                        tag + "fifo" + std::to_string(position), layer_bootstraps);
+      }
+      auto conv_u = time_phase("conv_fifo", [&]() {
+        Ciphertext<DCRTPoly> accumulator;
+        bool has_accumulator = false;
+        const int fifo_size = static_cast<int>(runtime.conv_fifo.size());
+        for (int position = 0; position < fifo_size; ++position) {
+          const int tap = conv_kernel - fifo_size + position;
+          auto term = mul_mask(runtime.conv_fifo[static_cast<std::size_t>(position)],
+                               plan.cache_prefix + "tap" + std::to_string(tap),
+                               plan.conv_tap_masks[static_cast<std::size_t>(tap)]);
+          if (!has_accumulator) {
+            accumulator = term;
+            has_accumulator = true;
+          } else {
+            // FIFO entries can sit at different levels after a bootstrap
+            // refresh, so align before adding.
+            accumulator = add_aligned(accumulator, term);
+          }
+        }
+        return add_const_vector(accumulator, plan.cache_prefix + "conv_const",
+                                plan.conv_const);
+      });
+      auto conv_packed = time_phase("conv_silu_poly", [&]() {
+        auto activated = eval_chebyshev(conv_u, plan.conv_coeffs);
+        return rotate(activated, xbc0);
+      });
+      // Checkpoint: conv_silu output feeds x/B/C expands, updates, readout.
+      maybe_bootstrap(conv_packed, plan.req_conv, tag + "conv_silu", layer_bootstraps);
+      ckks_levels[tag + "conv_silu"] = static_cast<int>(conv_packed->GetLevel());
+      debug_value_stats(conv_packed, tag + "conv_silu");
+
+      auto gate_ct = time_phase("gate_silu_poly", [&]() {
+        auto u = add_scalar(mul_mask(proj_ct, plan.cache_prefix + "gate_mask", plan.gate_mask),
+                            plan.b_gate);
+        return eval_chebyshev(u, plan.gate_coeffs);
+      });
+      ckks_levels[tag + "gate_silu"] = static_cast<int>(gate_ct->GetLevel());
+      debug_value_stats(gate_ct, tag + "gate_silu");
+
+      auto dt_ct = time_phase("dt_softplus_poly", [&]() {
+        auto u = add_const_vector(mul_mask(proj_ct, plan.cache_prefix + "dt_mask", plan.dt_mask),
+                                  plan.cache_prefix + "dt_const", plan.dt_const);
+        auto root = eval_chebyshev(u, plan.dt_coeffs);
+        ++ct_ct_muls;
+        return cc->EvalMult(root, root);  // cheb-squared: softplus >= 0
+      });
+      // Checkpoint: dt feeds the decay polynomial (whose depth includes the
+      // per-layer range-reduction squarings) and the dt expand.
+      maybe_bootstrap(dt_ct, plan.req_dt, tag + "dt", layer_bootstraps);
+      ckks_levels[tag + "dt"] = static_cast<int>(dt_ct->GetLevel());
+      debug_value_stats(dt_ct, tag + "dt");
+
+      auto decay_ct = time_phase("decay_exp_poly", [&]() {
+        auto u = add_scalar(mul_mask(dt_ct, plan.cache_prefix + "a_vec", plan.a_vec),
+                            plan.b_exp);
+        auto value = eval_chebyshev(u, plan.exp_coeffs);
+        for (int squaring = 0; squaring < plan.exp_squarings; ++squaring) {
+          ++ct_ct_muls;
+          value = cc->EvalMult(value, value);
+        }
+        return value;
+      });
+      // Checkpoint: decay feeds the per-group expand and the state multiply.
+      maybe_bootstrap(decay_ct, plan.req_decay, tag + "decay", layer_bootstraps);
+      ckks_levels[tag + "decay"] = static_cast<int>(decay_ct->GetLevel());
+      debug_value_stats(decay_ct, tag + "decay");
+
+      // SSM mid-section. Each stream owns a full-batch state layout, so the
+      // packed multi-stream conv/dt/decay ciphertexts are shifted to stream
+      // base 0 (composite power-of-two rotations, no new keys), the existing
+      // per-group expansions/update/readout run per stream on the stream's
+      // replicated state ciphertexts, and each stream's packed y is shifted
+      // back to its stride. streams == 1 executes exactly the previous code.
+      Ciphertext<DCRTPoly> y_ssm;
+      bool has_y = false;
+      for (int stream = 0; stream < args.streams; ++stream) {
+        const auto conv_stream =
+            stream == 0 ? conv_packed
+                        : rotate_composite(conv_packed, stream * stream_stride);
+        const auto dt_stream =
+            stream == 0 ? dt_ct : rotate_composite(dt_ct, stream * stream_stride);
+        const auto decay_stream =
+            stream == 0 ? decay_ct : rotate_composite(decay_ct, stream * stream_stride);
+        auto b_expanded = time_phase("bc_expand", [&]() {
+          return place_state_blocks(conv_stream, packing.b_base);
+        });
+        auto c_expanded = time_phase("bc_expand", [&]() {
+          return place_state_blocks(conv_stream, packing.c_base);
+        });
+        if (stream == 0) {
+          ckks_levels[tag + "bc_expand"] = static_cast<int>(b_expanded->GetLevel());
+          debug_value_stats(b_expanded, tag + "bc_expand");
+        }
+        Ciphertext<DCRTPoly> y_stream;
+        bool has_y_stream = false;
+        for (int group = 0; group < group_count; ++group) {
+          const auto state_slot =
+              static_cast<std::size_t>(stream * group_count + group);
+          const std::string state_name =
+              "state" + std::to_string(stream * group_count + group);
+          auto x_group = time_phase("x_expand", [&]() { return expand_x(conv_stream, group); });
+          auto dt_group =
+              time_phase("dt_expand", [&]() { return place_heads(dt_stream, group); });
+          auto decay_group =
+              time_phase("decay_expand", [&]() { return place_heads(decay_stream, group); });
+          if (runtime.has_state) {
+            maybe_bootstrap(runtime.state_cts[state_slot], plan.req_state_pre,
+                            tag + state_name, layer_bootstraps);
+          }
+          time_phase("state_update", [&]() {
+            auto dtx = mul_aligned(x_group, dt_group);
+            auto update = mul_aligned(dtx, b_expanded->Clone());
+            if (!runtime.has_state) {
+              runtime.state_cts[state_slot] = update;
+            } else {
+              auto decayed = mul_aligned(decay_group, runtime.state_cts[state_slot]);
+              runtime.state_cts[state_slot] = add_aligned(decayed, update);
+            }
+          });
+          // Checkpoint: the updated state feeds this token's readout and is
+          // the carried lineage for the next token.
+          maybe_bootstrap(runtime.state_cts[state_slot], plan.req_state_tail,
+                          tag + "state_post" + std::to_string(stream * group_count + group),
+                          layer_bootstraps);
+          ckks_levels[tag + state_name] =
+              static_cast<int>(runtime.state_cts[state_slot]->GetLevel());
+          debug_value_stats(runtime.state_cts[state_slot], tag + state_name);
+          auto y_group = time_phase("readout", [&]() {
+            auto readout =
+                mul_aligned(runtime.state_cts[state_slot]->Clone(), c_expanded->Clone());
+            for (int k = 0; k < int_log2(state_size); ++k) {
+              readout = add_aligned(readout, rotate(readout, group_block << k));
+            }
+            auto masked = mul_mask(readout, "mask.group", group_mask);
+            return rotate(masked, -group_block * group);
+          });
+          if (!has_y_stream) {
+            y_stream = y_group;
+            has_y_stream = true;
+          } else {
+            y_stream = add_aligned(y_stream, y_group);
+          }
+        }
+        if (stream != 0) {
+          y_stream = rotate_composite(y_stream, -stream * stream_stride);
+        }
+        if (!has_y) {
+          y_ssm = y_stream;
+          has_y = true;
+        } else {
+          y_ssm = add_aligned(y_ssm, y_stream);
+        }
+      }
+      runtime.has_state = true;
+
+      auto y_ct = time_phase("skip_gate", [&]() {
+        auto skip = mul_mask(conv_packed, plan.cache_prefix + "d_vec", plan.d_vec);
+        auto combined = add_aligned(y_ssm, skip);
+        return mul_aligned(combined, gate_ct);
+      });
+      // Checkpoint: y enters the gated-norm variance chain and out_proj.
+      maybe_bootstrap(y_ct, plan.req_y, tag + "y", layer_bootstraps);
+      ckks_levels[tag + "y"] = static_cast<int>(y_ct->GetLevel());
+      debug_value_stats(y_ct, tag + "y");
+
+      // Gated RMSNorm on V2 = sum(y^2) + d_inner*eps with constant-guess
+      // Newton; sqrt(w) and the gated norm weights are folded into out_proj,
+      // and inv2 (uniform broadcast) is applied after the BSGS matmul.
+      auto inv_gated = time_phase("gated_norm", [&]() {
+        ++ct_ct_muls;
+        auto squared = cc->EvalMult(y_ct, y_ct);
+        auto variance = norm_variance_sum(squared);
+        variance = add_scalar(variance, d_inner * plan.eps_gated);
+        // First iteration on the constant guess is affine in V.
+        const double c0 = plan.gated_guess_v;
+        auto y_first = add_scalar(scaled_clone(variance, -0.5 * c0 * c0 * c0), 1.5 * c0);
+        auto v_neg_half = scaled_clone(variance, -0.5);
+        return newton_refine(y_first, v_neg_half, plan.gated_iterations - 1,
+                             tag + "gated_newton", layer_bootstraps);
+      });
+      ckks_levels[tag + "gated_inv"] = static_cast<int>(inv_gated->GetLevel());
+      debug_value_stats(inv_gated, tag + "gated_inv");
+
+      // Checkpoint: y again before out_proj (usually a no-op; fires only if
+      // the gated-norm segment left it deeper than the BSGS entry allows).
+      maybe_bootstrap(y_ct, plan.req_out, tag + "y_out", layer_bootstraps);
+      auto out_ct = time_phase("out_proj_bsgs", [&]() {
+        auto babies = slot_bsgs_precompute_baby_rotations(cc, y_ct, kBabyStepOut, rotations);
+        auto linear = slot_bsgs_linear_block0_from_babies(
+            cc, babies, plan.out_w_folded, d_inner, d_model, kBabyStepOut, batch_size,
+            rotations, ct_pt_muls, adds, plan.out_proj_table, &pt_cache_hits,
+            &pt_cache_misses, effective_encode_threads, stream_stride);
+        return mul_aligned(linear, inv_gated);
+      });
+      auto layer_output = time_phase("residual_add", [&]() {
+        return add_aligned(out_ct, hidden_ct->Clone());
+      });
+      ckks_levels[tag + "output"] = static_cast<int>(layer_output->GetLevel());
+      debug_value_stats(layer_output, tag + "output");
+      return layer_output;
+    };
+
+    // -----------------------------------------------------------------------
+    // Token loop: per-layer state + conv FIFO stay ciphertext, residual is a
+    // ciphertext handoff between layers, no intermediate decrypts.
+    // -----------------------------------------------------------------------
+    const auto eval_start = now();
+    log_phase("token loop begin tokens=" + std::to_string(args.tokens) +
+              " layers=" + std::to_string(layers_loaded));
+    std::vector<LayerRuntime> layer_runtimes(layer_payloads.size());
+    for (auto& runtime : layer_runtimes) {
+      runtime.state_cts.resize(static_cast<std::size_t>(group_count * args.streams));
+    }
+    std::vector<Ciphertext<DCRTPoly>> token_outputs;
+    std::vector<int> token_bootstrap_counts;
+    std::map<std::string, int> summary_level_in;
+    std::map<std::string, int> summary_level_out;
+    std::map<std::string, double> debug_boundary_errors;
+    std::map<std::string, int> summary_bootstraps;
+    auto layer_key = [](int token, int layer) {
+      std::string layer_text = std::to_string(layer);
+      if (layer_text.size() < 2) {
+        layer_text.insert(layer_text.begin(), '0');
+      }
+      return "t" + std::to_string(token) + ".L" + layer_text;
+    };
+    const std::vector<double>& input_vectors =
+        chain_mode ? chain.input_embeddings
+                   : layer_payloads.front().tensors.at("test_layer_input");
+
+    for (int token = 0; token < args.tokens; ++token) {
+      if (args.bootstrap_before_token.count(token) > 0) {
+        const auto bootstrap_start = now();
+        time_phase("bootstrap", [&]() {
+          for (auto& runtime : layer_runtimes) {
+            if (!runtime.has_state) {
+              continue;
+            }
+            for (auto& state_ct : runtime.state_cts) {
+              state_ct = cc->EvalBootstrap(state_ct);
+              ++bootstraps;
+            }
+            for (auto& fifo_ct : runtime.conv_fifo) {
+              fifo_ct = cc->EvalBootstrap(fifo_ct);
+              ++bootstraps;
+            }
+          }
+        });
+        bootstrap_eval_seconds += seconds_since(bootstrap_start);
+        log_phase("bootstrap before token " + std::to_string(token) + " done");
+      }
+
+      // Encrypt this token's layer input / embedding exactly once.
+      auto hidden_ct = time_phase("encrypt_input", [&]() {
+        std::vector<double> hidden(batch, 0.0);
+        for (int stream = 0; stream < args.streams; ++stream) {
+          const auto base = static_cast<std::size_t>(stream * stream_stride);
+          for (int slot = 0; slot < d_model; ++slot) {
+            hidden[base + static_cast<std::size_t>(slot)] =
+                input_vectors[static_cast<std::size_t>(token) * d_model + slot];
+          }
+        }
+        return encrypt_values(hidden);
+      });
+
+      int token_bootstraps_total = 0;
+      for (int layer = 0; layer < layers_loaded; ++layer) {
+        const std::string key = layer_key(token, layer);
+        const std::string tag = key + ".";
+        int layer_bootstraps = 0;
+        maybe_bootstrap(hidden_ct, layer_plans[static_cast<std::size_t>(layer)].req_residual,
+                        tag + "residual", layer_bootstraps);
+        summary_level_in[key] = static_cast<int>(hidden_ct->GetLevel());
+        hidden_ct = run_layer(layer_plans[static_cast<std::size_t>(layer)],
+                              layer_runtimes[static_cast<std::size_t>(layer)],
+                              hidden_ct, tag, layer_bootstraps);
+        summary_level_out[key] = static_cast<int>(hidden_ct->GetLevel());
+        summary_bootstraps[key] = layer_bootstraps;
+        token_bootstraps_total += layer_bootstraps;
+        if (args.debug_layer_errors) {
+          const auto& boundary =
+              layer_plans[static_cast<std::size_t>(layer)].test_layer_output;
+          const auto slots =
+              decrypt_slots(cc, keys.secretKey, hidden_ct,
+                            static_cast<std::size_t>(d_model));
+          double boundary_error = 0.0;
+          int non_finite = 0;
+          for (int slot = 0; slot < d_model; ++slot) {
+            const double diff = std::abs(
+                slots[static_cast<std::size_t>(slot)] -
+                boundary[static_cast<std::size_t>(token) * d_model + slot]);
+            if (!std::isfinite(diff)) {
+              ++non_finite;
+              continue;
+            }
+            boundary_error = std::max(boundary_error, diff);
+          }
+          if (non_finite > 0) {
+            boundary_error = 1.0e308;
+          }
+          debug_boundary_errors[key] = boundary_error;
+          log_phase("DEBUG boundary " + key + " error=" +
+                    std::to_string(boundary_error) +
+                    " non_finite=" + std::to_string(non_finite));
+        }
+        log_phase(key + " done output_level=" + std::to_string(hidden_ct->GetLevel()) +
+                  " bootstraps=" + std::to_string(layer_bootstraps));
+      }
+
+      if (full_chain) {
+        int final_bootstraps = 0;
+        maybe_bootstrap(hidden_ct, final_norm_requirement,
+                        "t" + std::to_string(token) + ".final_norm", final_bootstraps);
+        hidden_ct = time_phase("final_norm", [&]() {
+          ++ct_ct_muls;
+          auto squared = cc->EvalMult(hidden_ct, hidden_ct);
+          auto variance = norm_variance_sum(squared);
+          variance = add_scalar(variance, d_model * chain.final_norm_eps);
+          auto u = add_scalar(scaled_clone(variance, final_a_rms_v), final_b_rms);
+          auto guess = eval_chebyshev(u, final_rms_coeffs);
+          auto v_neg_half = scaled_clone(variance, -0.5);
+          auto inv = newton_refine(guess, v_neg_half, final_rms_iterations,
+                                   "t" + std::to_string(token) + ".final_newton",
+                                   final_bootstraps);
+          auto normed = mul_aligned(hidden_ct, inv);
+          return mul_mask(normed, "final.norm_w", final_w_vec);
+        });
+        token_bootstraps_total += final_bootstraps;
+        ckks_levels["t" + std::to_string(token) + ".final_norm"] =
+            static_cast<int>(hidden_ct->GetLevel());
+      }
+      token_outputs.push_back(hidden_ct);
+      token_bootstrap_counts.push_back(token_bootstraps_total);
+      log_phase("token " + std::to_string(token) + " done output_level=" +
+                std::to_string(hidden_ct->GetLevel()) +
+                " bootstraps=" + std::to_string(token_bootstraps_total));
+    }
+    const double eval_seconds = seconds_since(eval_start);
+    log_phase("token loop done rotations=" + std::to_string(rotations) +
+              " ct_pt=" + std::to_string(ct_pt_muls) + " ct_ct=" + std::to_string(ct_ct_muls) +
+              " bootstraps=" + std::to_string(bootstraps));
+
+    // -----------------------------------------------------------------------
+    // Decrypt per-token outputs (only after the loop) and compare.
+    // -----------------------------------------------------------------------
+    const auto decrypt_start = now();
+    log_phase("decrypt begin");
+    // Single layer: compare against the layer's test vectors. Truncated
+    // chain: the residual after the last loaded layer must match that layer's
+    // exact-op boundary vectors. Full chain: compare the final-norm output.
+    const std::vector<double>& test_output =
+        chain_mode ? (full_chain ? chain.expected_final
+                                 : layer_payloads.back().tensors.at("test_layer_output"))
+                   : layer_payloads.front().tensors.at("test_layer_output");
+    std::vector<double> per_token_errors;
+    std::vector<double> token0_decrypted_sample;
+    std::vector<double> token0_expected_sample;
+    double max_error = 0.0;
+    double max_interstream_deviation = 0.0;
+    for (int token = 0; token < args.tokens; ++token) {
+      // Decrypt through the last stream's stride; every stream's output is
+      // compared against the same reference (v1 streams carry identical data
+      // through circuit-independent lineages, so agreement IS the check).
+      const auto decrypt_length = static_cast<std::size_t>(
+          (args.streams - 1) * stream_stride + d_model);
+      const auto slots = decrypt_slots(
+          cc, keys.secretKey, token_outputs[static_cast<std::size_t>(token)],
+          decrypt_length);
+      if (token == 0) {
+        for (int slot = 0; slot < std::min(8, d_model); ++slot) {
+          token0_decrypted_sample.push_back(slots[static_cast<std::size_t>(slot)]);
+          token0_expected_sample.push_back(test_output[static_cast<std::size_t>(slot)]);
+        }
+      }
+      double token_error = 0.0;
+      int non_finite_slots = 0;
+      for (int stream = 0; stream < args.streams; ++stream) {
+        const auto base = static_cast<std::size_t>(stream * stream_stride);
+        for (int slot = 0; slot < d_model; ++slot) {
+          const double decrypted = slots[base + static_cast<std::size_t>(slot)];
+          const double reference =
+              test_output[static_cast<std::size_t>(token) * d_model + slot];
+          const double diff = std::abs(decrypted - reference);
+          if (!std::isfinite(diff)) {
+            // NaN/Inf must fail loudly: std::max(0.0, NaN) silently returns
+            // 0.0 and would report a broken decrypt as a perfect one.
+            ++non_finite_slots;
+            continue;
+          }
+          token_error = std::max(token_error, diff);
+          if (stream > 0) {
+            const double stream0_value = slots[static_cast<std::size_t>(slot)];
+            const double deviation = std::abs(decrypted - stream0_value);
+            if (std::isfinite(deviation)) {
+              max_interstream_deviation = std::max(max_interstream_deviation, deviation);
+            }
+          }
+        }
+      }
+      if (non_finite_slots > 0) {
+        // JSON-safe sentinel (prints as a finite double, always > tolerance).
+        token_error = 1.0e308;
+      }
+      per_token_errors.push_back(token_error);
+      max_error = std::max(max_error, token_error);
+      log_phase("token " + std::to_string(token) + " max_abs_error=" +
+                std::to_string(token_error) +
+                " non_finite_slots=" + std::to_string(non_finite_slots) +
+                " slot0=" + std::to_string(slots[0]) +
+                " ref0=" + std::to_string(test_output[static_cast<std::size_t>(token) * d_model]));
+    }
+    const double decrypt_seconds = seconds_since(decrypt_start);
+    log_phase("decrypt done");
+    const bool passed = max_error <= args.tolerance;
+
+    std::ostringstream out;
+    out << "{";
+    write_artifact_prefix(out, args);
+    out << "\"status\":\"" << (passed ? "passed" : "failed") << "\",";
+    out << "\"passed\":" << (passed ? "true" : "false") << ",";
+    out << "\"parameters\":{";
+    out << "\"d_model\":" << d_model << ",";
+    out << "\"d_inner\":" << d_inner << ",";
+    out << "\"num_heads\":" << heads << ",";
+    out << "\"head_dim\":" << head_dim << ",";
+    out << "\"state_size\":" << state_size << ",";
+    out << "\"n_groups\":" << dims_payload.n_groups << ",";
+    out << "\"conv_kernel\":" << conv_kernel << ",";
+    out << "\"conv_dim\":" << conv_dim << ",";
+    out << "\"proj_dim\":" << proj_dim << ",";
+    out << "\"state_group_count\":" << group_count << ",";
+    out << "\"batch_size\":" << batch_size << ",";
+    out << "\"ring_dimension\":" << args.ring_dim << ",";
+    out << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
+    out << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
+    out << "\"first_mod_size\":" << args.first_mod_size << ",";
+    out << "\"security\":\"" << json_escape(args.security) << "\",";
+    out << "\"secret_key_dist\":\"" << json_escape(args.secret_key_dist) << "\",";
+    out << "\"tokens\":" << args.tokens << ",";
+    out << "\"tolerance\":" << args.tolerance << ",";
+    out << "\"baby_step_in\":" << kBabyStepIn << ",";
+    out << "\"baby_step_out\":" << kBabyStepOut << ",";
+    out << "\"chain_mode\":" << (chain_mode ? "true" : "false") << ",";
+    out << "\"n_layers_total\":" << (chain_mode ? chain.n_layers : 1) << ",";
+    out << "\"n_layers_loaded\":" << layers_loaded << ",";
+    out << "\"max_layers\":" << args.max_layers << ",";
+    out << "\"final_norm_applied\":" << (full_chain ? "true" : "false") << ",";
+    out << "\"auto_bootstrap_headroom\":" << args.auto_bootstrap_headroom << ",";
+    out << "\"streams\":" << args.streams << ",";
+    out << "\"stream_stride\":" << stream_stride << ",";
+    out << "\"bootstrap_norm_margin\":" << args.bootstrap_norm_margin << ",";
+    out << "\"bootstrap_before_token\":";
+    write_int_set_json(out, args.bootstrap_before_token);
+    out << "},";
+    out << "\"measurements\":{";
+    out.precision(12);  // show real CKKS noise digits in errors and samples
+    out << "\"max_abs_error\":" << max_error << ",";
+    out << "\"per_token_max_abs_error\":";
+    write_double_vector_json(out, per_token_errors);
+    out << ",";
+    out << "\"token0_decrypted_sample\":";
+    write_double_vector_json(out, token0_decrypted_sample);
+    out << ",";
+    out << "\"token0_expected_sample\":";
+    write_double_vector_json(out, token0_expected_sample);
+    out << ",";
+    out << "\"max_interstream_deviation\":" << max_interstream_deviation << ",";
+    out << "\"per_token_bootstrap_count\":";
+    write_int_vector_json(out, token_bootstrap_counts);
+    out << ",";
+    out << "\"required_application_rotation_key_count\":" << rotation_indices.size() << ",";
+    out << "\"estimated_token_output_levels\":";
+    write_int_vector_json(out, depth_estimate.token_output_levels);
+    out << ",";
+    out << "\"estimated_required_depth_without_bootstrap\":" << depth_estimate.required_depth
+        << ",";
+    out << "\"segment_requirements\":{";
+    out << "\"residual\":" << depth_estimate.req_residual << ",";
+    out << "\"proj\":" << depth_estimate.req_proj << ",";
+    out << "\"fifo\":" << depth_estimate.req_fifo << ",";
+    out << "\"conv\":" << depth_estimate.req_conv << ",";
+    out << "\"dt_decay\":" << depth_estimate.req_dt << ",";
+    out << "\"decay\":" << depth_estimate.req_decay << ",";
+    out << "\"state_pre\":" << depth_estimate.req_state_pre << ",";
+    out << "\"state_tail\":" << depth_estimate.req_state_tail << ",";
+    out << "\"y_gated\":" << depth_estimate.req_y << ",";
+    out << "\"y_out\":" << depth_estimate.req_out << ",";
+    out << "\"newton_iteration\":2,";
+    out << "\"max_segment\":" << depth_estimate.max_segment << ",";
+    out << "\"assumed_bootstrap_output_level\":" << kAssumedBootstrapOutputLevel;
+    out << "},";
+    out << "\"plaintext_coefficient_floor\":" << kPlaintextCoefficientFloor << ",";
+    out << "\"pt_cache\":{";
+    out << "\"mode\":\"" << json_escape(pt_cache_mode) << "\",";
+    out << "\"budget_gib\":" << args.pt_cache_gib << ",";
+    out << "\"encode_level\":" << args.pt_cache_level << ",";
+    out << "\"bytes_per_plaintext\":" << pt_plain_bytes << ",";
+    out << "\"entries_registered\":" << plain_cache.size() << ",";
+    out << "\"entries_cached\":" << pt_cache_entries_cached << ",";
+    out << "\"bytes_cached_gib\":"
+        << (pt_cache_entries_cached * pt_plain_bytes / (1024.0 * 1024.0 * 1024.0)) << ",";
+    out << "\"hits\":" << pt_cache_hits << ",";
+    out << "\"misses\":" << pt_cache_misses << ",";
+    out << "\"encode_seconds\":" << pt_cache_encode_seconds << ",";
+    out << "\"encode_threads_requested\":" << args.encode_threads << ",";
+    out << "\"encode_threads_effective\":" << effective_encode_threads << ",";
+    out << "\"encode_selftest\":\"" << json_escape(encode_selftest_result) << "\",";
+    out << "\"pt_reuse_check\":\"" << json_escape(pt_reuse_check_result) << "\"";
+    out << "},";
+    out << "\"executed_bootstrap_count\":" << bootstraps << ",";
+    out << "\"peak_rss_gib\":" << peak_rss_gib() << ",";
+    out << "\"rss_gib\":" << rss_gib();
+    out << "},";
+    out << "\"layer_token_summary\":{";
+    {
+      bool first_summary = true;
+      for (const auto& [key, level_in] : summary_level_in) {
+        if (!first_summary) {
+          out << ",";
+        }
+        first_summary = false;
+        out << "\"" << json_escape(key) << "\":{";
+        out << "\"level_in\":" << level_in << ",";
+        out << "\"level_out\":" << summary_level_out[key] << ",";
+        out << "\"bootstraps\":" << summary_bootstraps[key];
+        if (args.debug_layer_errors && debug_boundary_errors.count(key) > 0) {
+          out << ",\"debug_boundary_error\":" << debug_boundary_errors[key];
+        }
+        out << "}";
+      }
+    }
+    out << "},";
+    out << "\"ckks_levels\":";
+    write_int_map_json(out, ckks_levels);
+    out << ",";
+    out << "\"timing\":{";
+    out << "\"setup_seconds\":" << setup_seconds << ",";
+    out << "\"pt_cache_encode_seconds\":" << pt_cache_encode_seconds << ",";
+    out << "\"rotate_keygen_seconds\":" << rotate_keygen_seconds << ",";
+    out << "\"bootstrap_precompute_seconds\":" << bootstrap_precompute_seconds << ",";
+    out << "\"bootstrap_eval_seconds\":" << bootstrap_eval_seconds << ",";
+    out << "\"load_context_seconds\":" << load_context_seconds << ",";
+    out << "\"eval_seconds\":" << eval_seconds << ",";
+    out << "\"decrypt_seconds\":" << decrypt_seconds;
+    out << "},";
+    out << "\"phase_timings\":";
+    write_double_map_json(out, phase_timings);
+    out << ",";
+    out << "\"phase_operation_counts\":";
+    write_phase_operation_counts_json(out, phase_operation_counts);
+    out << ",";
+    out << "\"operation_counts\":{";
+    out << "\"rotations\":" << rotations << ",";
+    out << "\"ct_pt_mul\":" << ct_pt_muls << ",";
+    out << "\"ct_ct_mul\":" << ct_ct_muls << ",";
+    out << "\"adds\":" << adds << ",";
+    out << "\"unity_level_align_muls\":" << unity_multiplies << ",";
+    out << "\"bootstraps\":" << bootstraps;
+    out << "},";
+    out << "\"measurement_scope\":{";
+    out << "\"mamba2_full_width_layer_circuit\":true,";
+    out << "\"multi_layer_ciphertext_residual_handoff\":" << (chain_mode ? "true" : "false")
+        << ",";
+    out << "\"layers_loaded\":" << layers_loaded << ",";
+    out << "\"full_layer_chain\":" << (full_chain ? "true" : "false") << ",";
+    out << "\"final_norm_applied\":" << (full_chain ? "true" : "false") << ",";
+    out << "\"multi_token_ciphertext_state_carry\":true,";
+    out << "\"ciphertext_conv_fifo\":true,";
+    out << "\"zero_intermediate_decrypts\":"
+        << ((args.debug_decrypt || args.debug_layer_errors) ? "false" : "true") << ",";
+    out << "\"per_token_fresh_embedding_encryption\":true,";
+    out << "\"multi_stream_slot_packing\":" << (args.streams > 1 ? "true" : "false") << ",";
+    out << "\"streams\":" << args.streams << ",";
+    out << "\"streams_carry_identical_data\":" << (args.streams > 1 ? "true" : "false")
+        << ",";
+    out << "\"tokens\":" << args.tokens << ",";
+    out << "\"auto_bootstrap_policy\":" << (bootstrap_available ? "true" : "false") << ",";
+    out << "\"scheduled_bootstrap\":"
+        << (args.bootstrap_before_token.empty() ? "false" : "true") << ",";
+    out << "\"bootstrap_before_token\":";
+    write_int_set_json(out, args.bootstrap_before_token);
+    out << ",";
+    out << "\"executed_bootstrap_count\":" << bootstraps << ",";
+    out << "\"ckks_level_telemetry\":true,";
+    out << "\"fideslib_encrypted_execution\":true,";
+    out << "\"full_model_correctness_claimed\":false,";
+    out << "\"claim\":\"Native FIDESlib encrypted full-width Mamba-2 decode over one or "
+           "more checkpoint layers with ciphertext residual handoff, per-layer ciphertext "
+           "state and conv FIFO carry, and mid-circuit auto-bootstrap refresh; token "
+           "embeddings are encrypted fresh per token from payload test vectors. It does "
+           "not claim lm_head decoding or end-to-end model correctness beyond the loaded "
+           "layers.\"";
+    out << "},";
+    out << "\"notes\":[";
+    if (args.streams > 1) {
+      out << "\"multi-stream v1: all streams carry IDENTICAL data through "
+             "circuit-independent ciphertext lineages (replicated state, shared "
+             "stride-periodic plaintexts, shared rotations); per-stream agreement with "
+             "the reference is the correctness check, not independent throughput "
+             "content.\",";
+    }
+    out << "\"dgx runbook: FIDESlib v2.1.0 MAXP=64 caps towers (max depth 50 at scale 40, "
+           "44 at scale 59); EvalBootstrap needs scaling-mod >= 54 (dead at 40/50/52) and "
+           "outputs GetLevel=18 at depth 44/scale 59, warm cost 12-14 ms; run with "
+           "--scaling-mod-size 59 --multiplicative-depth 44, mid-circuit checkpoints keep "
+           "every lineage within the 26-level segment budget; ring 65536 fits GB10 "
+           "memory, ring 131072 keygen+LoadContext needs > 119 GB.\"";
+    out << "]";
+    out << "}";
+    write_payload(args.output_json, out.str());
+    return passed ? EXIT_SUCCESS : EXIT_FAILURE;
+  } catch (const std::exception& exc) {
+    if (args_available && !payload_file_exists(args.output_json)) {
+      try {
+        write_runtime_failure_payload(args, "runtime", exc.what());
+      } catch (const std::exception& write_exc) {
+        std::cerr << "failed to write runtime failure artifact: " << write_exc.what()
+                  << std::endl;
+      }
+    }
+    std::cerr << "stage1_mamba2_decode_fideslib failed: " << exc.what() << std::endl;
+    return EXIT_FAILURE;
+  }
+}

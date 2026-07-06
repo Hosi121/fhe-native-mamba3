@@ -56,6 +56,13 @@ if(FHE_STAGE0_BUILD_KERNEL)
   add_executable(stage1_rank_gate_fideslib src/stage1_rank_gate_fideslib.cpp)
   target_link_libraries(
     stage1_rank_gate_fideslib PRIVATE fideslib::fideslib stage1_rank_gate_payload stage1_tail_payload)
+
+  add_executable(stage1_mamba2_decode_fideslib src/stage1_mamba2_decode_fideslib.cpp)
+  target_link_libraries(
+    stage1_mamba2_decode_fideslib PRIVATE fideslib::fideslib stage1_rank_gate_payload stage1_tail_payload)
+
+  add_executable(fideslib_ctpt_probe src/fideslib_ctpt_probe.cpp)
+  target_link_libraries(fideslib_ctpt_probe PRIVATE fideslib::fideslib)
 endif()
 
 if(FHE_STAGE0_BUILD_TESTS)
