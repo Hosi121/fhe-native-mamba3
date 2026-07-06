@@ -171,3 +171,29 @@ Constraints carried over from the old repo's measurements:
 - `checkpoint_pre_recurrence.py` poly/Newton machinery — cross-check against
   `fhemamba.ops` fits.
 - Measured constants in `runs/` (bootstrap latency, rotation costs).
+
+## Token-1 divergence anatomy and the re-prefill protocol (2026-07-07)
+
+Full-24-layer measurements vs slot-sim: t0 0.041 vs sim 0.048 (poly error
+dominates, CKKS adds little); t1 1.197 vs sim 0.027. The only cross-token
+ciphertext lineages are the SSM states and conv FIFOs, so t1's blowup is
+their refresh noise (~1e-3) amplified ~x40-1000 through 24 layers of gate
+multiplications — depth acts as a noise amplifier. This is a different
+regime from the single-layer +4e-3/token linear trend.
+
+Fixes, in order:
+1. State-checkpoint bound tightening: per-layer measured |m| bounds for the
+   normalized refresh (margin 1.5 -> ~1.1) — refresh error scales with
+   magnitude, est. 5-20x.
+2. **Re-prefill re-anchoring (M3 protocol)**: the client holds its own token
+   history in plaintext (it decoded every token), so every K tokens the
+   server re-runs scan prefill from fresh encryptions instead of continuing
+   the state lineage. Zero added privacy surface; state age <= K. Amortized
+   cost = decode + prefill(T)/K per token (prefill ~6.7x cheaper per token
+   than decode): T=128, K=8 -> ~3.4x decode. K derived from the measured
+   layer-wise noise-amplification curve.
+
+Honesty notes for any throughput/latency claim: multi-stream S=8 batches
+sequences under ONE key (single tenant or trusted aggregator; no cross-user
+mixing), and 2^17 ciphertexts are ~4-8 MB each -> ~10-20 MB/token round trip
+(S-stream batching also amortizes the wire by S).

@@ -145,6 +145,17 @@ struct Config {
   // v1 replicates the single payload prompt across streams: per-stream
   // outputs must agree (identical data, circuit-independent lineages).
   int streams = 1;
+  // Rotation-key plan (128-bit needs ring 2^17 where ~194 direct keys are
+  // ~68 GiB and OOMed dgx; design in fhemamba/src/fhemamba/rotation_keys.py):
+  //   full     every required index gets a direct key (current behavior);
+  //   compact  only the signed power-of-two base keys that cover the NAF
+  //            decompositions actually used;
+  //   balanced base keys + the hottest non-base indices greedily by
+  //            frequency x (NAF weight - 1) under --rotation-key-gib.
+  // Composition happens inside the rotate() choke point; the math is
+  // identical in all modes (rotations compose exactly and consume no levels).
+  std::string rotation_keys = "full";
+  double rotation_key_gib = 45.0;
   double tolerance = 5e-2;
   std::set<int> bootstrap_before_token;
   int bootstrap_level_budget_cts = 5;
@@ -200,7 +211,9 @@ auto checkpoint_bound(const std::string& what) -> double {
 }
 
 struct OperationCounts {
-  int rotations = 0;
+  int rotations = 0;  // logical rotations (mode-independent)
+  int rotations_direct = 0;          // served by a direct key
+  int rotations_composite_steps = 0;  // NAF key applications for the rest
   int ct_pt_mul = 0;
   int ct_ct_mul = 0;
   int adds = 0;
@@ -209,6 +222,9 @@ struct OperationCounts {
 };
 
 using BabyRotationCache = std::map<int, Ciphertext<DCRTPoly>>;
+// Every EvalRotate goes through this choke point (built in main): direct key
+// if present, NAF-composed base-key applications otherwise.
+using RotateFn = std::function<Ciphertext<DCRTPoly>(const Ciphertext<DCRTPoly>&, int)>;
 
 auto now() -> std::chrono::steady_clock::time_point { return std::chrono::steady_clock::now(); }
 
@@ -218,6 +234,8 @@ auto seconds_since(std::chrono::steady_clock::time_point start) -> double {
 
 auto add_counts(OperationCounts lhs, const OperationCounts& rhs) -> OperationCounts {
   lhs.rotations += rhs.rotations;
+  lhs.rotations_direct += rhs.rotations_direct;
+  lhs.rotations_composite_steps += rhs.rotations_composite_steps;
   lhs.ct_pt_mul += rhs.ct_pt_mul;
   lhs.ct_ct_mul += rhs.ct_ct_mul;
   lhs.adds += rhs.adds;
@@ -230,6 +248,9 @@ auto subtract_counts(const OperationCounts& after, const OperationCounts& before
     -> OperationCounts {
   return OperationCounts{
       .rotations = after.rotations - before.rotations,
+      .rotations_direct = after.rotations_direct - before.rotations_direct,
+      .rotations_composite_steps =
+          after.rotations_composite_steps - before.rotations_composite_steps,
       .ct_pt_mul = after.ct_pt_mul - before.ct_pt_mul,
       .ct_ct_mul = after.ct_ct_mul - before.ct_ct_mul,
       .adds = after.adds - before.adds,
@@ -303,6 +324,10 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.encode_threads = parse_int(arg, value);
     } else if (arg == "--streams") {
       config.streams = parse_int(arg, value);
+    } else if (arg == "--rotation-keys") {
+      config.rotation_keys = value;
+    } else if (arg == "--rotation-key-gib") {
+      config.rotation_key_gib = parse_double_arg(arg, value);
     } else if (arg == "--output-json") {
       config.output_json = value;
     } else if (arg == "--artifact-version") {
@@ -378,6 +403,13 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.streams > 1 && !config.input_chain.empty()) {
     throw std::invalid_argument("streams > 1 requires --input (single-layer mode)");
+  }
+  if (config.rotation_keys != "full" && config.rotation_keys != "balanced" &&
+      config.rotation_keys != "compact") {
+    throw std::invalid_argument("rotation-keys must be full, balanced, or compact");
+  }
+  if (config.rotation_key_gib <= 0.0) {
+    throw std::invalid_argument("rotation-key-gib must be positive");
   }
   if (config.security != "not-set" && config.security != "128-classic") {
     throw std::invalid_argument("security must be not-set or 128-classic");
@@ -922,6 +954,147 @@ auto required_rotations(const M1Payload& payload, const PackingDims& dims)
 }
 
 // ---------------------------------------------------------------------------
+// Composite rotation keys (design: fhemamba/src/fhemamba/rotation_keys.py).
+// naf_steps is an exact port of rotation_keys.naf: the signed powers of two
+// (non-adjacent form) summing to value, e.g. 28 -> {32, -4}. Every rotation
+// then decomposes into applications of base keys +-2^k. EvalRotate is a pure
+// key switch in the proven kernels (no rescale, never level-aligned), so a
+// k-step composition consumes zero levels and the ledger is unchanged.
+// ---------------------------------------------------------------------------
+
+auto naf_steps(int value) -> std::vector<int> {
+  std::vector<int> steps;
+  if (value == 0) {
+    return steps;
+  }
+  long long v = value;
+  int k = 0;
+  while (v != 0) {
+    if ((v & 1) != 0) {
+      const long long digit = 2 - (v & 3);  // +-1, zeroing the low two bits
+      steps.push_back(static_cast<int>(digit << k));
+      v -= digit;
+    }
+    v >>= 1;
+    ++k;
+  }
+  return steps;
+}
+
+// Startup unit test over the exact index set the kernel will use.
+void verify_naf(const std::vector<int32_t>& indices) {
+  for (const int index : indices) {
+    long long sum = 0;
+    for (const int step : naf_steps(index)) {
+      const long long magnitude = step < 0 ? -static_cast<long long>(step) : step;
+      if (magnitude == 0 || (magnitude & (magnitude - 1)) != 0) {
+        throw std::runtime_error("NAF produced a non-power step for index " +
+                                 std::to_string(index));
+      }
+      sum += step;
+    }
+    if (sum != index) {
+      throw std::runtime_error("NAF decomposition does not sum to index " +
+                               std::to_string(index));
+    }
+  }
+}
+
+// Static per-token rotation frequencies (applications per token across the
+// loaded layers), keyed by exactly the required_rotations index set: the
+// per-site counts follow the same generators the evaluation uses, and the
+// planner asserts key-set equality so the two cannot drift apart.
+auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int layers,
+                          int streams, int stream_stride)
+    -> std::map<int32_t, double> {
+  std::map<int32_t, double> freq;
+  const double L = layers;
+  const double S = streams;
+  const double G = dims.group_count;
+  auto add = [&](int index, double count) {
+    if (index != 0) {
+      freq[static_cast<int32_t>(index)] += count;
+    }
+  };
+  // BSGS babies (one precompute per matmul per token-layer) and giants.
+  for (int baby = 1; baby < kBabyStepIn; ++baby) {
+    add(baby, L);
+  }
+  for (int baby = 1; baby < kBabyStepOut; ++baby) {
+    add(baby, L);
+  }
+  for (const int giant : slot_bsgs_giant_with_zero(payload.d_model, payload.proj_dim,
+                                                   kBabyStepIn)) {
+    add(giant, L);
+  }
+  for (const int giant : slot_bsgs_giant_with_zero(payload.d_inner, payload.d_model,
+                                                   kBabyStepOut)) {
+    add(giant, L);
+  }
+  // RMS variance reductions: two per layer (block + gated).
+  const int sum_bits = streams == 1 ? int_log2(dims.batch) : int_log2(stream_stride);
+  for (int k = 0; k < sum_bits; ++k) {
+    add(1 << k, 2.0 * L);
+  }
+  if (streams > 1) {
+    for (int k = 0; k < int_log2(stream_stride); ++k) {
+      add(-(1 << k), 2.0 * L);  // in-stride broadcast after the base mask
+    }
+  }
+  // Broadcast doubling fills.
+  for (int k = 0; k < int_log2(dims.group_block); ++k) {
+    add(-(1 << k), 2.0 * S * L);  // B/C block fills
+  }
+  for (int k = 0; k < int_log2(payload.head_dim); ++k) {
+    add(-(1 << k), 2.0 * G * S * L);  // dt/decay head fills
+  }
+  for (int k = 0; k < int_log2(payload.state_size); ++k) {
+    add(-(dims.group_block << k), 3.0 * G * S * L);  // x/dt/decay across n
+  }
+  // conv shift into the packed layout.
+  add(dims.xbc0, L);
+  // x expand group shifts, readout sums, group placement.
+  for (int g = 1; g < dims.group_count; ++g) {
+    add(dims.group_block * g, S * L);
+    add(-dims.group_block * g, S * L);
+  }
+  for (int k = 0; k < int_log2(payload.state_size); ++k) {
+    add(dims.group_block << k, G * S * L);
+  }
+  // B/C placement babies and giants.
+  const int stride = dims.group_block - 1;
+  const int giant_stride = dims.group_heads * stride;
+  for (const int base : {dims.b_base, dims.c_base}) {
+    for (int b = 0; b < dims.group_heads; ++b) {
+      add(base - stride * b, S * L);
+    }
+  }
+  for (int a = 1; a < payload.state_size / dims.group_heads; ++a) {
+    add(-giant_stride * a, 2.0 * S * L);
+  }
+  // dt/decay head placement.
+  for (int g = 0; g < dims.group_count; ++g) {
+    add(dims.dt0 + dims.group_heads * g, 2.0 * S * L);
+  }
+  for (int h = 1; h < dims.group_heads; ++h) {
+    add(-(payload.head_dim - 1) * h, 2.0 * G * S * L);
+  }
+  return freq;
+}
+
+// Hybrid key-switch key size estimate: dnum digits x 2 polys x ring x
+// (Q + Q/dnum) towers x 8 B. Calibrated 0.39 GiB/key at 2^17/d48/dnum3.
+constexpr int kRotationKeyDnumEstimate = 3;
+
+auto rotation_key_gib_estimate(int ring_dim, int multiplicative_depth) -> double {
+  const int q_towers = multiplicative_depth + 1;
+  const int p_towers =
+      (q_towers + kRotationKeyDnumEstimate - 1) / kRotationKeyDnumEstimate;
+  return static_cast<double>(kRotationKeyDnumEstimate) * 2.0 * ring_dim *
+         (q_towers + p_towers) * 8.0 / (1024.0 * 1024.0 * 1024.0);
+}
+
+// ---------------------------------------------------------------------------
 // BSGS ct-pt matmul machinery (copied from stage1_rank_gate_fideslib.cpp).
 // ---------------------------------------------------------------------------
 
@@ -956,15 +1129,16 @@ auto slot_bsgs_pre_mask(
 }
 
 auto slot_bsgs_precompute_baby_rotations(
-    const CryptoContext<DCRTPoly>& cc,
+    const RotateFn& rotate_fn,
     const Ciphertext<DCRTPoly>& input_ct,
-    int baby_step,
-    int& rotations) -> BabyRotationCache {
+    int baby_step) -> BabyRotationCache {
+  // Cache keys are LOGICAL rotation indices: any composite decomposition
+  // happens inside rotate_fn, so the cache (and every consumer indexing it)
+  // is transparent to the rotation-key plan.
   BabyRotationCache baby_ct;
   baby_ct[0] = input_ct;
   for (int baby = 1; baby < baby_step; ++baby) {
-    baby_ct[baby] = cc->EvalRotate(input_ct, baby);
-    ++rotations;
+    baby_ct[baby] = rotate_fn(input_ct, baby);
   }
   return baby_ct;
 }
@@ -980,13 +1154,13 @@ auto slot_bsgs_precompute_baby_rotations(
 // thread-safety self test before requesting threads > 1.
 auto slot_bsgs_linear_block0_from_babies(
     const CryptoContext<DCRTPoly>& cc,
+    const RotateFn& rotate_fn,
     const BabyRotationCache& baby_ct,
     const std::vector<double>& weights,
     int input_dim,
     int output_dim,
     int baby_step,
     int batch_size,
-    int& rotations,
     int& ct_pt_muls,
     int& adds,
     const std::vector<Plaintext>* plain_table,
@@ -1121,8 +1295,7 @@ auto slot_bsgs_linear_block0_from_babies(
       continue;
     }
     if (giant != 0) {
-      inner = cc->EvalRotate(inner, giant);
-      ++rotations;
+      inner = rotate_fn(inner, giant);
     }
     if (!has_accumulator) {
       accumulator = inner;
@@ -1458,6 +1631,8 @@ void write_int_map_json(
 void write_operation_counts_json(std::ostringstream& out, const OperationCounts& counts) {
   out << "{";
   out << "\"rotations\":" << counts.rotations << ",";
+  out << "\"rotations_direct\":" << counts.rotations_direct << ",";
+  out << "\"rotations_composite_steps\":" << counts.rotations_composite_steps << ",";
   out << "\"ct_pt_mul\":" << counts.ct_pt_mul << ",";
   out << "\"ct_ct_mul\":" << counts.ct_ct_mul << ",";
   out << "\"adds\":" << counts.adds << ",";
@@ -1669,8 +1844,97 @@ auto main(int argc, char* argv[]) -> int {
           std::to_string(stream_stride) + " < " + std::to_string(dims_payload.proj_dim) + ")");
     }
     // Rotation indices depend only on dims/packing, which are asserted equal
-    // across layers, so single-layer and chain mode share one key set.
+    // across layers, so single-layer and chain mode share one key set. This
+    // required set is the source of truth (logged to JSON for reconciliation
+    // with the Python planner).
     const auto rotation_indices = required_rotations(dims_payload, packing);
+    verify_naf(rotation_indices);
+    auto rotation_freqs = rotation_frequencies(dims_payload, packing, layers_loaded,
+                                               args.streams, stream_stride);
+    {
+      // Guard against generator/frequency drift: every counted index must be
+      // required, and every required index gets an entry (frequency 0 if a
+      // family only exists for another geometry, e.g. full-batch sums when
+      // streams > 1).
+      for (const auto& [index, frequency] : rotation_freqs) {
+        if (std::find(rotation_indices.begin(), rotation_indices.end(), index) ==
+            rotation_indices.end()) {
+          throw std::runtime_error("rotation frequency index " + std::to_string(index) +
+                                   " is not in the required set");
+        }
+        (void)frequency;
+      }
+      for (const int32_t index : rotation_indices) {
+        rotation_freqs.try_emplace(index, 0.0);
+      }
+    }
+    // Two-tier key plan: base = the signed powers of two covering every NAF
+    // decomposition actually used; balanced adds the hottest non-base keys by
+    // frequency x (NAF weight - 1) under the byte budget.
+    const double rotation_per_key_gib =
+        rotation_key_gib_estimate(args.ring_dim, args.multiplicative_depth);
+    std::set<int32_t> rotation_base_keys;
+    for (const int32_t index : rotation_indices) {
+      for (const int step : naf_steps(index)) {
+        rotation_base_keys.insert(static_cast<int32_t>(step));
+      }
+    }
+    std::set<int32_t> rotation_key_set;
+    if (args.rotation_keys == "full") {
+      rotation_key_set.insert(rotation_indices.begin(), rotation_indices.end());
+    } else {
+      rotation_key_set = rotation_base_keys;
+      if (args.rotation_keys == "balanced") {
+        std::vector<std::pair<double, int32_t>> candidates;
+        for (const auto& [index, frequency] : rotation_freqs) {
+          if (rotation_base_keys.count(index) > 0) {
+            continue;
+          }
+          const auto weight = static_cast<double>(naf_steps(index).size());
+          const double savings = frequency * (weight - 1.0);
+          if (savings > 0.0) {
+            candidates.emplace_back(savings, index);
+          }
+        }
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const auto& lhs, const auto& rhs) {
+                    if (lhs.first != rhs.first) {
+                      return lhs.first > rhs.first;
+                    }
+                    return std::abs(lhs.second) < std::abs(rhs.second);
+                  });
+        const auto affordable = static_cast<long long>(
+            args.rotation_key_gib / rotation_per_key_gib) -
+            static_cast<long long>(rotation_key_set.size());
+        long long taken = 0;
+        for (const auto& [savings, index] : candidates) {
+          if (taken >= affordable) {
+            break;
+          }
+          rotation_key_set.insert(index);
+          ++taken;
+          (void)savings;
+        }
+      }
+    }
+    // Planned composite applications per token (estimate for JSON).
+    double planned_composite_apps = 0.0;
+    for (const auto& [index, frequency] : rotation_freqs) {
+      if (rotation_key_set.count(index) == 0) {
+        planned_composite_apps +=
+            frequency * static_cast<double>(naf_steps(index).size());
+      }
+    }
+    const std::vector<int32_t> rotation_keygen_indices(rotation_key_set.begin(),
+                                                       rotation_key_set.end());
+    log_phase("rotation key plan mode=" + args.rotation_keys +
+              " required=" + std::to_string(rotation_indices.size()) +
+              " keys=" + std::to_string(rotation_keygen_indices.size()) +
+              " base=" + std::to_string(rotation_base_keys.size()) +
+              " est_gib=" +
+              std::to_string(rotation_keygen_indices.size() * rotation_per_key_gib) +
+              " planned_composite_apps_per_token=" +
+              std::to_string(planned_composite_apps));
     // Depth estimate per layer (degrees are frozen across layers, but the
     // decay range-reduction squarings differ); merge to the worst layer for
     // the segment map and geometry warning.
@@ -1758,8 +2022,9 @@ auto main(int argc, char* argv[]) -> int {
     cc->EvalMultKeyGen(keys.secretKey);
     log_phase("context setup done");
     const auto keygen_start = now();
-    log_phase("rotation keygen begin count=" + std::to_string(rotation_indices.size()));
-    cc->EvalRotateKeyGen(keys.secretKey, rotation_indices);
+    log_phase("rotation keygen begin mode=" + args.rotation_keys +
+              " count=" + std::to_string(rotation_keygen_indices.size()));
+    cc->EvalRotateKeyGen(keys.secretKey, rotation_keygen_indices);
     const double rotate_keygen_seconds = seconds_since(keygen_start);
     log_phase("rotation keygen done");
     double bootstrap_precompute_seconds = 0.0;
@@ -1790,6 +2055,8 @@ auto main(int argc, char* argv[]) -> int {
     // Counters, phase timing, elementary helpers.
     // -----------------------------------------------------------------------
     int rotations = 0;
+    int rotations_direct = 0;
+    int rotations_composite_steps = 0;
     int ct_pt_muls = 0;
     int ct_ct_muls = 0;
     int adds = 0;
@@ -1803,6 +2070,8 @@ auto main(int argc, char* argv[]) -> int {
     auto current_operation_counts = [&]() {
       return OperationCounts{
           .rotations = rotations,
+          .rotations_direct = rotations_direct,
+          .rotations_composite_steps = rotations_composite_steps,
           .ct_pt_mul = ct_pt_muls,
           .ct_ct_mul = ct_ct_muls,
           .adds = adds,
@@ -1958,12 +2227,32 @@ auto main(int argc, char* argv[]) -> int {
       auto plain = cached_plain(key, mask);
       return cc->EvalMult(ciphertext, plain);
     };
-    auto rotate = [&](const Ciphertext<DCRTPoly>& ciphertext, int amount) {
+    // Rotation choke point: EVERY EvalRotate goes through here. "rotations"
+    // counts logical rotations (mode-independent, so full mode stays
+    // bit-identical); direct/composite applications are tracked separately.
+    // EvalRotate is keyswitch-only (no rescale, never level-aligned in the
+    // proven kernels), so NAF composition consumes zero levels.
+    auto rotate = [&](const Ciphertext<DCRTPoly>& ciphertext, int amount)
+        -> Ciphertext<DCRTPoly> {
       if (amount == 0) {
         return ciphertext;
       }
       ++rotations;
-      return cc->EvalRotate(ciphertext, amount);
+      if (rotation_key_set.count(static_cast<int32_t>(amount)) > 0) {
+        ++rotations_direct;
+        return cc->EvalRotate(ciphertext, amount);
+      }
+      auto output = ciphertext;
+      for (const int step : naf_steps(amount)) {
+        if (rotation_key_set.count(static_cast<int32_t>(step)) == 0) {
+          throw std::runtime_error("missing rotation key for NAF step " +
+                                   std::to_string(step) + " of index " +
+                                   std::to_string(amount));
+        }
+        output = cc->EvalRotate(output, step);
+        ++rotations_composite_steps;
+      }
+      return output;
     };
     // ct += rot(ct, -stride) doubling ladder.
     auto doubling_fill = [&](Ciphertext<DCRTPoly> ciphertext, int base_stride, int steps) {
@@ -2912,10 +3201,10 @@ auto main(int argc, char* argv[]) -> int {
       debug_value_stats(inv_block, tag + "block_inv");
 
       auto proj_ct = time_phase("in_proj_bsgs", [&]() {
-        auto babies = slot_bsgs_precompute_baby_rotations(cc, hidden_ct, kBabyStepIn, rotations);
+        auto babies = slot_bsgs_precompute_baby_rotations(rotate, hidden_ct, kBabyStepIn);
         auto linear = slot_bsgs_linear_block0_from_babies(
-            cc, babies, plan.in_w_folded, d_model, proj_dim, kBabyStepIn, batch_size,
-            rotations, ct_pt_muls, adds, plan.in_proj_table, &pt_cache_hits,
+            cc, rotate, babies, plan.in_w_folded, d_model, proj_dim, kBabyStepIn, batch_size,
+            ct_pt_muls, adds, plan.in_proj_table, &pt_cache_hits,
             &pt_cache_misses, effective_encode_threads, stream_stride);
         return mul_aligned(linear, inv_block);
       });
@@ -3121,10 +3410,10 @@ auto main(int argc, char* argv[]) -> int {
       // the gated-norm segment left it deeper than the BSGS entry allows).
       maybe_bootstrap(y_ct, plan.req_out, tag + "y_out", layer_bootstraps);
       auto out_ct = time_phase("out_proj_bsgs", [&]() {
-        auto babies = slot_bsgs_precompute_baby_rotations(cc, y_ct, kBabyStepOut, rotations);
+        auto babies = slot_bsgs_precompute_baby_rotations(rotate, y_ct, kBabyStepOut);
         auto linear = slot_bsgs_linear_block0_from_babies(
-            cc, babies, plan.out_w_folded, d_inner, d_model, kBabyStepOut, batch_size,
-            rotations, ct_pt_muls, adds, plan.out_proj_table, &pt_cache_hits,
+            cc, rotate, babies, plan.out_w_folded, d_inner, d_model, kBabyStepOut, batch_size,
+            ct_pt_muls, adds, plan.out_proj_table, &pt_cache_hits,
             &pt_cache_misses, effective_encode_threads, stream_stride);
         return mul_aligned(linear, inv_gated);
       });
@@ -3425,6 +3714,29 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"max_segment\":" << depth_estimate.max_segment << ",";
     out << "\"assumed_bootstrap_output_level\":" << kAssumedBootstrapOutputLevel;
     out << "},";
+    out << "\"rotation_keys\":{";
+    out << "\"mode\":\"" << json_escape(args.rotation_keys) << "\",";
+    out << "\"budget_gib\":" << args.rotation_key_gib << ",";
+    out << "\"keys_total\":" << rotation_keygen_indices.size() << ",";
+    out << "\"keys_gib_est\":"
+        << (rotation_keygen_indices.size() * rotation_per_key_gib) << ",";
+    out << "\"per_key_gib_est\":" << rotation_per_key_gib << ",";
+    out << "\"required_indices_count\":" << rotation_indices.size() << ",";
+    out << "\"base\":" << rotation_base_keys.size() << ",";
+    out << "\"direct\":"
+        << (rotation_keygen_indices.size() >= rotation_base_keys.size() &&
+                    args.rotation_keys != "full"
+                ? rotation_keygen_indices.size() - rotation_base_keys.size()
+                : rotation_keygen_indices.size())
+        << ",";
+    out << "\"composite_apps_per_token\":" << planned_composite_apps;
+    out << "},";
+    out << "\"required_rotation_indices\":";
+    {
+      std::vector<int> required_plain(rotation_indices.begin(), rotation_indices.end());
+      write_int_vector_json(out, required_plain);
+    }
+    out << ",";
     out << "\"plaintext_coefficient_floor\":" << kPlaintextCoefficientFloor << ",";
     out << "\"pt_cache\":{";
     out << "\"mode\":\"" << json_escape(pt_cache_mode) << "\",";
@@ -3487,6 +3799,8 @@ auto main(int argc, char* argv[]) -> int {
     out << ",";
     out << "\"operation_counts\":{";
     out << "\"rotations\":" << rotations << ",";
+    out << "\"rotations_direct\":" << rotations_direct << ",";
+    out << "\"rotations_composite_steps\":" << rotations_composite_steps << ",";
     out << "\"ct_pt_mul\":" << ct_pt_muls << ",";
     out << "\"ct_ct_mul\":" << ct_ct_muls << ",";
     out << "\"adds\":" << adds << ",";

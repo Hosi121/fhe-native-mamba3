@@ -9,7 +9,7 @@ The active trunk is **[`fhemamba/`](fhemamba/README.md)** (design spec:
 its measured artifacts remain citable but its architecture claims were
 superseded by the rebuild.
 
-## Status (2026-07-06, v0.4.1)
+## Status (2026-07-07, v0.4.2)
 
 Verified, in order of the evidence chain:
 
@@ -47,12 +47,22 @@ Verified, in order of the evidence chain:
    ct-pt mults, 5× fewer bootstraps per prompt token, and recurrence depth
    log T instead of T; under FHE the scan form beats the SSD matmul form
    (the opposite of the plaintext-GPU trade-off).
+8. **128-bit parameters: PASS** — layer-0 decode under an OpenFHE-accepted
+   `HEStd_128_classic` context (ring 2^17, depth 43, scale 59): per-token
+   errors 0.012/0.031, 197 s/token on GB10. Enabled by two-tier composite
+   rotation keys (NAF over ±2^k + budgeted direct keys,
+   `fhemamba/src/fhemamba/rotation_keys.py` + kernel `--rotation-keys`):
+   194 keys/68 GiB → 33 keys/11.4 GiB at ~4% eval overhead. Caveat: circuit
+   parameters only — return-path noise flooding (IND-CPA-D) still open.
+9. **Multi-stream throughput** (`--streams 8`, one key = single tenant):
+   +26% wall for 8× sequences = **14.7 s/token/stream** on GB10
+   (6.3× effective); inter-stream deviation at the CKKS noise floor.
 
-**Not yet claimed**: 128-bit security parameters (current encrypted runs are
-ring 65536 / depth 44, labeled `security=not-set`; 128-bit needs ring 131072),
-long generation (re-anchoring protocol), end-to-end interactive demo (M3),
-multi-stream throughput (M4: design and budget done, kernel `--streams`
-implementation unverified after session interruptions).
+**Not yet claimed**: a 128-bit-secure *protocol* (noise flooding on returned
+ciphertexts pending — current claim is 128-bit circuit parameters only),
+long generation (re-prefill re-anchoring protocol designed in
+`fhemamba/DESIGN.md`, not implemented), end-to-end interactive demo (M3),
+full 24-layer chain at 128-bit parameters.
 
 ## Layout
 
@@ -82,8 +92,8 @@ the dgx runbook notes inside the kernel's JSON output.
 - `0.4.x` — real OSS weights under real encryption; component milestones
   (M1 single layer ✅, M2 full chain token-0 ✅, M3 interactive demo,
   M4 multi-stream). Patch bumps within the series mark measured capability
-  or performance increments (0.4.1: optimization round + error-budget
-  attribution + scan-prefill budget).
+  or performance increments (0.4.1: optimization round; 0.4.2: 128-bit parameters, composite
+  rotation keys, multi-stream throughput).
 - `1.0.0` — interactive encrypted generation demo at 128-bit security
   parameters with benchmark artifacts.
 
