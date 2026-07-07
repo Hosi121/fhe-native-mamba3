@@ -9,7 +9,7 @@ The active trunk is **[`fhemamba/`](fhemamba/README.md)** (design spec:
 its measured artifacts remain citable but its architecture claims were
 superseded by the rebuild.
 
-## Status (2026-07-07, v0.4.3)
+## Status (2026-07-07, v0.4.4)
 
 Verified, in order of the evidence chain:
 
@@ -66,16 +66,23 @@ Verified, in order of the evidence chain:
     4-layer chain 1203 → **155.7 s** (19.5 s/layer/token). Two couplings
     found and documented: replication *increases* the required rotation set
     (pair with balanced/compact composite keys, never full), and composite
-    NAF rotations add keyswitch noise per diagonal roll — at 128-bit/d43 the
-    replicated run is 5.6× faster (35.2 s/token) but currently EXCEEDS the
-    5e-2 error tolerance (0.071/0.190); a balanced-key retry (hot rolls as
-    direct keys) is in progress. Errors at 2^16 are elevated ~2.5× but pass.
+    NAF rotations add keyswitch noise per diagonal roll. **Operating-mode
+    split, settled by measurement:** replicated is the 2^16 throughput mode
+    (passes: 14.7 s/token single-layer, 78 s/layer in the 4-layer chain);
+    128-bit uses the non-replicated compact path (item 8, passes). At
+    128-bit/d43 replicated is 5.6× faster but fails tolerance — debug-decrypt
+    shows no single-stage blowup, just diffuse fold-sum keyswitch noise from
+    14–21 replica copies through composite keys, sitting on the boundary
+    (token-0 varies 0.042 pass / 0.065 fail run-to-run). The balanced keys
+    that would cut that noise exceed GB10 GPU memory at ring 2^17, so
+    replicated + 128-bit needs a larger-memory GPU (B200-class), not an
+    algorithm change.
 
 **Not yet claimed**: a 128-bit-secure *protocol* (noise flooding on returned
 ciphertexts pending — current claim is 128-bit circuit parameters only),
-128-bit accuracy under the replicated layout (retry in progress), long
-generation (re-prefill re-anchoring protocol designed in
-`fhemamba/DESIGN.md`, not implemented), end-to-end interactive demo (M3),
+replicated BSGS *and* 128-bit together (memory/noise bound on GB10; needs a
+larger-memory GPU), long generation (re-prefill re-anchoring protocol designed
+in `fhemamba/DESIGN.md`, not implemented), end-to-end interactive demo (M3),
 full 24-layer chain at 128-bit parameters, models beyond 130M.
 
 **Positioning**: at measured trajectory (148 → 14.7 s/token in one
@@ -113,7 +120,8 @@ the dgx runbook notes inside the kernel's JSON output.
   (M1 single layer ✅, M2 full chain token-0 ✅, M3 interactive demo,
   M4 multi-stream). Patch bumps within the series mark measured capability
   or performance increments (0.4.1: optimizations; 0.4.2: 128-bit parameters, composite keys,
-  multi-stream; 0.4.3: input-replicated BSGS, 10x single-layer decode).
+  multi-stream; 0.4.3: input-replicated BSGS, 10x single-layer decode;
+  0.4.4: replicated-vs-128-bit operating-mode split settled by measurement).
 - `1.0.0` — interactive encrypted generation demo at 128-bit security
   parameters with benchmark artifacts.
 

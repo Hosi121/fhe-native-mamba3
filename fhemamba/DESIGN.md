@@ -265,3 +265,21 @@ mask (+1 level) also contributes refresh pressure.
 
 Lesson recorded: layout optimizations and key-set optimizations share BOTH a
 memory budget and a noise budget; operating points must be co-selected.
+
+## Replicated x 128-bit: settled by measurement (dgx, 2026-07-07)
+
+Decisive cache-off experiment: replicated+compact at 2^17/d43 FIT memory
+(RSS 54.7) but FAILED accuracy (0.065/0.141) -> the wall is NOISE, not
+memory. debug-decrypt (1 token): every checkpoint magnitude matches the
+legacy path exactly (y |m|=23.85, out |m|=34.68), 0/4 bootstrap poison, no
+non-finite slots -> no single-stage blowup. The error is diffuse fold-sum
+keyswitch noise: 14-21 replica copies each carrying ~2-step NAF composite-key
+noise (2084 composite steps), accumulated in the fold. Sits on the boundary
+(token-0 0.042 pass / 0.065 fail run-to-run = noise variance, not a bug). The
+balanced keys that would cut it CUDA-OOM at 2^17 (25/20/16 GiB all fail).
+
+DECISION: replicated = 2^16 throughput mode (passes, 14.7 s/token, chain
+78 s/layer); 128-bit = non-replicated compact path (passes, 197 s/token,
+err 0.031). Combining both needs a larger-memory GPU (B200: HBM headroom for
+direct roll keys at 2^17), not an algorithm change. Non-replicated 128-bit
+remains the security-claim path.
