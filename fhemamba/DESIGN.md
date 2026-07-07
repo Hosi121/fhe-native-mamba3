@@ -197,3 +197,71 @@ Honesty notes for any throughput/latency claim: multi-stream S=8 batches
 sequences under ONE key (single tenant or trusted aggregator; no cross-user
 mixing), and 2^17 ciphertexts are ~4-8 MB each -> ~10-20 MB/token round trip
 (S-stream batching also amortizes the wire by S).
+
+## Input-replicated BSGS layout (bsgs_layout.py, slot-exact verified 2026-07-07)
+
+The measured bottleneck is per-diagonal plaintext work (768 diagonals x ~20ms
+encode). Replicate the short input (n=768/1536) r times at a window that is a
+multiple of n and >= m+n (no boundary crossing), so each replica's window
+serves ~n/r diagonals; a fold (log2 r for power-of-two r, else r-1 adds)
+sums the windows into window 0. Masks are window-periodic -> ONE encoded
+plaintext serves all replicas of a diagonal, so encode count drops to ~n/r.
+
+Slot-exact simulation (mask/roll/add only) matches dense W@x to 1e-13 for
+in_proj (3352x768, r=7, window 4608), out_proj (768x1536, r=10, window 3072),
+and random shapes. Key roll insight: input is identically replicated per
+window, so the roll is just the diagonal index d (not d + j*window).
+
+Impact: ct-pt/token for the two matmuls 2304 -> 264 (**8.7x fewer**);
+projected single-layer BSGS wall 344s -> ~39s; the full plaintext cache that
+was 144 GiB (infeasible) becomes ~16 GiB (fits dgx). Interacts with streams:
+replicas and streams share the slot windows, so S*r <= (batch/window_min) —
+latency-first r8/S1, throughput-first S8/r1, or a middle point.
+
+Next: port to the kernel behind --bsgs-replicas R (R=1 = current), reusing the
+composite-rotation and cache machinery; re-verify slot-sim bit-identical.
+
+## Input-replicated BSGS layout (bsgs_layout.py, slot-exact verified 2026-07-07)
+
+The measured bottleneck is per-diagonal plaintext work (768 diagonals x ~20ms
+encode). Replicate the short input (n=768/1536) r times at a window that is a
+multiple of n and >= m+n (no boundary crossing), so each replica's window
+serves ~n/r diagonals; a fold (log2 r for power-of-two r, else r-1 adds)
+sums the windows into window 0. Masks are window-periodic -> ONE encoded
+plaintext serves all replicas of a diagonal, so encode count drops to ~n/r.
+
+Slot-exact simulation (mask/roll/add only) matches dense W@x to 1e-13 for
+in_proj (3352x768, r=7, window 4608), out_proj (768x1536, r=10, window 3072),
+and random shapes. Key roll insight: input is identically replicated per
+window, so the roll is just the diagonal index d (not d + j*window).
+
+Impact: ct-pt/token for the two matmuls 2304 -> 264 (**8.7x fewer**);
+projected single-layer BSGS wall 344s -> ~39s; the full plaintext cache that
+was 144 GiB (infeasible) becomes ~16 GiB (fits dgx). Interacts with streams:
+replicas and streams share the slot windows, so S*r <= (batch/window_min) —
+latency-first r8/S1, throughput-first S8/r1, or a middle point.
+
+Next: port to the kernel behind --bsgs-replicas R (R=1 = current), reusing the
+composite-rotation and cache machinery; re-verify slot-sim bit-identical.
+
+## Replicated-BSGS measured results and couplings (dgx, 2026-07-07)
+
+| run | wall | errors (tol 5e-2) | note |
+|---|---|---|---|
+| M1 2^16 replicated+balanced+full-cache+8thr | **14.7 s/token** (was 148) | worst 0.0399 PASS | cache misses 0 |
+| M2 4-layer chain replicated+compact | **155.7 s** (was 1203) | 0.018/0.028 PASS | RSS 44.7 GB |
+| M1 2^17 128-bit replicated+compact+cache | 35.2 s/token (was 197) | **0.071/0.190 FAIL** | retry w/ balanced keys running |
+
+Coupling 1 (memory): replication individualizes the roll indices, growing the
+required rotation set (200->363 @2^16, 194->246 @2^17) — full direct keys get
+WORSE (86.5 GiB); replicated must pair with balanced/compact composite keys.
+
+Coupling 2 (noise): with compact keys every diagonal roll is a ~2-step NAF
+composite; each step adds keyswitch noise, and 264 rolls/token double the
+rotation-noise budget vs legacy direct keys. Errors are ~2.5x elevated at
+2^16 (passing) and blow tolerance at 128-bit/d43. Mitigation under test:
+balanced keys with the hot roll indices direct. The out_proj fold cleanup
+mask (+1 level) also contributes refresh pressure.
+
+Lesson recorded: layout optimizations and key-set optimizations share BOTH a
+memory budget and a noise budget; operating points must be co-selected.

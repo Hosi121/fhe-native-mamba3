@@ -156,6 +156,15 @@ struct Config {
   // identical in all modes (rotations compose exactly and consume no levels).
   std::string rotation_keys = "full";
   double rotation_key_gib = 45.0;
+  // Input-replicated BSGS (spec: fhemamba/src/fhemamba/bsgs_layout.py; the
+  // slot-exact simulator is the authority and the C++ schedule is verified
+  // bitwise against it). "1" = legacy dense-diagonal path (bit-identical);
+  // "auto" = choose_window per matmul (in_proj r=7/window 4608, out_proj
+  // r=10/window 3072 at batch 32768); an integer forces r (capped by fit).
+  // Cuts per-token ct-pt for the two matmuls 2304 -> 264 and the full cache
+  // to ~16 GiB. Requires --streams 1 (replicas and streams both partition
+  // the batch: S * r * window <= batch; co-optimization is future work).
+  std::string bsgs_replicas = "1";
   double tolerance = 5e-2;
   std::set<int> bootstrap_before_token;
   int bootstrap_level_budget_cts = 5;
@@ -328,6 +337,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.rotation_keys = value;
     } else if (arg == "--rotation-key-gib") {
       config.rotation_key_gib = parse_double_arg(arg, value);
+    } else if (arg == "--bsgs-replicas") {
+      config.bsgs_replicas = value;
     } else if (arg == "--output-json") {
       config.output_json = value;
     } else if (arg == "--artifact-version") {
@@ -410,6 +421,18 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.rotation_key_gib <= 0.0) {
     throw std::invalid_argument("rotation-key-gib must be positive");
+  }
+  if (config.bsgs_replicas != "auto" && config.bsgs_replicas != "1") {
+    try {
+      if (std::stoi(config.bsgs_replicas) < 1) {
+        throw std::invalid_argument("");
+      }
+    } catch (const std::exception&) {
+      throw std::invalid_argument("bsgs-replicas must be auto, 1, or a positive integer");
+    }
+  }
+  if (config.bsgs_replicas != "1" && config.streams > 1) {
+    throw std::invalid_argument("bsgs-replicas requires --streams 1");
   }
   if (config.security != "not-set" && config.security != "128-classic") {
     throw std::invalid_argument("security must be not-set or 128-classic");
@@ -815,6 +838,91 @@ struct LayerRuntime {
 };
 
 // ---------------------------------------------------------------------------
+// Input-replicated BSGS (authority: fhemamba/src/fhemamba/bsgs_layout.py).
+// window = n * ceil((m+n)/n) (multiple of n, >= m+n: no read crosses a window
+// boundary); r = batch/window identical replicas of the period-n input tile.
+// Schedule (verified bitwise against the spec simulator): for each k <
+// ceil(n/r), ONE global rotation by k*r and ONE combined mask that places
+// W[i, (i+d) mod n] for replica j's diagonal d = j + k*r at slot
+// j*window + i + j — the +j in-window shift is what lets identical replicas
+// share a single roll per k; the fold therefore uses stride (window+1).
+// Replication fill and fold are rotate/add only (0 levels); the matmul stays
+// one ct-pt level, so the level ledger is unchanged.
+// ---------------------------------------------------------------------------
+
+struct ReplicatedShape {
+  int replicas = 1;
+  int window = 0;
+  int reps = 0;         // window / n input tiles per window
+  int per_replica = 0;  // ceil(n / r) diagonals (= masks = encodes)
+};
+
+auto resolve_replicated_shape(int output_dim, int input_dim, int batch, int force_r)
+    -> ReplicatedShape {
+  ReplicatedShape shape;
+  const int window =
+      input_dim * ((output_dim + input_dim + input_dim - 1) / input_dim);
+  int replicas = batch / window;
+  if (force_r > 0) {
+    replicas = std::min(replicas, force_r);
+  }
+  if (replicas <= 1) {
+    return shape;  // does not fit or no benefit: legacy path
+  }
+  shape.replicas = replicas;
+  shape.window = window;
+  shape.reps = window / input_dim;
+  shape.per_replica = (input_dim + replicas - 1) / replicas;
+  return shape;
+}
+
+// Combined per-k mask (one encoded plaintext serves all replicas).
+auto replicated_bsgs_mask(const std::vector<double>& weights, int output_dim, int input_dim,
+                          int k, const ReplicatedShape& shape, int batch_size)
+    -> std::vector<double> {
+  std::vector<double> mask(static_cast<std::size_t>(batch_size), 0.0);
+  for (int j = 0; j < shape.replicas; ++j) {
+    const int d = j + k * shape.replicas;
+    if (d >= input_dim) {
+      continue;
+    }
+    for (int i = 0; i < output_dim; ++i) {
+      const double value =
+          weights[static_cast<std::size_t>(i) * input_dim + ((i + d) % input_dim)];
+      mask[static_cast<std::size_t>(j * shape.window + i + j)] =
+          std::abs(value) < kPlaintextCoefficientFloor ? 0.0 : value;
+    }
+  }
+  return mask;
+}
+
+// Rotation indices for one replicated matmul: input self-extension, window
+// fill, per-k diagonal rolls, and the fold (doubling strides when r is a
+// power of two, sequential otherwise) — all NAF-composable.
+void insert_replicated_rotations(std::set<int32_t>& rotations, int input_dim,
+                                 const ReplicatedShape& shape) {
+  for (int t = 1; t < shape.reps; ++t) {
+    rotations.insert(static_cast<int32_t>(-t * input_dim));
+  }
+  for (int j = 1; j < shape.replicas; ++j) {
+    rotations.insert(static_cast<int32_t>(-j * shape.window));
+  }
+  for (int k = 1; k < shape.per_replica; ++k) {
+    rotations.insert(static_cast<int32_t>(k * shape.replicas));
+  }
+  if ((shape.replicas & (shape.replicas - 1)) == 0) {
+    for (int step = shape.window + 1; step < shape.replicas * (shape.window + 1);
+         step *= 2) {
+      rotations.insert(static_cast<int32_t>(step));  // fold rotates LEFT
+    }
+  } else {
+    for (int j = 1; j < shape.replicas; ++j) {
+      rotations.insert(static_cast<int32_t>(j * (shape.window + 1)));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Rotation-index generators. Every rotation used anywhere is produced here and
 // EvalRotateKeyGen'ed once up front.
 // ---------------------------------------------------------------------------
@@ -891,15 +999,25 @@ auto int_log2(int value) -> int {
   return log;
 }
 
-auto required_rotations(const M1Payload& payload, const PackingDims& dims)
+auto required_rotations(const M1Payload& payload, const PackingDims& dims,
+                        const ReplicatedShape& rep_in, const ReplicatedShape& rep_out)
     -> std::vector<int32_t> {
   std::set<int32_t> rotations;
   auto insert_all = [&](const std::vector<int32_t>& values) {
     rotations.insert(values.begin(), values.end());
   };
-  // in_proj / out_proj BSGS (rectangular pre-mask scheme, reused as-is).
-  insert_all(slot_bsgs_rotations(payload.d_model, payload.proj_dim, kBabyStepIn));
-  insert_all(slot_bsgs_rotations(payload.d_inner, payload.d_model, kBabyStepOut));
+  // in_proj / out_proj: legacy rectangular BSGS babies/giants, or the
+  // replicated layout's extension/fill/roll/fold indices.
+  if (rep_in.replicas > 1) {
+    insert_replicated_rotations(rotations, payload.d_model, rep_in);
+  } else {
+    insert_all(slot_bsgs_rotations(payload.d_model, payload.proj_dim, kBabyStepIn));
+  }
+  if (rep_out.replicas > 1) {
+    insert_replicated_rotations(rotations, payload.d_inner, rep_out);
+  } else {
+    insert_all(slot_bsgs_rotations(payload.d_inner, payload.d_model, kBabyStepOut));
+  }
   // Full-batch rotate-sum for the two RMS variances (broadcast total to all slots).
   for (int k = 0; k < int_log2(dims.batch); ++k) {
     rotations.insert(static_cast<int32_t>(1 << k));
@@ -1005,7 +1123,8 @@ void verify_naf(const std::vector<int32_t>& indices) {
 // per-site counts follow the same generators the evaluation uses, and the
 // planner asserts key-set equality so the two cannot drift apart.
 auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int layers,
-                          int streams, int stream_stride)
+                          int streams, int stream_stride,
+                          const ReplicatedShape& rep_in, const ReplicatedShape& rep_out)
     -> std::map<int32_t, double> {
   std::map<int32_t, double> freq;
   const double L = layers;
@@ -1016,20 +1135,50 @@ auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int
       freq[static_cast<int32_t>(index)] += count;
     }
   };
-  // BSGS babies (one precompute per matmul per token-layer) and giants.
-  for (int baby = 1; baby < kBabyStepIn; ++baby) {
-    add(baby, L);
+  // BSGS families: legacy babies/giants, or replicated ext/fill/roll/fold
+  // (each applied once per matmul per token-layer).
+  auto add_replicated = [&](int input_dim, const ReplicatedShape& shape) {
+    for (int t = 1; t < shape.reps; ++t) {
+      add(-t * input_dim, L);
+    }
+    for (int j = 1; j < shape.replicas; ++j) {
+      add(-j * shape.window, L);
+    }
+    for (int k = 1; k < shape.per_replica; ++k) {
+      add(k * shape.replicas, L);
+    }
+    if ((shape.replicas & (shape.replicas - 1)) == 0) {
+      for (int step = shape.window + 1; step < shape.replicas * (shape.window + 1);
+           step *= 2) {
+        add(step, L);
+      }
+    } else {
+      for (int j = 1; j < shape.replicas; ++j) {
+        add(j * (shape.window + 1), L);
+      }
+    }
+  };
+  if (rep_in.replicas > 1) {
+    add_replicated(payload.d_model, rep_in);
+  } else {
+    for (int baby = 1; baby < kBabyStepIn; ++baby) {
+      add(baby, L);
+    }
+    for (const int giant : slot_bsgs_giant_with_zero(payload.d_model, payload.proj_dim,
+                                                     kBabyStepIn)) {
+      add(giant, L);
+    }
   }
-  for (int baby = 1; baby < kBabyStepOut; ++baby) {
-    add(baby, L);
-  }
-  for (const int giant : slot_bsgs_giant_with_zero(payload.d_model, payload.proj_dim,
-                                                   kBabyStepIn)) {
-    add(giant, L);
-  }
-  for (const int giant : slot_bsgs_giant_with_zero(payload.d_inner, payload.d_model,
-                                                   kBabyStepOut)) {
-    add(giant, L);
+  if (rep_out.replicas > 1) {
+    add_replicated(payload.d_inner, rep_out);
+  } else {
+    for (int baby = 1; baby < kBabyStepOut; ++baby) {
+      add(baby, L);
+    }
+    for (const int giant : slot_bsgs_giant_with_zero(payload.d_inner, payload.d_model,
+                                                     kBabyStepOut)) {
+      add(giant, L);
+    }
   }
   // RMS variance reductions: two per layer (block + gated).
   const int sum_bits = streams == 1 ? int_log2(dims.batch) : int_log2(stream_stride);
@@ -1843,14 +1992,36 @@ auto main(int argc, char* argv[]) -> int {
           "streams do not fit: batch/streams must be >= proj_dim (" +
           std::to_string(stream_stride) + " < " + std::to_string(dims_payload.proj_dim) + ")");
     }
-    // Rotation indices depend only on dims/packing, which are asserted equal
-    // across layers, so single-layer and chain mode share one key set. This
-    // required set is the source of truth (logged to JSON for reconciliation
-    // with the Python planner).
-    const auto rotation_indices = required_rotations(dims_payload, packing);
+    // Input-replicated BSGS shapes (replicas == 1 -> legacy path).
+    const int forced_replicas =
+        args.bsgs_replicas == "auto" ? 0
+        : args.bsgs_replicas == "1"  ? -1
+                                     : std::stoi(args.bsgs_replicas);
+    const auto rep_in =
+        forced_replicas < 0
+            ? ReplicatedShape{}
+            : resolve_replicated_shape(dims_payload.proj_dim, dims_payload.d_model,
+                                       batch_size, forced_replicas);
+    const auto rep_out =
+        forced_replicas < 0
+            ? ReplicatedShape{}
+            : resolve_replicated_shape(dims_payload.d_model, dims_payload.d_inner,
+                                       batch_size, forced_replicas);
+    log_phase("bsgs layout mode=" + args.bsgs_replicas +
+              " in_proj r=" + std::to_string(rep_in.replicas) +
+              " window=" + std::to_string(rep_in.window) +
+              " diagonals=" + std::to_string(rep_in.replicas > 1 ? rep_in.per_replica : 0) +
+              " out_proj r=" + std::to_string(rep_out.replicas) +
+              " window=" + std::to_string(rep_out.window) +
+              " diagonals=" +
+              std::to_string(rep_out.replicas > 1 ? rep_out.per_replica : 0));
+    // Rotation indices depend only on dims/packing (asserted equal across
+    // layers) plus the BSGS layout choice; the required set is the source of
+    // truth (logged to JSON for reconciliation with the Python planner).
+    const auto rotation_indices = required_rotations(dims_payload, packing, rep_in, rep_out);
     verify_naf(rotation_indices);
     auto rotation_freqs = rotation_frequencies(dims_payload, packing, layers_loaded,
-                                               args.streams, stream_stride);
+                                               args.streams, stream_stride, rep_in, rep_out);
     {
       // Guard against generator/frequency drift: every counted index must be
       // required, and every required index gets an entry (frequency 0 if a
@@ -2724,6 +2895,15 @@ auto main(int argc, char* argv[]) -> int {
     for (int slot = 0; slot < group_block; ++slot) {
       group_mask[static_cast<std::size_t>(slot)] = 1.0;
     }
+    // Replicated out_proj leaves fold partials beyond slot d_model (unlike
+    // the legacy path, whose masks land every term in [0, m)); the residual
+    // handoff must stay clean for the next layer's variance sum, so the
+    // folded result is masked to [0, d_model). Costs one ct-pt level on the
+    // out lineage only when replicas > 1 (absorbed by the runtime policy).
+    std::vector<double> out_clean_mask(batch, 0.0);
+    for (int slot = 0; slot < d_model; ++slot) {
+      out_clean_mask[static_cast<std::size_t>(slot)] = 1.0;
+    }
     auto unit_mask = [&](int slot) {
       std::vector<double> mask(batch, 0.0);
       mask[static_cast<std::size_t>(slot)] = 1.0;
@@ -2902,10 +3082,39 @@ auto main(int argc, char* argv[]) -> int {
         register_plain(plan.cache_prefix + "a_vec", 1, [&plan]() { return plan.a_vec; });
         register_plain(plan.cache_prefix + "d_vec", 1, [&plan]() { return plan.d_vec; });
       }
-      // BSGS diagonal tables (the dominant cost; mode "full" only).
+      // Replicated-BSGS combined masks (few, high value: register in every
+      // caching mode; they replace the legacy diagonal tables).
+      for (const auto& plan : layer_plans) {
+        if (rep_in.replicas > 1) {
+          for (int k = 0; k < rep_in.per_replica; ++k) {
+            register_plain(plan.cache_prefix + "bsgsrep_in." + std::to_string(k), 1,
+                           [&plan, k, rep_in, proj_dim, d_model, batch_size]() {
+                             return replicated_bsgs_mask(plan.in_w_folded, proj_dim,
+                                                         d_model, k, rep_in, batch_size);
+                           });
+          }
+        }
+        if (rep_out.replicas > 1) {
+          for (int k = 0; k < rep_out.per_replica; ++k) {
+            register_plain(plan.cache_prefix + "bsgsrep_out." + std::to_string(k), 1,
+                           [&plan, k, rep_out, d_model, d_inner, batch_size]() {
+                             return replicated_bsgs_mask(plan.out_w_folded, d_model,
+                                                         d_inner, k, rep_out, batch_size);
+                           });
+          }
+        }
+      }
+      if (rep_out.replicas > 1) {
+        register_plain("mask.out_clean", static_cast<int>(layer_plans.size()),
+                       [&out_clean_mask]() { return out_clean_mask; });
+      }
+      // Legacy BSGS diagonal tables (the dominant cost; mode "full" only).
       if (pt_cache_mode == "full") {
         for (std::size_t layer = 0; layer < layer_plans.size(); ++layer) {
           const auto& plan = layer_plans[layer];
+          if (rep_in.replicas > 1 && rep_out.replicas > 1) {
+            break;  // both matmuls replicated: no legacy tables needed
+          }
           const auto register_bsgs = [&](int which, const std::vector<double>& weights,
                                          int input_dim, int output_dim, int baby_step,
                                          std::vector<Plaintext>& table) {
@@ -2937,10 +3146,14 @@ auto main(int argc, char* argv[]) -> int {
               }
             }
           };
-          register_bsgs(0, plan.in_w_folded, d_model, proj_dim, kBabyStepIn,
-                        in_proj_tables[layer]);
-          register_bsgs(1, plan.out_w_folded, d_inner, d_model, kBabyStepOut,
-                        out_proj_tables[layer]);
+          if (rep_in.replicas <= 1) {
+            register_bsgs(0, plan.in_w_folded, d_model, proj_dim, kBabyStepIn,
+                          in_proj_tables[layer]);
+          }
+          if (rep_out.replicas <= 1) {
+            register_bsgs(1, plan.out_w_folded, d_inner, d_model, kBabyStepOut,
+                          out_proj_tables[layer]);
+          }
         }
       }
       // Greedy selection: reuse count desc, registration order asc.
@@ -3173,6 +3386,67 @@ auto main(int argc, char* argv[]) -> int {
     };
 
     // -----------------------------------------------------------------------
+    // Input-replicated BSGS matmul: schedule verified bitwise against the
+    // spec simulator (fhemamba/src/fhemamba/bsgs_layout.py). Extension, fill,
+    // and fold are rotate/add only (0 levels); the matmul is one ct-pt level,
+    // so the level ledger matches the legacy path. Requires the input clean
+    // outside [0, input_dim) (established invariants for hidden and y).
+    // -----------------------------------------------------------------------
+    auto replicated_bsgs = [&](const Ciphertext<DCRTPoly>& input_ct,
+                               const std::vector<double>& weights, int output_dim,
+                               int input_dim, const ReplicatedShape& shape,
+                               const std::string& key_prefix) -> Ciphertext<DCRTPoly> {
+      // In-window cyclic self-extension of the period-n input tile.
+      auto extended = input_ct;
+      for (int t = 1; t < shape.reps; ++t) {
+        extended = add_aligned(extended, rotate(input_ct, -t * input_dim));
+      }
+      // Identical replica fill at window stride.
+      auto replicated = extended;
+      for (int j = 1; j < shape.replicas; ++j) {
+        replicated = add_aligned(replicated, rotate(extended, -j * shape.window));
+      }
+      // One roll (k*r) + one combined mask per k: replica j's diagonal
+      // d = j + k*r sits at slot j*window + i + j (the +j shift is what lets
+      // identical replicas share the roll).
+      Ciphertext<DCRTPoly> accumulator;
+      bool has_accumulator = false;
+      for (int k = 0; k < shape.per_replica; ++k) {
+        auto mask = replicated_bsgs_mask(weights, output_dim, input_dim, k, shape, batch_size);
+        if (std::all_of(mask.begin(), mask.end(),
+                        [](double value) { return value == 0.0; })) {
+          continue;
+        }
+        auto rolled = k == 0 ? replicated : rotate(replicated, k * shape.replicas);
+        auto term = mul_mask(rolled, key_prefix + std::to_string(k), mask);
+        if (!has_accumulator) {
+          accumulator = term;
+          has_accumulator = true;
+        } else {
+          accumulator = add_aligned(accumulator, term);
+        }
+      }
+      if (!has_accumulator) {
+        throw std::runtime_error("replicated BSGS produced no terms");
+      }
+      // Fold windows into window 0 at stride window+1 (mirrors the spec
+      // simulator's two fold branches).
+      // Fold rotates LEFT (window j lands at window 0): positive indices.
+      auto folded = accumulator;
+      if ((shape.replicas & (shape.replicas - 1)) == 0) {
+        for (int step = shape.window + 1; step < shape.replicas * (shape.window + 1);
+             step *= 2) {
+          folded = add_aligned(folded, rotate(folded, step));
+        }
+      } else {
+        for (int j = 1; j < shape.replicas; ++j) {
+          folded = add_aligned(folded, rotate(accumulator, j * (shape.window + 1)));
+        }
+      }
+      return folded;
+    };
+
+    // -----------------------------------------------------------------------
     // One full layer circuit (block norm ... residual add). State and conv
     // FIFO live in the per-layer runtime and stay ciphertext across tokens.
     // Mid-circuit bootstrap checkpoints (after in_proj, after conv_silu,
@@ -3201,11 +3475,17 @@ auto main(int argc, char* argv[]) -> int {
       debug_value_stats(inv_block, tag + "block_inv");
 
       auto proj_ct = time_phase("in_proj_bsgs", [&]() {
-        auto babies = slot_bsgs_precompute_baby_rotations(rotate, hidden_ct, kBabyStepIn);
-        auto linear = slot_bsgs_linear_block0_from_babies(
-            cc, rotate, babies, plan.in_w_folded, d_model, proj_dim, kBabyStepIn, batch_size,
-            ct_pt_muls, adds, plan.in_proj_table, &pt_cache_hits,
-            &pt_cache_misses, effective_encode_threads, stream_stride);
+        Ciphertext<DCRTPoly> linear;
+        if (rep_in.replicas > 1) {
+          linear = replicated_bsgs(hidden_ct, plan.in_w_folded, proj_dim, d_model, rep_in,
+                                   plan.cache_prefix + "bsgsrep_in.");
+        } else {
+          auto babies = slot_bsgs_precompute_baby_rotations(rotate, hidden_ct, kBabyStepIn);
+          linear = slot_bsgs_linear_block0_from_babies(
+              cc, rotate, babies, plan.in_w_folded, d_model, proj_dim, kBabyStepIn,
+              batch_size, ct_pt_muls, adds, plan.in_proj_table, &pt_cache_hits,
+              &pt_cache_misses, effective_encode_threads, stream_stride);
+        }
         return mul_aligned(linear, inv_block);
       });
       // Checkpoint: proj feeds the conv FIFO and the conv/gate/dt branches.
@@ -3410,11 +3690,18 @@ auto main(int argc, char* argv[]) -> int {
       // the gated-norm segment left it deeper than the BSGS entry allows).
       maybe_bootstrap(y_ct, plan.req_out, tag + "y_out", layer_bootstraps);
       auto out_ct = time_phase("out_proj_bsgs", [&]() {
-        auto babies = slot_bsgs_precompute_baby_rotations(rotate, y_ct, kBabyStepOut);
-        auto linear = slot_bsgs_linear_block0_from_babies(
-            cc, rotate, babies, plan.out_w_folded, d_inner, d_model, kBabyStepOut, batch_size,
-            ct_pt_muls, adds, plan.out_proj_table, &pt_cache_hits,
-            &pt_cache_misses, effective_encode_threads, stream_stride);
+        Ciphertext<DCRTPoly> linear;
+        if (rep_out.replicas > 1) {
+          linear = replicated_bsgs(y_ct, plan.out_w_folded, d_model, d_inner, rep_out,
+                                   plan.cache_prefix + "bsgsrep_out.");
+          linear = mul_mask(linear, "mask.out_clean", out_clean_mask);
+        } else {
+          auto babies = slot_bsgs_precompute_baby_rotations(rotate, y_ct, kBabyStepOut);
+          linear = slot_bsgs_linear_block0_from_babies(
+              cc, rotate, babies, plan.out_w_folded, d_inner, d_model, kBabyStepOut,
+              batch_size, ct_pt_muls, adds, plan.out_proj_table, &pt_cache_hits,
+              &pt_cache_misses, effective_encode_threads, stream_stride);
+        }
         return mul_aligned(linear, inv_gated);
       });
       auto layer_output = time_phase("residual_add", [&]() {
@@ -3673,6 +3960,15 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"auto_bootstrap_headroom\":" << args.auto_bootstrap_headroom << ",";
     out << "\"streams\":" << args.streams << ",";
     out << "\"stream_stride\":" << stream_stride << ",";
+    out << "\"bsgs_layout\":{";
+    out << "\"mode\":\"" << json_escape(args.bsgs_replicas) << "\",";
+    out << "\"in_replicas\":" << rep_in.replicas << ",";
+    out << "\"in_window\":" << rep_in.window << ",";
+    out << "\"in_diagonals\":" << (rep_in.replicas > 1 ? rep_in.per_replica : 0) << ",";
+    out << "\"out_replicas\":" << rep_out.replicas << ",";
+    out << "\"out_window\":" << rep_out.window << ",";
+    out << "\"out_diagonals\":" << (rep_out.replicas > 1 ? rep_out.per_replica : 0);
+    out << "},";
     out << "\"bootstrap_norm_margin\":" << args.bootstrap_norm_margin << ",";
     out << "\"bootstrap_before_token\":";
     write_int_set_json(out, args.bootstrap_before_token);

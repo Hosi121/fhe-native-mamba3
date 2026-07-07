@@ -9,7 +9,7 @@ The active trunk is **[`fhemamba/`](fhemamba/README.md)** (design spec:
 its measured artifacts remain citable but its architecture claims were
 superseded by the rebuild.
 
-## Status (2026-07-07, v0.4.2)
+## Status (2026-07-07, v0.4.3)
 
 Verified, in order of the evidence chain:
 
@@ -57,12 +57,32 @@ Verified, in order of the evidence chain:
 9. **Multi-stream throughput** (`--streams 8`, one key = single tenant):
    +26% wall for 8× sequences = **14.7 s/token/stream** on GB10
    (6.3× effective); inter-stream deviation at the CKKS noise floor.
+10. **Input-replicated BSGS layout**
+    (`fhemamba/src/fhemamba/bsgs_layout.py`, slot-exact spec; kernel
+    `--bsgs-replicas`): replicating the short matmul input across slot
+    windows cuts diagonals/encodes 8.7× (2304 → 264 masks/token) and shrinks
+    the full plaintext cache 144 GiB → ~9-16 GiB (fits dgx). Measured:
+    single-layer decode **148 → 14.7 s/token (10×, cache misses 0)**;
+    4-layer chain 1203 → **155.7 s** (19.5 s/layer/token). Two couplings
+    found and documented: replication *increases* the required rotation set
+    (pair with balanced/compact composite keys, never full), and composite
+    NAF rotations add keyswitch noise per diagonal roll — at 128-bit/d43 the
+    replicated run is 5.6× faster (35.2 s/token) but currently EXCEEDS the
+    5e-2 error tolerance (0.071/0.190); a balanced-key retry (hot rolls as
+    direct keys) is in progress. Errors at 2^16 are elevated ~2.5× but pass.
 
 **Not yet claimed**: a 128-bit-secure *protocol* (noise flooding on returned
 ciphertexts pending — current claim is 128-bit circuit parameters only),
-long generation (re-prefill re-anchoring protocol designed in
+128-bit accuracy under the replicated layout (retry in progress), long
+generation (re-prefill re-anchoring protocol designed in
 `fhemamba/DESIGN.md`, not implemented), end-to-end interactive demo (M3),
-full 24-layer chain at 128-bit parameters.
+full 24-layer chain at 128-bit parameters, models beyond 130M.
+
+**Positioning**: at measured trajectory (148 → 14.7 s/token in one
+optimization cycle, same workstation GPU), latency-tolerant private batch
+inference (classification/scoring of regulated text) is approaching
+feasibility on datacenter GPUs (~30 s/token full-model projected on B200,
+~4-7 s/token/stream batched); interactive chat remains 1-2 orders away.
 
 ## Layout
 
@@ -79,7 +99,7 @@ runs/, docs/                 archived artifacts and docs of the old package
 
 ```bash
 export PYTHONPATH=fhemamba/src
-.venv/bin/python -m pytest fhemamba/tests -q          # 24 tests, all math-grounded
+.venv/bin/python -m pytest fhemamba/tests -q          # 37 tests, all math-grounded
 .venv/bin/python fhemamba/experiments/run_parity.py   # vs official transformers
 .venv/bin/python fhemamba/experiments/run_ppl_ladder.py --checkpoint checkpoints/mamba2-130m-hf
 ```
@@ -92,8 +112,8 @@ the dgx runbook notes inside the kernel's JSON output.
 - `0.4.x` — real OSS weights under real encryption; component milestones
   (M1 single layer ✅, M2 full chain token-0 ✅, M3 interactive demo,
   M4 multi-stream). Patch bumps within the series mark measured capability
-  or performance increments (0.4.1: optimization round; 0.4.2: 128-bit parameters, composite
-  rotation keys, multi-stream throughput).
+  or performance increments (0.4.1: optimizations; 0.4.2: 128-bit parameters, composite keys,
+  multi-stream; 0.4.3: input-replicated BSGS, 10x single-layer decode).
 - `1.0.0` — interactive encrypted generation demo at 128-bit security
   parameters with benchmark artifacts.
 
