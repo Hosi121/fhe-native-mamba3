@@ -283,3 +283,30 @@ DECISION: replicated = 2^16 throughput mode (passes, 14.7 s/token, chain
 err 0.031). Combining both needs a larger-memory GPU (B200: HBM headroom for
 direct roll keys at 2^17), not an algorithm change. Non-replicated 128-bit
 remains the security-claim path.
+
+## dgx-only roadmap (B200 withdrawn, 2026-07-07)
+
+B200 is no longer available; everything targets dgx (GB10, 119 GB) alone.
+This does NOT block the security claim: non-replicated 128-bit already passes
+(0.012/0.031, 197 s/token). Only the replicated+128-bit speedup needs solving
+within 119 GB.
+
+Decisive experiment (balanced-14 + cache-off @2^17): FIT memory (56.8 GiB) but
+token1=0.171 FAIL. Key budget is exhausted (at 2^17 each key is 0.346 GiB, 14
+GiB buys only 6 direct hot-roll keys; composite 1042->922/token, no material
+effect). Confirmed: replicated 128-bit is **state-carry accuracy-bound**, not
+memory- or key-bound. token0=0.041 (replicated fold-sum lifts the non-repl
+0.031 floor by ~0.01, to the tolerance edge); token1 = 0.041 x ~4.2 from state
+lineage noise.
+
+THE dgx-only lever: **state-bound tightening**. Normalize/refresh the carried
+state (and conv FIFO) ciphertext against a per-layer *measured* |m| bound
+(margin 1.5 -> ~1.1) before it advances a token — refresh error scales with
+magnitude, so this cuts the per-token noise injected into the lineage
+(error_growth: 5-20x headroom). Serves BOTH goals: (a) may bring replicated
+128-bit under tolerance, (b) extends the generation token horizon for the
+non-replicated 128-bit path (same mechanism as the 24-layer token-1
+divergence) — required for the 1.0.0 interactive demo regardless.
+
+Operating split until state-bound lands: replicated = 2^16 throughput
+(14.7 s/token); 128-bit = non-replicated compact (197 s/token, passes).

@@ -183,8 +183,19 @@ struct Config {
   // zero-intermediate-decrypt claim.
   bool debug_layer_errors = false;
   // Global multiplier on the per-checkpoint magnitude bounds used for the
-  // pre-bootstrap normalization (see checkpoint_bound).
+  // pre-bootstrap normalization (see checkpoint_bound). Applies to TRANSIENT
+  // per-layer activation checkpoints.
   double bootstrap_norm_margin = 1.5;
+  // Separate, tighter multiplier for CARRIED-FORWARD ciphertexts (SSM state,
+  // conv FIFO). Refresh at deg 1 adds a roughly fixed noise floor that the
+  // undo-multiply by the bound B then scales up, so the noise injected into a
+  // cross-token lineage per refresh is ~proportional to B; a loose 1.5x of a
+  // generic bound over-scales (esp. low-|m| layers) and amplifies the
+  // token-over-token blowup. Tightening B to ~1.1x the measured |m| is the
+  // dgx-only lever for the replicated-128bit token1 fail and the 24-layer
+  // token-horizon (DESIGN.md dgx-only roadmap). B must stay >= true max |m|
+  // (no clipping); 1.1 leaves 10% headroom over the measured bound.
+  double state_bootstrap_margin = 1.1;
 };
 
 // Per-checkpoint message-magnitude bounds for the pre-bootstrap
@@ -201,9 +212,15 @@ auto checkpoint_bound(const std::string& what) -> double {
       {"final_norm", 8.0},   // fallback (residual lineage)
       {"residual", 8.0},     // fallback; expected outputs |m| <= ~2.4
       {"conv_silu", 9.5},    // measured 9.20
-      {"state_post", 24.0},  // fallback; y readout of state measured 23.85
-      {"state", 24.0},       // fallback (matches state<g> pre-update)
-      {"fifo", 6.0},         // fifo holds proj-lineage cts; proj measured 5.73
+      // Carried-forward lineages (state, conv FIFO): measured |m| maxima from
+      // --debug-decrypt telemetry (mamba2-130m layer 0). These are the true
+      // bound, not a fallback; the tighter state margin multiplies them. The
+      // per-layer |m| ranges O(1-25), so where a layer's state is small the
+      // fixed 24 over-scales -- re-measure per layer with --debug-decrypt to
+      // tighten further (bound must stay >= that layer's max |m|).
+      {"state_post", 24.0},  // updated state; y readout of state measured 23.85
+      {"state", 24.0},       // carried state pre-update (matches state_post)
+      {"fifo", 6.0},         // FIFO holds proj-lineage cts; proj measured 5.73
       {"proj", 6.0},         // measured 5.73
       {"decay", 1.0},        // measured 1.00 (decay in [0, 1])
       {"dt", 0.5},           // measured 0.103
@@ -217,6 +234,12 @@ auto checkpoint_bound(const std::string& what) -> double {
     }
   }
   return 24.0;
+}
+
+// Carried-forward (cross-token) lineages get the tighter state margin; every
+// other checkpoint is a transient per-layer activation.
+auto is_carried_checkpoint(const std::string& what) -> bool {
+  return what.find("state") != std::string::npos || what.find("fifo") != std::string::npos;
 }
 
 struct OperationCounts {
@@ -315,6 +338,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.debug_layer_errors = (std::string_view(value) != "0");
     } else if (arg == "--bootstrap-norm-margin") {
       config.bootstrap_norm_margin = parse_double_arg(arg, value);
+    } else if (arg == "--state-bootstrap-margin") {
+      config.state_bootstrap_margin = parse_double_arg(arg, value);
     } else if (arg == "--input") {
       config.input = value;
     } else if (arg == "--input-chain") {
@@ -395,6 +420,9 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.bootstrap_norm_margin <= 0.0) {
     throw std::invalid_argument("bootstrap-norm-margin must be positive");
+  }
+  if (config.state_bootstrap_margin <= 0.0) {
+    throw std::invalid_argument("state-bootstrap-margin must be positive");
   }
   if (config.pt_cache != "auto" && config.pt_cache != "full" && config.pt_cache != "masks" &&
       config.pt_cache != "off") {
@@ -2233,6 +2261,7 @@ auto main(int argc, char* argv[]) -> int {
     int adds = 0;
     int unity_multiplies = 0;
     int bootstraps = 0;
+    int state_bootstraps = 0;  // refreshes of carried-forward (state/FIFO) cts
     double bootstrap_eval_seconds = 0.0;
     std::map<std::string, double> phase_timings;
     std::map<std::string, OperationCounts> phase_operation_counts;
@@ -2642,8 +2671,16 @@ auto main(int argc, char* argv[]) -> int {
       // FIDESlib EvalBootstrap needs noiseScaleDeg-1 inputs with |m| <~ 1:
       // deg-2 refresh error grows polynomially with magnitude (all-NaN at the
       // measured |m|~24 y checkpoint). Normalize by the per-checkpoint bound,
-      // force rescale to deg 1, refresh, then undo the normalization.
-      const double bound = checkpoint_bound(what) * args.bootstrap_norm_margin;
+      // force rescale to deg 1, refresh, then undo the normalization. The
+      // undo-multiply scales the refresh noise floor by the bound, so carried
+      // lineages (state, FIFO) use the tighter state margin to inject less
+      // noise per token; transient activations keep the looser margin.
+      const bool carried = is_carried_checkpoint(what);
+      const double bound = checkpoint_bound(what) *
+                           (carried ? args.state_bootstrap_margin : args.bootstrap_norm_margin);
+      if (carried) {
+        ++state_bootstraps;
+      }
       const auto bootstrap_start = now();
       time_phase("bootstrap", [&]() {
         cc->EvalMultInPlace(ciphertext, 1.0 / bound);
@@ -2652,6 +2689,27 @@ auto main(int argc, char* argv[]) -> int {
           cc->RescaleInPlace(ciphertext);
         }
         debug_value_stats(ciphertext, "norm_bootstrap_in." + what);
+        if (args.debug_decrypt) {
+          // Clip guard: the normalized input must stay within [-1, 1] or the
+          // bound clipped a real value (bound < true max |m|). Cheap decrypt,
+          // debug-only; logs a warning so a too-tight margin is caught in sim
+          // before it silently corrupts a run.
+          Plaintext clip_plain;
+          auto clip_handle = ciphertext;
+          cc->Decrypt(keys.secretKey, clip_handle, &clip_plain);
+          clip_plain->SetLength(static_cast<std::size_t>(batch_size));
+          double clip_max = 0.0;
+          for (const double value : clip_plain->GetRealPackedValue()) {
+            if (std::isfinite(value)) {
+              clip_max = std::max(clip_max, std::abs(value));
+            }
+          }
+          if (clip_max > 1.0 + 1e-6) {
+            log_phase("WARNING: bootstrap norm clip at " + what +
+                      " normalized_max=" + std::to_string(clip_max) +
+                      " (bound too tight; raise the margin)");
+          }
+        }
         if (args.debug_decrypt) {
           // Forensic split (debug only): bootstrap a fresh re-encryption of
           // the exact same values at the same level. If the fresh copy
@@ -3970,6 +4028,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"out_diagonals\":" << (rep_out.replicas > 1 ? rep_out.per_replica : 0);
     out << "},";
     out << "\"bootstrap_norm_margin\":" << args.bootstrap_norm_margin << ",";
+    out << "\"state_bootstrap_margin\":" << args.state_bootstrap_margin << ",";
     out << "\"bootstrap_before_token\":";
     write_int_set_json(out, args.bootstrap_before_token);
     out << "},";
@@ -4052,6 +4111,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"pt_reuse_check\":\"" << json_escape(pt_reuse_check_result) << "\"";
     out << "},";
     out << "\"executed_bootstrap_count\":" << bootstraps << ",";
+    out << "\"state_bootstrap_count\":" << state_bootstraps << ",";
     out << "\"peak_rss_gib\":" << peak_rss_gib() << ",";
     out << "\"rss_gib\":" << rss_gib();
     out << "},";
