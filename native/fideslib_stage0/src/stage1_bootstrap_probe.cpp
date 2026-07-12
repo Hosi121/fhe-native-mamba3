@@ -30,6 +30,8 @@ struct Config {
   int bsgs_dim_cts = 0;
   int bsgs_dim_stc = 0;
   int iterations = 3;
+  int bootstrap_iterations = 1;
+  int bootstrap_precision = 0;
   int seed = 0;
   double input_magnitude = 0.5;
   int encrypt_level = -1;  // -1: depth-1 (exhausted); else encrypt at this level
@@ -91,6 +93,10 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.bsgs_dim_stc = parse_int(arg, value);
     } else if (arg == "--iterations") {
       config.iterations = parse_int(arg, value);
+    } else if (arg == "--bootstrap-iterations") {
+      config.bootstrap_iterations = parse_int(arg, value);
+    } else if (arg == "--bootstrap-precision") {
+      config.bootstrap_precision = parse_int(arg, value);
     } else if (arg == "--input-magnitude") {
       config.input_magnitude = std::stod(value);
     } else if (arg == "--encrypt-level") {
@@ -127,6 +133,11 @@ auto parse_args(int argc, char* argv[]) -> Config {
   if (config.level_budget_cts <= 0 || config.level_budget_stc <= 0 ||
       config.bsgs_dim_cts < 0 || config.bsgs_dim_stc < 0 || config.iterations <= 0) {
     throw std::invalid_argument("bootstrap budgets/dimensions and iterations are invalid");
+  }
+  if ((config.bootstrap_iterations != 1 && config.bootstrap_iterations != 2) ||
+      config.bootstrap_precision < 0 || config.bootstrap_precision >= 31) {
+    throw std::invalid_argument(
+        "bootstrap-iterations must be 1 or 2 and bootstrap-precision must be in [0, 31)");
   }
   if (config.security != "not-set" && config.security != "128-classic") {
     throw std::invalid_argument("security must be not-set or 128-classic");
@@ -240,6 +251,8 @@ auto build_payload(
   out << "\"security\":\"" << config.security << "\",";
   out << "\"secret_key_dist\":\"" << config.secret_key_dist << "\",";
   out << "\"iterations\":" << config.iterations << ",";
+  out << "\"bootstrap_iterations\":" << config.bootstrap_iterations << ",";
+  out << "\"bootstrap_precision\":" << config.bootstrap_precision << ",";
   out << "\"input_magnitude\":" << config.input_magnitude << ",";
   out << "\"encrypt_level\":" << config.encrypt_level << ",";
   out << "\"skip_decrypt\":" << (config.skip_decrypt ? "true" : "false");
@@ -251,7 +264,8 @@ auto build_payload(
   out << "\"min_latency_sec\":" << *std::min_element(latencies.begin(), latencies.end()) << ",";
   out << "\"max_latency_sec\":" << *std::max_element(latencies.begin(), latencies.end()) << ",";
   out << "\"measurements\":{";
-  out << "\"bootstrap_iterations\":" << config.iterations << ",";
+  out << "\"probe_repetitions\":" << config.iterations << ",";
+  out << "\"bootstrap_iterations_per_probe\":" << config.bootstrap_iterations << ",";
   out << "\"mean_latency_sec\":" << mean(latencies) << ",";
   out << "\"min_latency_sec\":" << *std::min_element(latencies.begin(), latencies.end()) << ",";
   out << "\"max_latency_sec\":" << *std::max_element(latencies.begin(), latencies.end()) << ",";
@@ -283,7 +297,8 @@ auto build_payload(
   }
   out << ",";
   out << "\"operation_counts\":{";
-  out << "\"bootstraps\":" << config.iterations << ",";
+  out << "\"bootstraps\":"
+      << config.iterations * config.bootstrap_iterations << ",";
   out << "\"rotations\":0,";
   out << "\"ct_ct_mul\":0,";
   out << "\"ct_pt_mul\":0,";
@@ -407,7 +422,9 @@ auto main(int argc, char* argv[]) -> int {
         initial_levels_remaining = config.multiplicative_depth - static_cast<int>(ciphertext->GetLevel());
       }
       const auto bootstrap_start = now();
-      Ciphertext<DCRTPoly> bootstrapped = cc->EvalBootstrap(ciphertext);
+      Ciphertext<DCRTPoly> bootstrapped = cc->EvalBootstrap(
+          ciphertext, static_cast<uint32_t>(config.bootstrap_iterations),
+          static_cast<uint32_t>(config.bootstrap_precision));
       latencies.push_back(seconds_since(bootstrap_start));
       levels_after.push_back(
           config.multiplicative_depth - static_cast<int>(bootstrapped->GetLevel()));
