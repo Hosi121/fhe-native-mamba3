@@ -1859,7 +1859,7 @@ auto main(int argc, char* argv[]) -> int {
           // clone of y1. This residual is itself only bootstrap error, so it
           // has a separate alignment knob from the rest of the circuit.
           auto residual = sub_aligned(
-              x_n, y1, args.meta_bts_residual_align_mode);
+              x_n, y1->Clone(), args.meta_bts_residual_align_mode);
           cc->EvalMultInPlace(residual, amplify);  // the reserved live level
           ++ct_pt_muls;
           while (residual->GetNoiseScaleDeg() > 1) {
