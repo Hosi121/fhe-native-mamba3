@@ -80,11 +80,42 @@ auto main() -> int {
   require(rotation_key_gib_estimate(65536, 44) > 0.0,
           "rotation key estimate is not positive");
 
+  auto bsgs_in = rep_in;
+  auto bsgs_out = rep_out;
+  bsgs_in.baby_step = 10;
+  bsgs_out.baby_step = 12;
+  const auto bsgs_rotations = required_rotations(payload, packing, bsgs_in, bsgs_out);
+  require(bsgs_rotations.size() < rotations.size(),
+          "true replicated BSGS did not reduce the rotation-key inventory");
+  const auto bsgs_frequencies = rotation_frequencies(
+      payload, packing, 24, 1, 32768, bsgs_in, bsgs_out);
+  const std::set<int32_t> bsgs_required(bsgs_rotations.begin(), bsgs_rotations.end());
+  for (const auto& [index, frequency] : bsgs_frequencies) {
+    require(bsgs_required.count(index) == 1,
+            "BSGS frequency contains an unplanned rotation");
+    require(frequency > 0.0, "BSGS rotation frequency is not positive");
+  }
+
   const auto small_shape = resolve_replicated_shape(4, 4, 32, 0);
   std::vector<double> weights(16);
   std::iota(weights.begin(), weights.end(), 1.0);
   const auto mask = replicated_bsgs_mask(weights, 4, 4, 0, small_shape, 32);
   require(mask.size() == 32, "replicated mask has the wrong size");
+  const auto small_bsgs_base = resolve_replicated_shape(4, 16, 128, 0);
+  std::vector<double> bsgs_weights(64);
+  std::iota(bsgs_weights.begin(), bsgs_weights.end(), 1.0);
+  auto small_bsgs_shape = small_bsgs_base;
+  small_bsgs_shape.baby_step = 2;
+  const auto first_pre_mask =
+      replicated_bsgs_pre_mask(bsgs_weights, 4, 16, 0, small_bsgs_shape, 128);
+  const auto second_pre_mask =
+      replicated_bsgs_pre_mask(bsgs_weights, 4, 16, 2, small_bsgs_shape, 128);
+  require(first_pre_mask == replicated_bsgs_mask(bsgs_weights, 4, 16, 0,
+                                                  small_bsgs_shape, 128),
+          "zero-giant BSGS mask was unexpectedly shifted");
+  require(second_pre_mask != replicated_bsgs_mask(bsgs_weights, 4, 16, 2,
+                                                   small_bsgs_shape, 128),
+          "nonzero-giant BSGS mask was not shifted");
 
   require_invalid([] { resolve_replicated_shape(4, 0, 32, 0); });
   require_invalid([] { python_mod(1, 0); });

@@ -62,6 +62,9 @@ auto main() -> int {
   const auto explicit_false =
       parse({"stage1", "--input", "payload", "--debug-decrypt", "false"});
   require(!explicit_false.debug_decrypt, "false boolean was not parsed");
+  const auto true_bsgs = parse({"stage1", "--input", "payload", "--bsgs-replicas",
+                                "auto", "--replicated-true-bsgs", "true"});
+  require(true_bsgs.replicated_true_bsgs, "true replicated BSGS was not parsed");
 
   require_invalid([] { parse({"stage1"}); });
   require_invalid([] {
@@ -99,6 +102,9 @@ auto main() -> int {
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--bsgs-replicas", "2junk"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--replicated-true-bsgs", "1"});
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--binary-sha256", "abc123"});

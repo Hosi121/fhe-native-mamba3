@@ -44,6 +44,32 @@ class ReplicatedDiagonalCost:
     window: int
 
 
+def _bsgs_split(count: int, baby_step: int | None = None) -> tuple[int, int]:
+    if count <= 0:
+        raise ValueError("count must be positive")
+    if baby_step is None:
+        baby_step = max(1, math.isqrt(count))
+    if baby_step <= 0:
+        raise ValueError("baby_step must be positive")
+    return baby_step, math.ceil(count / baby_step)
+
+
+def _fold_rotation_count(r: int) -> int:
+    return math.ceil(math.log2(r)) if r > 1 and r & (r - 1) == 0 else r - 1
+
+
+def _resolve_window(n: int, r: int, batch: int, window: int | None) -> int:
+    if n <= 0 or r <= 0 or batch <= 0:
+        raise ValueError("n, r, and batch must be positive")
+    if window is None:
+        # This reconstructs the largest equal period-n windows that fit. Pass
+        # the resolved native window explicitly when replicas were forced.
+        window = n * (batch // (r * n))
+    if window <= 0 or window % n != 0 or r * window > batch:
+        raise ValueError("window must be a positive multiple of n that fits r times")
+    return window
+
+
 def choose_window(m: int, n: int, batch: int) -> tuple[int, int]:
     """Window must be a multiple of n (so a global roll preserves the period-n
     input tiling) and >= m + n (so no output's rolled read crosses the window
@@ -65,25 +91,41 @@ def replicated_cost(
     period-``n`` tile in a window, copied to all windows, evaluated with one
     rotation and one combined plaintext mask per diagonal group, then folded.
     """
-    if n <= 0 or r <= 0 or batch <= 0:
-        raise ValueError("n, r, and batch must be positive")
-    if window is None:
-        # This reconstructs the largest equal period-n windows that fit. Pass
-        # the resolved native window explicitly when replicas were forced.
-        window = n * (batch // (r * n))
-    if window <= 0 or window % n != 0 or r * window > batch:
-        raise ValueError("window must be a positive multiple of n that fits r times")
+    window = _resolve_window(n, r, batch, window)
     per_replica = math.ceil(n / r)
     reps = window // n
     extend = reps - 1
     fill = r - 1
     diagonal_rolls = per_replica - 1
-    fold = math.ceil(math.log2(r)) if r > 1 and r & (r - 1) == 0 else r - 1
+    fold = _fold_rotation_count(r)
     return ReplicatedDiagonalCost(
         diagonals=per_replica * r if per_replica * r < n + r else n,
         ct_pt_mul=per_replica,  # masks are r-window-periodic: ONE plaintext serves all replicas
         rotations=extend + fill + diagonal_rolls + fold,
         adds=per_replica + fill + fold,
+        replicas=r,
+        window=window,
+    )
+
+
+def replicated_bsgs_cost(
+    n: int,
+    r: int,
+    batch: int,
+    *,
+    window: int | None = None,
+    baby_step: int | None = None,
+) -> ReplicatedDiagonalCost:
+    """Cost of true BSGS over the native replicated diagonal groups."""
+    window = _resolve_window(n, r, batch, window)
+    per_replica = math.ceil(n / r)
+    baby, giant = _bsgs_split(per_replica, baby_step)
+    reps = window // n
+    return ReplicatedDiagonalCost(
+        diagonals=per_replica * r if per_replica * r < n + r else n,
+        ct_pt_mul=per_replica,
+        rotations=(reps - 1) + (r - 1) + (baby - 1) + (giant - 1) + _fold_rotation_count(r),
+        adds=per_replica + (r - 1) + _fold_rotation_count(r),
         replicas=r,
         window=window,
     )
@@ -112,6 +154,29 @@ def diagonal_mask(w_mat: np.ndarray, d: int, replica: int, window: int, batch: i
     return mask
 
 
+def _combined_mask(w_mat: np.ndarray, k: int, r: int, window: int, batch: int) -> np.ndarray:
+    n = w_mat.shape[1]
+    mask = np.zeros(batch)
+    for j in range(r):
+        d = j + k * r
+        if d < n:
+            mask += diagonal_mask(w_mat, d, j, window, batch)
+    return mask
+
+
+def _fold_replicas(acc: np.ndarray, r: int, window: int) -> np.ndarray:
+    folded = acc.copy()
+    if r & (r - 1) == 0:
+        step = window + 1
+        while step < r * (window + 1):
+            folded += np.roll(folded, -step)
+            step *= 2
+    else:
+        for j in range(1, r):
+            folded += np.roll(acc, -j * (window + 1))
+    return folded
+
+
 def replicated_matmul(
     w_mat: np.ndarray, x: np.ndarray, r: int, window: int, batch: int
 ) -> np.ndarray:
@@ -124,25 +189,45 @@ def replicated_matmul(
     for k in range(per_replica):
         # Replica j handles diagonal d = j + k*r. The combined +j mask makes
         # one global k*r roll valid for every replica in this group.
-        mask = np.zeros(batch)
-        for j in range(r):
-            d = j + k * r
-            if d >= n:
-                continue
-            mask += diagonal_mask(w_mat, d, j, window, batch)
+        mask = _combined_mask(w_mat, k, r, window, batch)
         acc += np.roll(slots, -k * r) * mask
-    # Fold window j and its +j offset into window 0. Doubling works when r is
-    # a power of two; otherwise the native path sums each source window.
-    folded = acc.copy()
-    if r & (r - 1) == 0:
-        step = window + 1
-        while step < r * (window + 1):
-            folded = folded + np.roll(folded, -step)
-            step *= 2
-    else:
-        for j in range(1, r):
-            folded = folded + np.roll(acc, -j * (window + 1))
-    return folded
+    return _fold_replicas(acc, r, window)
+
+
+def replicated_bsgs_matmul(
+    w_mat: np.ndarray,
+    x: np.ndarray,
+    r: int,
+    window: int,
+    batch: int,
+    *,
+    baby_step: int | None = None,
+) -> np.ndarray:
+    """True BSGS over replicated diagonal groups using CKKS-legal slot ops.
+
+    For group ``k = giant*baby_step + baby``, the plaintext mask is rotated
+    backwards by the giant offset. Rotating the accumulated giant block then
+    restores the mask and advances the baby-rotated ciphertext to ``k*r``.
+    """
+    n = w_mat.shape[1]
+    slots = replicate_input(x, r, window, batch)
+    group_count = math.ceil(n / r)
+    baby, giant_count = _bsgs_split(group_count, baby_step)
+    baby_rotations = [np.roll(slots, -i * r) for i in range(baby)]
+
+    acc = np.zeros(batch)
+    for giant in range(giant_count):
+        giant_offset = giant * baby * r
+        inner = np.zeros(batch)
+        for baby_index, baby_slots in enumerate(baby_rotations):
+            k = giant * baby + baby_index
+            if k >= group_count:
+                break
+            mask = _combined_mask(w_mat, k, r, window, batch)
+            pre_rotated_mask = np.roll(mask, giant_offset)
+            inner += baby_slots * pre_rotated_mask
+        acc += np.roll(inner, -giant_offset)
+    return _fold_replicas(acc, r, window)
 
 
 def verify(m: int, n: int, batch: int, r: int | None = None, seed: int = 0) -> dict:

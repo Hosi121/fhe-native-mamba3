@@ -122,6 +122,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.level_align_mode = value;
     } else if (arg == "--bsgs-replicas") {
       config.bsgs_replicas = value;
+    } else if (arg == "--replicated-true-bsgs") {
+      config.replicated_true_bsgs = parse_bool_arg(arg, value);
     } else if (arg == "--output-json") {
       config.output_json = value;
     } else if (arg == "--artifact-version") {
@@ -295,6 +297,9 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.bsgs_replicas != "1" && config.streams > 1) {
     throw std::invalid_argument("bsgs-replicas requires --streams 1");
+  }
+  if (config.replicated_true_bsgs && config.bsgs_replicas == "1") {
+    throw std::invalid_argument("replicated-true-bsgs requires replicated layout");
   }
   if (config.security != "not-set" && config.security != "128-classic") {
     throw std::invalid_argument("security must be not-set or 128-classic");

@@ -18,6 +18,7 @@ struct ReplicatedShape {
   int window = 0;
   int reps = 0;         // window / n input tiles per window
   int per_replica = 0;  // ceil(n / r) diagonals (= masks = encodes)
+  int baby_step = 1;    // 1 = direct group rotations; >1 = true BSGS
 };
 
 
@@ -38,6 +39,10 @@ auto resolve_replicated_shape(int output_dim, int input_dim, int batch,
 auto replicated_bsgs_mask(const std::vector<double>& weights, int output_dim,
                           int input_dim, int k,
                           const ReplicatedShape& shape, int batch_size)
+    -> std::vector<double>;
+auto replicated_bsgs_pre_mask(const std::vector<double>& weights,
+                              int output_dim, int input_dim, int k,
+                              const ReplicatedShape& shape, int batch_size)
     -> std::vector<double>;
 auto python_mod(int value, int modulus) -> int;
 auto slot_bsgs_giant_with_zero(int input_dim, int output_dim, int baby_step)

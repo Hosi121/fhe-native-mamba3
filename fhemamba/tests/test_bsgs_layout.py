@@ -1,7 +1,14 @@
 """Input-replicated BSGS layout: slot-exact matmul + diagonal-count reduction."""
 
 import numpy as np
-from fhemamba.bsgs_layout import choose_window, replicated_cost, replicated_matmul, verify
+from fhemamba.bsgs_layout import (
+    choose_window,
+    replicated_bsgs_cost,
+    replicated_bsgs_matmul,
+    replicated_cost,
+    replicated_matmul,
+    verify,
+)
 
 
 def test_replicated_matmul_exact_across_shapes() -> None:
@@ -51,3 +58,24 @@ def test_matches_dense_on_random_seeds() -> None:
         window, r = choose_window(m, n, batch)
         got = replicated_matmul(w, x, r, window, batch)[:m]
         assert np.allclose(got, w @ x, atol=1e-9)
+
+
+def test_true_bsgs_matches_dense_on_real_projection_shapes() -> None:
+    rng = np.random.default_rng(7)
+    for m, n, batch in [(3352, 768, 32768), (768, 1536, 32768), (64, 32, 4096)]:
+        w = rng.standard_normal((m, n))
+        x = rng.standard_normal(n)
+        window, replicas = choose_window(m, n, batch)
+        got = replicated_bsgs_matmul(w, x, replicas, window, batch)[:m]
+        assert np.allclose(got, w @ x, atol=1e-9)
+
+
+def test_true_bsgs_reduces_native_projection_rotations() -> None:
+    in_window, in_replicas = choose_window(3352, 768, 32768)
+    out_window, out_replicas = choose_window(768, 1536, 32768)
+    in_cost = replicated_bsgs_cost(768, in_replicas, 32768, window=in_window)
+    out_cost = replicated_bsgs_cost(1536, out_replicas, 32768, window=out_window)
+
+    assert (in_cost.ct_pt_mul, in_cost.rotations) == (110, 36)
+    assert (out_cost.ct_pt_mul, out_cost.rotations) == (154, 42)
+    assert in_cost.rotations + out_cost.rotations == 78

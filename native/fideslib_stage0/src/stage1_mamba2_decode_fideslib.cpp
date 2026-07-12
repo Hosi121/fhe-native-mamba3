@@ -117,6 +117,7 @@ using fhemamba::stage1::prepare_client_handoff;
 using fhemamba::stage1::read_chain_payload;
 using fhemamba::stage1::read_m1_payload;
 using fhemamba::stage1::replicated_bsgs_mask;
+using fhemamba::stage1::replicated_bsgs_pre_mask;
 using fhemamba::stage1::ReplicatedShape;
 using fhemamba::stage1::required_rotations;
 using fhemamba::stage1::resolve_replicated_shape;
@@ -924,24 +925,36 @@ auto main(int argc, char* argv[]) -> int {
         args.bsgs_replicas == "auto" ? 0
         : args.bsgs_replicas == "1"  ? -1
                                      : std::stoi(args.bsgs_replicas);
-    const auto rep_in =
+    auto rep_in =
         forced_replicas < 0
             ? ReplicatedShape{}
             : resolve_replicated_shape(dims_payload.proj_dim, dims_payload.d_model,
                                        batch_size, forced_replicas);
-    const auto rep_out =
+    auto rep_out =
         forced_replicas < 0
             ? ReplicatedShape{}
             : resolve_replicated_shape(dims_payload.d_model, dims_payload.d_inner,
                                        batch_size, forced_replicas);
+    if (args.replicated_true_bsgs) {
+      if (rep_in.replicas > 1) {
+        rep_in.baby_step = std::max(
+            1, static_cast<int>(std::sqrt(static_cast<double>(rep_in.per_replica))));
+      }
+      if (rep_out.replicas > 1) {
+        rep_out.baby_step = std::max(
+            1, static_cast<int>(std::sqrt(static_cast<double>(rep_out.per_replica))));
+      }
+    }
     log_phase("bsgs layout mode=" + args.bsgs_replicas +
               " in_proj r=" + std::to_string(rep_in.replicas) +
               " window=" + std::to_string(rep_in.window) +
               " diagonals=" + std::to_string(rep_in.replicas > 1 ? rep_in.per_replica : 0) +
+              " baby=" + std::to_string(rep_in.baby_step) +
               " out_proj r=" + std::to_string(rep_out.replicas) +
               " window=" + std::to_string(rep_out.window) +
               " diagonals=" +
-              std::to_string(rep_out.replicas > 1 ? rep_out.per_replica : 0));
+              std::to_string(rep_out.replicas > 1 ? rep_out.per_replica : 0) +
+              " baby=" + std::to_string(rep_out.baby_step));
     // Rotation indices depend only on dims/packing (asserted equal across
     // layers) plus the BSGS layout choice; the required set is the source of
     // truth (logged to JSON for reconciliation with the Python planner).
@@ -2348,8 +2361,9 @@ auto main(int argc, char* argv[]) -> int {
           for (int k = 0; k < rep_in.per_replica; ++k) {
             register_plain(plan.cache_prefix + "bsgsrep_in." + std::to_string(k), 1,
                            [&plan, k, rep_in, proj_dim, d_model, batch_size]() {
-                             return replicated_bsgs_mask(plan.in_w_folded, proj_dim,
-                                                         d_model, k, rep_in, batch_size);
+                             return replicated_bsgs_pre_mask(
+                                 plan.in_w_folded, proj_dim, d_model, k, rep_in,
+                                 batch_size);
                            });
           }
         }
@@ -2357,8 +2371,9 @@ auto main(int argc, char* argv[]) -> int {
           for (int k = 0; k < rep_out.per_replica; ++k) {
             register_plain(plan.cache_prefix + "bsgsrep_out." + std::to_string(k), 1,
                            [&plan, k, rep_out, d_model, d_inner, batch_size]() {
-                             return replicated_bsgs_mask(plan.out_w_folded, d_model,
-                                                         d_inner, k, rep_out, batch_size);
+                             return replicated_bsgs_pre_mask(
+                                 plan.out_w_folded, d_model, d_inner, k, rep_out,
+                                 batch_size);
                            });
           }
         }
@@ -2665,24 +2680,72 @@ auto main(int argc, char* argv[]) -> int {
       for (int j = 1; j < shape.replicas; ++j) {
         replicated = add_aligned(replicated, rotate(extended, -j * shape.window));
       }
-      // One roll (k*r) + one combined mask per k: replica j's diagonal
-      // d = j + k*r sits at slot j*window + i + j (the +j shift is what lets
-      // identical replicas share the roll).
+      // The measured path uses one roll per diagonal group. The opt-in true
+      // BSGS path reuses baby rotations and pre-rotates each plaintext mask
+      // before one rotation per giant group.
       Ciphertext<DCRTPoly> accumulator;
       bool has_accumulator = false;
-      for (int k = 0; k < shape.per_replica; ++k) {
-        auto mask = replicated_bsgs_mask(weights, output_dim, input_dim, k, shape, batch_size);
-        if (std::all_of(mask.begin(), mask.end(),
-                        [](double value) { return value == 0.0; })) {
-          continue;
+      if (shape.baby_step <= 1) {
+        for (int k = 0; k < shape.per_replica; ++k) {
+          auto mask = replicated_bsgs_pre_mask(weights, output_dim, input_dim, k,
+                                               shape, batch_size);
+          if (std::all_of(mask.begin(), mask.end(),
+                          [](double value) { return value == 0.0; })) {
+            continue;
+          }
+          auto rolled = k == 0 ? replicated : rotate(replicated, k * shape.replicas);
+          auto term = mul_mask(rolled, key_prefix + std::to_string(k), mask);
+          if (!has_accumulator) {
+            accumulator = term;
+            has_accumulator = true;
+          } else {
+            accumulator = add_aligned(accumulator, term);
+          }
         }
-        auto rolled = k == 0 ? replicated : rotate(replicated, k * shape.replicas);
-        auto term = mul_mask(rolled, key_prefix + std::to_string(k), mask);
-        if (!has_accumulator) {
-          accumulator = term;
-          has_accumulator = true;
-        } else {
-          accumulator = add_aligned(accumulator, term);
+      } else {
+        std::vector<Ciphertext<DCRTPoly>> babies;
+        babies.reserve(static_cast<std::size_t>(shape.baby_step));
+        babies.push_back(replicated);
+        for (int baby = 1; baby < shape.baby_step; ++baby) {
+          babies.push_back(rotate(replicated, baby * shape.replicas));
+        }
+        const int giant_count =
+            (shape.per_replica + shape.baby_step - 1) / shape.baby_step;
+        for (int giant = 0; giant < giant_count; ++giant) {
+          Ciphertext<DCRTPoly> inner;
+          bool has_inner = false;
+          for (int baby = 0; baby < shape.baby_step; ++baby) {
+            const int k = giant * shape.baby_step + baby;
+            if (k >= shape.per_replica) {
+              break;
+            }
+            auto mask = replicated_bsgs_pre_mask(
+                weights, output_dim, input_dim, k, shape, batch_size);
+            if (std::all_of(mask.begin(), mask.end(),
+                            [](double value) { return value == 0.0; })) {
+              continue;
+            }
+            auto term = mul_mask(babies[static_cast<std::size_t>(baby)],
+                                 key_prefix + std::to_string(k), mask);
+            if (!has_inner) {
+              inner = term;
+              has_inner = true;
+            } else {
+              inner = add_aligned(inner, term);
+            }
+          }
+          if (!has_inner) {
+            continue;
+          }
+          if (giant != 0) {
+            inner = rotate(inner, giant * shape.baby_step * shape.replicas);
+          }
+          if (!has_accumulator) {
+            accumulator = inner;
+            has_accumulator = true;
+          } else {
+            accumulator = add_aligned(accumulator, inner);
+          }
         }
       }
       if (!has_accumulator) {
@@ -3576,12 +3639,15 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"level_align_mode\":\"" << json_escape(args.level_align_mode) << "\",";
     out << "\"bsgs_layout\":{";
     out << "\"mode\":\"" << json_escape(args.bsgs_replicas) << "\",";
+    out << "\"true_bsgs\":" << (args.replicated_true_bsgs ? "true" : "false") << ",";
     out << "\"in_replicas\":" << rep_in.replicas << ",";
     out << "\"in_window\":" << rep_in.window << ",";
     out << "\"in_diagonals\":" << (rep_in.replicas > 1 ? rep_in.per_replica : 0) << ",";
+    out << "\"in_baby_step\":" << rep_in.baby_step << ",";
     out << "\"out_replicas\":" << rep_out.replicas << ",";
     out << "\"out_window\":" << rep_out.window << ",";
-    out << "\"out_diagonals\":" << (rep_out.replicas > 1 ? rep_out.per_replica : 0);
+    out << "\"out_diagonals\":" << (rep_out.replicas > 1 ? rep_out.per_replica : 0) << ",";
+    out << "\"out_baby_step\":" << rep_out.baby_step;
     out << "},";
     out << "\"bootstrap_norm_margin\":" << args.bootstrap_norm_margin << ",";
     out << "\"state_bootstrap_margin\":" << args.state_bootstrap_margin << ",";

@@ -59,6 +59,27 @@ auto replicated_bsgs_mask(const std::vector<double>& weights, int output_dim, in
   return mask;
 }
 
+auto replicated_bsgs_pre_mask(const std::vector<double>& weights, int output_dim,
+                              int input_dim, int k,
+                              const ReplicatedShape& shape, int batch_size)
+    -> std::vector<double> {
+  auto mask = replicated_bsgs_mask(weights, output_dim, input_dim, k, shape,
+                                   batch_size);
+  if (shape.baby_step <= 1) {
+    return mask;
+  }
+  const int giant = (k / shape.baby_step) * shape.baby_step * shape.replicas;
+  if (giant == 0) {
+    return mask;
+  }
+  std::vector<double> shifted(mask.size(), 0.0);
+  for (int slot = 0; slot < batch_size; ++slot) {
+    shifted[static_cast<std::size_t>((slot + giant) % batch_size)] =
+        mask[static_cast<std::size_t>(slot)];
+  }
+  return shifted;
+}
+
 // Rotation indices for one replicated matmul: input self-extension, window
 // fill, per-k diagonal rolls, and the fold (doubling strides when r is a
 // power of two, sequential otherwise) — all NAF-composable.
@@ -70,8 +91,20 @@ void insert_replicated_rotations(std::set<int32_t>& rotations, int input_dim,
   for (int j = 1; j < shape.replicas; ++j) {
     rotations.insert(static_cast<int32_t>(-j * shape.window));
   }
-  for (int k = 1; k < shape.per_replica; ++k) {
-    rotations.insert(static_cast<int32_t>(k * shape.replicas));
+  if (shape.baby_step > 1) {
+    for (int baby = 1; baby < shape.baby_step; ++baby) {
+      rotations.insert(static_cast<int32_t>(baby * shape.replicas));
+    }
+    const int giant_count =
+        (shape.per_replica + shape.baby_step - 1) / shape.baby_step;
+    for (int giant = 1; giant < giant_count; ++giant) {
+      rotations.insert(
+          static_cast<int32_t>(giant * shape.baby_step * shape.replicas));
+    }
+  } else {
+    for (int k = 1; k < shape.per_replica; ++k) {
+      rotations.insert(static_cast<int32_t>(k * shape.replicas));
+    }
   }
   if ((shape.replicas & (shape.replicas - 1)) == 0) {
     for (int step = shape.window + 1; step < shape.replicas * (shape.window + 1);
@@ -308,8 +341,19 @@ auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int
     for (int j = 1; j < shape.replicas; ++j) {
       add(-j * shape.window, L);
     }
-    for (int k = 1; k < shape.per_replica; ++k) {
-      add(k * shape.replicas, L);
+    if (shape.baby_step > 1) {
+      for (int baby = 1; baby < shape.baby_step; ++baby) {
+        add(baby * shape.replicas, L);
+      }
+      const int giant_count =
+          (shape.per_replica + shape.baby_step - 1) / shape.baby_step;
+      for (int giant = 1; giant < giant_count; ++giant) {
+        add(giant * shape.baby_step * shape.replicas, L);
+      }
+    } else {
+      for (int k = 1; k < shape.per_replica; ++k) {
+        add(k * shape.replicas, L);
+      }
     }
     if ((shape.replicas & (shape.replicas - 1)) == 0) {
       for (int step = shape.window + 1; step < shape.replicas * (shape.window + 1);

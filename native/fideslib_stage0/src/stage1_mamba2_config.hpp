@@ -100,6 +100,9 @@ struct Config {
   // to ~16 GiB. Requires --streams 1 (replicas and streams both partition
   // the batch: S * r * window <= batch; co-optimization is future work).
   std::string bsgs_replicas = "1";
+  // Apply a real baby-step/giant-step decomposition to the replicated
+  // diagonal groups. Off preserves the measured replicated schedule.
+  bool replicated_true_bsgs = false;
   double tolerance = 5e-2;
   std::set<int> bootstrap_before_token;
   // Diagnostic protocol simulation: decrypt and freshly encrypt every
