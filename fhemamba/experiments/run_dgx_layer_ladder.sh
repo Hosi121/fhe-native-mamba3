@@ -16,6 +16,7 @@ LAYERS="${LAYERS:-5 8 12 24}"
 TOKENS="${TOKENS:-1}"
 RUN_TAG="${RUN_TAG:-sqnewton-bts18-h8-c0}"
 ARTIFACT_VERSION="${ARTIFACT_VERSION:-0.4.4}"
+REPO_COMMIT="${REPO_COMMIT:-working-tree}"
 RING_DIM="${RING_DIM:-65536}"
 MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-44}"
 SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-59}"
@@ -45,6 +46,7 @@ REFRESH_RECURRENT_STATE_POST="${REFRESH_RECURRENT_STATE_POST:-0}"
 REFRESH_RECURRENT_STATE_POST_LAYERS="${REFRESH_RECURRENT_STATE_POST_LAYERS:-}"
 
 mkdir -p "$RESULTS_DIR" "$LOG_DIR"
+BINARY_SHA256="$(sha256sum "$BINARY" | awk '{print $1}')"
 
 overall=0
 for layers in $LAYERS; do
@@ -87,7 +89,8 @@ for layers in $LAYERS; do
     --refresh-recurrent-state-post-layers "$REFRESH_RECURRENT_STATE_POST_LAYERS" \
     --tolerance "$TOLERANCE" \
     --artifact-version "$ARTIFACT_VERSION+$name" \
-    --repo-commit working-tree \
+    --repo-commit "$REPO_COMMIT" \
+    --binary-sha256 "$BINARY_SHA256" \
     --output-json "$result" \
     2>&1 | tee "$LOG_DIR/$name.log"
   rc=${PIPESTATUS[0]}

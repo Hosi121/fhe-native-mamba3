@@ -22,8 +22,10 @@ SCALING_MOD_SIZE="${SCALING_MOD_SIZE:-59}"
 FIRST_MOD_SIZE="${FIRST_MOD_SIZE:-60}"
 SECURITY="${SECURITY:-not-set}"
 ARTIFACT_VERSION="${ARTIFACT_VERSION:-0.4.4}"
+REPO_COMMIT="${REPO_COMMIT:-working-tree}"
 GPU_WAIT_TIMEOUT_SECONDS="${GPU_WAIT_TIMEOUT_SECONDS:-14400}"
 GPU_POLL_SECONDS="${GPU_POLL_SECONDS:-30}"
+BINARY_SHA256="$(sha256sum "$BINARY" | awk '{print $1}')"
 
 waited=0
 while [[ -n "$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)" ]]; do
@@ -67,7 +69,8 @@ common_args=(
   --refresh-recurrent-state-post "${REFRESH_RECURRENT_STATE_POST:-1}"
   --tolerance "${TOLERANCE:-0.05}"
   --artifact-version "$ARTIFACT_VERSION+$RUN_TAG"
-  --repo-commit working-tree
+  --repo-commit "$REPO_COMMIT"
+  --binary-sha256 "$BINARY_SHA256"
   --handoff-dir "$HANDOFF_DIR"
 )
 

@@ -65,10 +65,14 @@ auto main() -> int {
   config.input = "payload";
   config.output_json = output.string();
   config.artifact_version = std::string("test") + static_cast<char>(1);
+  config.binary_sha256 = std::string(64, 'a');
   write_runtime_failure_payload(config, "phase\nname", "message\ttext");
   const auto failure = read_file(output);
   require(failure.find("\"status\":\"failed\"") != std::string::npos,
           "failure artifact lacks status");
+  require(failure.find("\"binary_sha256\":\"" + std::string(64, 'a') + "\"") !=
+              std::string::npos,
+          "failure artifact lacks the binary hash");
   require(failure.find("test\\u0001") != std::string::npos,
           "failure artifact contains an unescaped control character");
   require(failure.find("phase\\nname") != std::string::npos,

@@ -3536,6 +3536,11 @@ auto main(int argc, char* argv[]) -> int {
     out << "},";
     out << "\"bootstrap_norm_margin\":" << args.bootstrap_norm_margin << ",";
     out << "\"state_bootstrap_margin\":" << args.state_bootstrap_margin << ",";
+    out << "\"meta_bts\":" << (args.meta_bts ? "true" : "false") << ",";
+    out << "\"meta_bts_alpha\":" << args.meta_bts_alpha << ",";
+    out << "\"state_meta_bts_alpha\":" << args.state_meta_bts_alpha << ",";
+    out << "\"meta_bts_residual_align_mode\":\""
+        << json_escape(args.meta_bts_residual_align_mode) << "\",";
     out << "\"final_norm_scale\":" << final_norm_scale << ",";
     out << "\"carried_bounds_source\":\""
         << (all_carried_bounds_calibrated ? "calibration-text" : "generic-fallback")

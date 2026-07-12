@@ -1,6 +1,8 @@
 #include "stage1_mamba2_config.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <exception>
 #include <sstream>
 #include <stdexcept>
@@ -126,6 +128,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.artifact_version = value;
     } else if (arg == "--repo-commit") {
       config.repo_commit = value;
+    } else if (arg == "--binary-sha256") {
+      config.binary_sha256 = value;
     } else if (arg == "--process-role") {
       config.process_role = value;
     } else if (arg == "--handoff-dir") {
@@ -300,6 +304,14 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.secret_key_dist != "sparse-encapsulated") {
     throw std::invalid_argument(
         "secret-key-dist must be sparse-ternary, uniform-ternary, or sparse-encapsulated");
+  }
+  if (config.binary_sha256 != "unknown" &&
+      (config.binary_sha256.size() != 64 ||
+       !std::all_of(config.binary_sha256.begin(), config.binary_sha256.end(),
+                    [](unsigned char character) {
+                      return std::isxdigit(character) != 0;
+                    }))) {
+    throw std::invalid_argument("binary-sha256 must be unknown or 64 hexadecimal characters");
   }
   return config;
 }

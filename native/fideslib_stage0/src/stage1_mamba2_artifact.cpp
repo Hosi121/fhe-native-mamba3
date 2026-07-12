@@ -178,6 +178,7 @@ void write_int_map_json(std::ostringstream& out,
 void write_artifact_prefix(std::ostringstream& out, const Config& args) {
   out << "\"version\":\"" << json_escape(args.artifact_version) << "\",";
   out << "\"repo_commit\":\"" << json_escape(args.repo_commit) << "\",";
+  out << "\"binary_sha256\":\"" << json_escape(args.binary_sha256) << "\",";
   out << "\"stage\":\"stage1-mamba2-decode-fideslib\",";
   out << "\"backend\":\"fideslib-gpu\",";
   out << "\"encrypted\":true,";

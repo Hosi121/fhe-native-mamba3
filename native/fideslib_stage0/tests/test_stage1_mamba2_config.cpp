@@ -40,6 +40,11 @@ auto main() -> int {
   require(defaults.ring_dim == 131072, "unexpected ring dimension default");
   require(defaults.multiplicative_depth == 44, "unexpected depth default");
 
+  const std::string binary_hash(64, 'a');
+  const auto provenance = parse({"stage1", "--input", "payload",
+                                 "--binary-sha256", binary_hash});
+  require(provenance.binary_sha256 == binary_hash, "binary hash was not parsed");
+
   const auto server = parse({
       "stage1",
       "--input-chain",
@@ -94,6 +99,9 @@ auto main() -> int {
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--bsgs-replicas", "2junk"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--binary-sha256", "abc123"});
   });
   require_invalid([] {
     parse({
