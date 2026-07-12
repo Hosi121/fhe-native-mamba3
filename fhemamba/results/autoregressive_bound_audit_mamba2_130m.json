@@ -1,0 +1,202 @@
+{
+  "version": "0.4.4",
+  "stage": "autoregressive-carried-bound-audit",
+  "backend": "torch-cpu-polynomial-reference",
+  "encrypted": false,
+  "status": "failed",
+  "passed": false,
+  "parameters": {
+    "checkpoint": "checkpoints/mamba2-130m-hf",
+    "chain_dir": "/tmp/fhemamba-sqnewton-meta",
+    "ring_dimension": 65536,
+    "batch_slots": 32768,
+    "state_margin": 1.1,
+    "group_heads": 4,
+    "n_layers": 24,
+    "evaluated_ids": [
+      510,
+      5347,
+      273,
+      253,
+      4687
+    ]
+  },
+  "measurements": {
+    "entries": 168,
+    "violations": 1,
+    "global_state_abs_max_per_token": [
+      110.10052490234375,
+      177.54620361328125,
+      189.13766479492188,
+      196.0432891845703,
+      198.06333923339844
+    ],
+    "worst": [
+      {
+        "kind": "fifo",
+        "layer": 9,
+        "group": -1,
+        "observed": 11.980480194091797,
+        "calibrated": 10.62277889251709,
+        "ratio_to_margin": 1.0252821546219544
+      },
+      {
+        "kind": "fifo",
+        "layer": 10,
+        "group": -1,
+        "observed": 8.30870532989502,
+        "calibrated": 9.489023208618164,
+        "ratio_to_margin": 0.7960111716095909
+      },
+      {
+        "kind": "state_group",
+        "layer": 4,
+        "group": 5,
+        "observed": 2.597118616104126,
+        "calibrated": 2.9685184955596924,
+        "ratio_to_margin": 0.7953519330476232
+      },
+      {
+        "kind": "fifo",
+        "layer": 4,
+        "group": -1,
+        "observed": 12.063953399658203,
+        "calibrated": 14.14772891998291,
+        "ratio_to_margin": 0.7751937024913597
+      },
+      {
+        "kind": "fifo",
+        "layer": 3,
+        "group": -1,
+        "observed": 15.56192398071289,
+        "calibrated": 19.361175537109375,
+        "ratio_to_margin": 0.7306996205738693
+      },
+      {
+        "kind": "state_group",
+        "layer": 19,
+        "group": 2,
+        "observed": 1.803078055381775,
+        "calibrated": 2.440946340560913,
+        "ratio_to_margin": 0.6715272029094329
+      },
+      {
+        "kind": "fifo",
+        "layer": 2,
+        "group": -1,
+        "observed": 11.102994918823242,
+        "calibrated": 15.379629135131836,
+        "ratio_to_margin": 0.6562987738974657
+      },
+      {
+        "kind": "state_group",
+        "layer": 11,
+        "group": 1,
+        "observed": 111.34113311767578,
+        "calibrated": 156.06649780273438,
+        "ratio_to_margin": 0.6485646397543905
+      },
+      {
+        "kind": "state_group",
+        "layer": 3,
+        "group": 3,
+        "observed": 75.0925064086914,
+        "calibrated": 105.77802276611328,
+        "ratio_to_margin": 0.6453695496647309
+      },
+      {
+        "kind": "fifo",
+        "layer": 12,
+        "group": -1,
+        "observed": 7.138455390930176,
+        "calibrated": 10.714667320251465,
+        "ratio_to_margin": 0.6056655523573746
+      },
+      {
+        "kind": "fifo",
+        "layer": 18,
+        "group": -1,
+        "observed": 8.37578010559082,
+        "calibrated": 12.573394775390625,
+        "ratio_to_margin": 0.6055918617492505
+      },
+      {
+        "kind": "state_group",
+        "layer": 3,
+        "group": 1,
+        "observed": 46.69563674926758,
+        "calibrated": 70.67332458496094,
+        "ratio_to_margin": 0.6006591470299089
+      },
+      {
+        "kind": "state_group",
+        "layer": 22,
+        "group": 2,
+        "observed": 0.7332572340965271,
+        "calibrated": 1.2049412727355957,
+        "ratio_to_margin": 0.5532198959613288
+      },
+      {
+        "kind": "fifo",
+        "layer": 16,
+        "group": -1,
+        "observed": 6.244190216064453,
+        "calibrated": 10.368654251098633,
+        "ratio_to_margin": 0.5474709082383689
+      },
+      {
+        "kind": "fifo",
+        "layer": 1,
+        "group": -1,
+        "observed": 11.235725402832031,
+        "calibrated": 18.947219848632812,
+        "ratio_to_margin": 0.539092062178897
+      },
+      {
+        "kind": "fifo",
+        "layer": 13,
+        "group": -1,
+        "observed": 5.54554557800293,
+        "calibrated": 9.471535682678223,
+        "ratio_to_margin": 0.5322690258277335
+      },
+      {
+        "kind": "fifo",
+        "layer": 11,
+        "group": -1,
+        "observed": 8.177376747131348,
+        "calibrated": 14.16955280303955,
+        "ratio_to_margin": 0.5246445646071353
+      },
+      {
+        "kind": "fifo",
+        "layer": 5,
+        "group": -1,
+        "observed": 9.331110000610352,
+        "calibrated": 16.63833999633789,
+        "ratio_to_margin": 0.509836154036353
+      },
+      {
+        "kind": "fifo",
+        "layer": 0,
+        "group": -1,
+        "observed": 6.005336761474609,
+        "calibrated": 10.914369583129883,
+        "ratio_to_margin": 0.5002026928174107
+      },
+      {
+        "kind": "fifo",
+        "layer": 23,
+        "group": -1,
+        "observed": 5.1542558670043945,
+        "calibrated": 9.418377876281738,
+        "ratio_to_margin": 0.49750468853263186
+      }
+    ]
+  },
+  "measurement_scope": {
+    "plaintext_polynomial_trace": true,
+    "fhe_execution": false,
+    "claim": "Checks whether the exported calibration bounds cover the configured autoregressive polynomial trace under the native state-group packing."
+  }
+}

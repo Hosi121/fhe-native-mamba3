@@ -1,0 +1,50 @@
+{
+  "version": "0.4.4",
+  "stage": "autoregressive-client-trace",
+  "backend": "torch-cpu",
+  "encrypted": false,
+  "status": "passed",
+  "passed": true,
+  "checkpoint": "checkpoints/mamba2-130m-hf",
+  "parameters": {
+    "prompt": "The capital of France is in Europe.",
+    "prompt_tokens": 2,
+    "generate_tokens": 4,
+    "server_evaluations": 5,
+    "vocab_size": 50288,
+    "d_model": 768,
+    "embedding_lm_head_tied": true
+  },
+  "measurements": {
+    "prompt_ids": [510, 5347],
+    "exact_evaluated_ids": [510, 5347, 273, 253, 4687],
+    "polynomial_evaluated_ids": [510, 5347, 273, 253, 4687],
+    "exact_generated_ids": [273, 253, 4687, 273],
+    "polynomial_generated_ids": [273, 253, 4687, 273],
+    "generated_text": " of the Republic of",
+    "generated_ids_match": true,
+    "selected_embedding_max_abs_error": 0.0,
+    "lm_head_top2_margins": [
+      0.49713134765625,
+      1.9214439392089844,
+      0.186614990234375,
+      2.8828125
+    ],
+    "polynomial_vs_exact_hidden_max_abs_error": [
+      0.12313079833984375,
+      0.2707328796386719,
+      0.17314279079437256,
+      0.21313166618347168,
+      0.31130266189575195
+    ],
+    "client_embedding_sha256": "9521789f27fd1594e2ed152e873f430c9d2cde4583f7bd80dc7fa0b38582da29"
+  },
+  "measurement_scope": {
+    "plaintext_exact_trace": true,
+    "plaintext_polynomial_trace": true,
+    "dynamic_embedding_feedback": true,
+    "fhe_execution": false,
+    "client_server_process_separated": false,
+    "claim": "Plaintext validation of the client-loop trajectory and assets; not an FHE correctness or latency result."
+  }
+}
