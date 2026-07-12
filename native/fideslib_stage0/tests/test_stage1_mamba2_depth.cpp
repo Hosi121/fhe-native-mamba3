@@ -61,7 +61,7 @@ auto main() -> int {
   require(cheb_ps_depth(8) > 0, "non-constant polynomial has zero depth");
 
   const auto estimate =
-      estimate_levels(depth_payload(), 3, {}, {}, false, 1);
+      estimate_levels(depth_payload(), 3, {}, {}, false, 0, false, 1);
   require(estimate.token_output_levels.size() == 3,
           "depth estimate omitted token outputs");
   require(estimate.required_depth > 0 && estimate.max_segment > 0,
@@ -72,9 +72,27 @@ auto main() -> int {
   require_invalid([] { cheb_clenshaw_host({}, 0.0); });
   require_invalid([] { cheb_ps_host({1.0}, 0.0, 0); });
   require_invalid([] { cheb_ps_depth(-1); });
-  require_invalid([] { estimate_levels(depth_payload(), 0, {}, {}, false, 1); });
+  const auto periodic =
+      estimate_levels(depth_payload(), 4, {}, {}, false, 2, false, 1);
+  require(periodic.token_output_levels[2] < estimate_levels(
+      depth_payload(), 4, {}, {}, false, 0, false, 1).token_output_levels[2],
+          "periodic state refresh was omitted from the depth estimate");
+  const auto replicated =
+      estimate_levels(depth_payload(), 1, {}, {}, false, 0, true, 1);
+  require(replicated.req_conv == estimate.req_conv + 1,
+          "replicated state layout segment depth was not modeled");
+  require(replicated.update_level >= estimate.update_level,
+          "replicated state layout reduced the modeled update level");
+  require_invalid([] {
+    estimate_levels(depth_payload(), 0, {}, {}, false, 0, false, 1);
+  });
+  require_invalid([] {
+    estimate_levels(depth_payload(), 1, {}, {}, false, -1, false, 1);
+  });
   auto invalid_newton = depth_payload();
   invalid_newton.polys["rms_invsqrt"].iterations = 0;
-  require_invalid([&] { estimate_levels(invalid_newton, 1, {}, {}, false, 1); });
+  require_invalid([&] {
+    estimate_levels(invalid_newton, 1, {}, {}, false, 0, false, 1);
+  });
   return 0;
 }

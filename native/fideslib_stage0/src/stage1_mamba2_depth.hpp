@@ -43,6 +43,8 @@ auto estimate_levels(
     const M1Payload& payload, int tokens,
     const std::set<int>& bootstrap_before_token,
     const std::set<int>& debug_client_reencrypt_before_token,
-    bool refresh_recurrent_state_post, int streams) -> DepthEstimate;
+    bool refresh_recurrent_state_post, int state_refresh_interval,
+    bool replicated_state_blocks,
+    int streams) -> DepthEstimate;
 
 }  // namespace fhemamba::stage1

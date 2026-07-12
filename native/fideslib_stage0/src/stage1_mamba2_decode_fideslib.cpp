@@ -957,10 +957,12 @@ auto main(int argc, char* argv[]) -> int {
     // Rotation indices depend only on dims/packing (asserted equal across
     // layers) plus the BSGS layout choice; the required set is the source of
     // truth (logged to JSON for reconciliation with the Python planner).
-    const auto rotation_indices = required_rotations(dims_payload, packing, rep_in, rep_out);
+    const auto rotation_indices = required_rotations(
+        dims_payload, packing, rep_in, rep_out, args.replicated_state_blocks);
     verify_naf(rotation_indices);
-    auto rotation_freqs = rotation_frequencies(dims_payload, packing, layers_loaded,
-                                               args.streams, stream_stride, rep_in, rep_out);
+    auto rotation_freqs = rotation_frequencies(
+        dims_payload, packing, layers_loaded, args.streams, stream_stride,
+        rep_in, rep_out, args.replicated_state_blocks);
     {
       // Guard against generator/frequency drift: every counted index must be
       // required, and every required index gets an entry (frequency 0 if a
@@ -1053,6 +1055,8 @@ auto main(int argc, char* argv[]) -> int {
         args.debug_client_reencrypt_before_token,
         args.refresh_recurrent_state_post ||
             args.refresh_recurrent_state_post_layers.count(0) > 0,
+        args.state_refresh_interval,
+        args.replicated_state_blocks,
         args.streams);
     for (std::size_t index = 1; index < layer_payloads.size(); ++index) {
       const auto candidate = estimate_levels(
@@ -1060,6 +1064,8 @@ auto main(int argc, char* argv[]) -> int {
           args.debug_client_reencrypt_before_token,
           args.refresh_recurrent_state_post ||
               args.refresh_recurrent_state_post_layers.count(static_cast<int>(index)) > 0,
+          args.state_refresh_interval,
+          args.replicated_state_blocks,
           args.streams);
       depth_estimate.required_depth =
           std::max(depth_estimate.required_depth, candidate.required_depth);
@@ -2157,7 +2163,7 @@ auto main(int argc, char* argv[]) -> int {
       plan.req_residual = std::max(inv1, 1) + 2;
       plan.req_proj = 1 + std::max(conv_depth, std::max(gate_depth + 2, dt_depth + 1));
       plan.req_fifo = 2 + conv_depth;
-      plan.req_conv = 6;
+      plan.req_conv = args.replicated_state_blocks ? 7 : 6;
       plan.req_dt = 2 + exp_depth + p_exp.squarings;
       plan.req_decay = 3;
       plan.req_state_pre = 5;
@@ -2242,6 +2248,11 @@ auto main(int argc, char* argv[]) -> int {
       }
       return mask;
     };
+    const auto bc_source_mask = block_mask(packing.b_base, 2 * state_size);
+    std::vector<double> state_seed_mask(batch, 0.0);
+    for (int state = 0; state < state_size; ++state) {
+      state_seed_mask[static_cast<std::size_t>(state * group_block)] = 1.0;
+    }
 
     // -----------------------------------------------------------------------
     // Encode thread-safety self test. FIDESlib/OpenFHE MakeCKKSPackedPlaintext
@@ -2364,11 +2375,18 @@ auto main(int argc, char* argv[]) -> int {
     if (pt_cache_mode != "off") {
       const int layers_count = static_cast<int>(layer_plans.size());
       // Shared select/broadcast masks (layer-independent slot patterns).
-      for (int a = 0; a < state_size / group_heads; ++a) {
-        for (int b = 0; b < group_heads; ++b) {
-          const int slot = group_heads * a + group_block * b;
-          register_plain("mask.unit." + std::to_string(slot), 2 * layers_count,
-                         [unit_mask, slot]() { return unit_mask(slot); });
+      if (args.replicated_state_blocks) {
+        register_plain("mask.bc_source", args.streams * layers_count,
+                       [&bc_source_mask]() { return bc_source_mask; });
+        register_plain("mask.state_seed", 2 * args.streams * layers_count,
+                       [&state_seed_mask]() { return state_seed_mask; });
+      } else {
+        for (int a = 0; a < state_size / group_heads; ++a) {
+          for (int b = 0; b < group_heads; ++b) {
+            const int slot = group_heads * a + group_block * b;
+            register_plain("mask.unit." + std::to_string(slot), 2 * layers_count,
+                           [unit_mask, slot]() { return unit_mask(slot); });
+          }
         }
       }
       for (int h_local = 0; h_local < group_heads; ++h_local) {
@@ -2703,6 +2721,22 @@ auto main(int argc, char* argv[]) -> int {
       return doubling_fill(accumulator, 1, int_log2(group_block));
     };
 
+    // The contiguous B/C source has already been selected. Copy the branch at
+    // offsets (group_block-1)*2^k: source element n then lands at the first
+    // slot of state block n. One seed mask removes every other copied value.
+    auto place_state_blocks_replicated =
+        [&](const Ciphertext<DCRTPoly>& bc_source, int base) {
+          const int stride = group_block - 1;
+          auto replicated = rotate(bc_source, base);
+          for (int step = 1; step < state_size; step *= 2) {
+            auto copy = rotate(replicated, -stride * step);
+            ++adds;
+            replicated = cc->EvalAdd(replicated, copy);
+          }
+          auto seeds = mul_mask(replicated, "mask.state_seed", state_seed_mask);
+          return doubling_fill(seeds, 1, int_log2(group_block));
+        };
+
     // Head value of group g at proj slot dt0 + group_heads*g + h_local ->
     // all slots n*group_block + h_local*head_dim + p.
     auto place_heads = [&](const Ciphertext<DCRTPoly>& source, int group) {
@@ -2868,7 +2902,8 @@ auto main(int argc, char* argv[]) -> int {
     // before out_proj, plus the per-iteration Newton check) keep every
     // ciphertext lineage within the depth-44 MAXP=64 geometry.
     // -----------------------------------------------------------------------
-    auto run_layer = [&](const LayerPlan& plan, LayerRuntime& runtime, int layer_index,
+    auto run_layer = [&](const LayerPlan& plan, LayerRuntime& runtime, int token_index,
+                         int layer_index,
                          const Ciphertext<DCRTPoly>& hidden_ct, const std::string& tag,
                          int& layer_bootstraps) -> Ciphertext<DCRTPoly> {
       // This layer's measured carried bounds drive every state/FIFO refresh
@@ -3018,12 +3053,20 @@ auto main(int argc, char* argv[]) -> int {
             stream == 0 ? dt_ct : rotate_composite(dt_ct, stream * stream_stride);
         const auto decay_stream =
             stream == 0 ? decay_ct : rotate_composite(decay_ct, stream * stream_stride);
-        auto b_expanded = time_phase("bc_expand", [&]() {
-          return place_state_blocks(conv_stream, packing.b_base);
+        auto bc_expanded = time_phase("bc_expand", [&]() {
+          if (!args.replicated_state_blocks) {
+            return std::make_pair(
+                place_state_blocks(conv_stream, packing.b_base),
+                place_state_blocks(conv_stream, packing.c_base));
+          }
+          auto bc_source =
+              mul_mask(conv_stream, "mask.bc_source", bc_source_mask);
+          return std::make_pair(
+              place_state_blocks_replicated(bc_source, packing.b_base),
+              place_state_blocks_replicated(bc_source, packing.c_base));
         });
-        auto c_expanded = time_phase("bc_expand", [&]() {
-          return place_state_blocks(conv_stream, packing.c_base);
-        });
+        auto& b_expanded = bc_expanded.first;
+        auto& c_expanded = bc_expanded.second;
         if (stream == 0) {
           ckks_levels[tag + "bc_expand"] = static_cast<int>(b_expanded->GetLevel());
           debug_value_stats(b_expanded, tag + "bc_expand");
@@ -3057,10 +3100,14 @@ auto main(int argc, char* argv[]) -> int {
           // The updated state feeds this token's readout and is the carried
           // lineage for the next token. Refresh after the recurrent multiply
           // so both consumers start from a usable level.
+          const bool periodic_state_refresh =
+              runtime.has_state && args.state_refresh_interval > 0 &&
+              token_index % args.state_refresh_interval == 0;
           const int state_tail_requirement =
               runtime.has_state &&
                       (args.refresh_recurrent_state_post ||
-                       args.refresh_recurrent_state_post_layers.count(layer_index) > 0)
+                       args.refresh_recurrent_state_post_layers.count(layer_index) > 0 ||
+                       periodic_state_refresh)
                   ? args.multiplicative_depth
                   : plan.req_state_tail;
           maybe_bootstrap(runtime.state_cts[state_slot], state_tail_requirement,
@@ -3329,7 +3376,7 @@ auto main(int argc, char* argv[]) -> int {
                         layer_bootstraps);
         summary_level_in[key] = static_cast<int>(hidden_ct->GetLevel());
         hidden_ct = run_layer(plan,
-                              layer_runtimes[static_cast<std::size_t>(layer)], layer,
+                              layer_runtimes[static_cast<std::size_t>(layer)], token, layer,
                               hidden_ct, tag, layer_bootstraps);
         summary_level_out[key] = static_cast<int>(hidden_ct->GetLevel());
         summary_bootstraps[key] = layer_bootstraps;
@@ -3736,6 +3783,9 @@ auto main(int argc, char* argv[]) -> int {
         << (args.refresh_recurrent_state_post ? "true" : "false");
     out << ",\"refresh_recurrent_state_post_layers\":";
     write_int_set_json(out, args.refresh_recurrent_state_post_layers);
+    out << ",\"state_refresh_interval\":" << args.state_refresh_interval;
+    out << ",\"replicated_state_blocks\":"
+        << (args.replicated_state_blocks ? "true" : "false");
     out << "},";
     out << "\"measurements\":{";
     out.precision(12);  // show real CKKS noise digits in errors and samples
@@ -3978,6 +4028,8 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"recurrent_state_post_refresh_layers\":";
     write_int_set_json(out, args.refresh_recurrent_state_post_layers);
     out << ",";
+    out << "\"recurrent_state_refresh_interval\":"
+        << args.state_refresh_interval << ",";
     out << "\"per_token_fresh_embedding_encryption\":true,";
     out << "\"multi_stream_slot_packing\":" << (args.streams > 1 ? "true" : "false") << ",";
     out << "\"streams\":" << args.streams << ",";

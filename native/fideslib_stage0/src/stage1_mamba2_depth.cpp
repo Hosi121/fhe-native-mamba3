@@ -146,9 +146,10 @@ auto estimate_levels(
     int tokens,
     const std::set<int>& bootstrap_before_token,
     const std::set<int>& debug_client_reencrypt_before_token,
-    bool refresh_recurrent_state_post,
+    bool refresh_recurrent_state_post, int state_refresh_interval,
+    bool replicated_state_blocks,
     int streams) -> DepthEstimate {
-  if (tokens <= 0 || streams <= 0) {
+  if (tokens <= 0 || state_refresh_interval < 0 || streams <= 0) {
     throw std::invalid_argument("depth estimate tokens and streams must be positive");
   }
   // streams > 1 costs one extra level in each RMS variance reduction (the
@@ -179,7 +180,7 @@ auto estimate_levels(
   const int dt_lvl = proj + 1 + dt_depth + 1;
   const int decay_lvl = dt_lvl + 1 + exp_depth + exp_spec.squarings;
   const int x_exp = xconv + 1;
-  const int bc_exp = xconv + 1;
+  const int bc_exp = xconv + (replicated_state_blocks ? 2 : 1);
   const int dt_exp = dt_lvl + 1;
   const int decay_exp_lvl = decay_lvl + 1;
   const int dtx = std::max(x_exp, dt_exp) + 1;
@@ -192,7 +193,7 @@ auto estimate_levels(
   estimate.req_proj =
       1 + std::max(conv_depth, std::max(gate_depth + 2, dt_depth + 1));
   estimate.req_fifo = 2 + conv_depth;
-  estimate.req_conv = 6;
+  estimate.req_conv = replicated_state_blocks ? 7 : 6;
   estimate.req_dt = 2 + exp_depth + exp_spec.squarings;
   estimate.req_decay = 3;
   estimate.req_state_pre = 5;
@@ -213,7 +214,10 @@ auto estimate_levels(
     }
     const bool recurrent_update = has_state;
     state = recurrent_update ? std::max(decay_exp_lvl, state) + 1 : update;
-    if (recurrent_update && refresh_recurrent_state_post) {
+    const bool periodic_refresh =
+        state_refresh_interval > 0 && token % state_refresh_interval == 0;
+    if (recurrent_update &&
+        (refresh_recurrent_state_post || periodic_refresh)) {
       state = kAssumedBootstrapOutputLevel;
     }
     has_state = true;

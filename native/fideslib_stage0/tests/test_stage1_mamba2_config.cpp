@@ -64,17 +64,22 @@ auto main() -> int {
   require(!explicit_false.debug_decrypt, "false boolean was not parsed");
   const auto true_bsgs = parse({"stage1", "--input", "payload", "--bsgs-replicas",
                                 "auto", "--replicated-true-bsgs", "true",
+                                "--replicated-state-blocks", "true",
                                 "--projection-late-level", "true"});
   require(true_bsgs.replicated_true_bsgs, "true replicated BSGS was not parsed");
+  require(true_bsgs.replicated_state_blocks,
+          "replicated state blocks mode was not parsed");
   require(true_bsgs.projection_late_level,
           "projection late-level mode was not parsed");
   const auto consumption_plain =
       parse({"stage1", "--input", "payload", "--pt-cache-weight-level", "20",
-             "--pt-miss-consumption-level", "1"});
+             "--pt-miss-consumption-level", "1", "--state-refresh-interval", "2"});
   require(consumption_plain.pt_cache_weight_level == 20,
           "weight plaintext cache level was not parsed");
   require(consumption_plain.pt_miss_consumption_level,
           "consumption-level plaintext mode was not parsed");
+  require(consumption_plain.state_refresh_interval == 2,
+          "state refresh interval was not parsed");
 
   require_invalid([] { parse({"stage1"}); });
   require_invalid([] {
@@ -115,6 +120,9 @@ auto main() -> int {
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--pt-cache-weight-level", "44"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--state-refresh-interval", "-1"});
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--replicated-true-bsgs", "1"});

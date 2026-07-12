@@ -112,6 +112,9 @@ struct Config {
   // Apply a real baby-step/giant-step decomposition to the replicated
   // diagonal groups. Off preserves the measured replicated schedule.
   bool replicated_true_bsgs = false;
+  // Expand the contiguous Mamba B/C vectors into recurrent-state blocks by
+  // logarithmic rotate-add replication instead of one mask per state slot.
+  bool replicated_state_blocks = false;
   // In direct-drop alignment mode, discard projection-input towers that the
   // following inverse-norm multiply would discard from the linear result
   // anyway. This keeps residual/state branches unchanged while making the
@@ -136,6 +139,10 @@ struct Config {
   // consumed by the recurrent ct-ct multiply.
   bool refresh_recurrent_state_post = false;
   std::set<int> refresh_recurrent_state_post_layers;
+  // Periodic post-update state refresh for long autoregressive runs. Token 0
+  // initializes the state; interval N refreshes after recurrent updates at
+  // token indices N, 2N, ... . 0 leaves refresh entirely level-driven.
+  int state_refresh_interval = 0;
   int bootstrap_level_budget_cts = 5;
   int bootstrap_level_budget_stc = 5;
   int bootstrap_bsgs_dim_cts = 0;

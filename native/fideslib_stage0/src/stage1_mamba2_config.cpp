@@ -128,6 +128,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.bsgs_replicas = value;
     } else if (arg == "--replicated-true-bsgs") {
       config.replicated_true_bsgs = parse_bool_arg(arg, value);
+    } else if (arg == "--replicated-state-blocks") {
+      config.replicated_state_blocks = parse_bool_arg(arg, value);
     } else if (arg == "--projection-late-level") {
       config.projection_late_level = parse_bool_arg(arg, value);
     } else if (arg == "--output-json") {
@@ -164,6 +166,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.refresh_recurrent_state_post = parse_bool_arg(arg, value);
     } else if (arg == "--refresh-recurrent-state-post-layers") {
       config.refresh_recurrent_state_post_layers = parse_int_set(arg, value);
+    } else if (arg == "--state-refresh-interval") {
+      config.state_refresh_interval = parse_int(arg, value);
     } else if (arg == "--bootstrap-level-budget-cts") {
       config.bootstrap_level_budget_cts = parse_int(arg, value);
     } else if (arg == "--bootstrap-level-budget-stc") {
@@ -237,6 +241,9 @@ auto parse_args(int argc, char* argv[]) -> Config {
     if (layer < 0) {
       throw std::invalid_argument("refresh-recurrent-state-post-layers must be nonnegative");
     }
+  }
+  if (config.state_refresh_interval < 0) {
+    throw std::invalid_argument("state-refresh-interval must be nonnegative");
   }
   if (config.bootstrap_norm_margin <= 0.0) {
     throw std::invalid_argument("bootstrap-norm-margin must be positive");

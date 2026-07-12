@@ -95,6 +95,22 @@ auto main() -> int {
             "BSGS frequency contains an unplanned rotation");
     require(frequency > 0.0, "BSGS rotation frequency is not positive");
   }
+  const auto state_rotations =
+      required_rotations(payload, packing, bsgs_in, bsgs_out, true);
+  const std::set<int32_t> state_required(state_rotations.begin(),
+                                         state_rotations.end());
+  require(state_required.count(-(packing.group_block - 1)) == 1,
+          "replicated state stride rotation is missing");
+  require(state_required.count(-2 * (packing.group_block - 1)) == 1,
+          "replicated state doubling rotation is missing");
+  const auto state_frequencies = rotation_frequencies(
+      payload, packing, 24, 1, 32768, bsgs_in, bsgs_out, true);
+  for (const auto& [index, frequency] : state_frequencies) {
+    require(state_required.count(index) == 1,
+            "replicated-state frequency contains an unplanned rotation");
+    require(frequency > 0.0,
+            "replicated-state rotation frequency is not positive");
+  }
 
   const auto small_shape = resolve_replicated_shape(4, 4, 32, 0);
   std::vector<double> weights(16);

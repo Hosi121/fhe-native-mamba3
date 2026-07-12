@@ -194,7 +194,8 @@ auto int_log2(int value) -> int {
 }
 
 auto required_rotations(const M1Payload& payload, const PackingDims& dims,
-                        const ReplicatedShape& rep_in, const ReplicatedShape& rep_out)
+                        const ReplicatedShape& rep_in, const ReplicatedShape& rep_out,
+                        bool replicated_state_blocks)
     -> std::vector<int32_t> {
   std::set<int32_t> rotations;
   auto insert_all = [&](const std::vector<int32_t>& values) {
@@ -237,21 +238,29 @@ auto required_rotations(const M1Payload& payload, const PackingDims& dims,
   for (int g = 1; g < dims.group_count; ++g) {
     rotations.insert(static_cast<int32_t>(-dims.group_block * g));
   }
-  // B/C placement, slot (base + n) -> slot group_block*n, n = group_heads*a + b:
-  // rotation = base - (group_block-1)*n = baby(base, b) + giant(a) with
-  //   baby = base - (group_block-1)*b, giant = -group_heads*(group_block-1)*a.
+  // B/C placement. The replicated schedule selects B+C once, shifts one
+  // branch to slot zero, and copies it at (group_block-1)*2^k before keeping
+  // block seeds. The legacy schedule masks each state element separately.
   const int stride = dims.group_block - 1;  // 511
-  const int giant_stride = dims.group_heads * stride;  // 4088
-  for (const int base : {dims.b_base, dims.c_base}) {
-    for (int b = 0; b < dims.group_heads; ++b) {
-      const int baby = base - stride * b;
-      if (baby != 0) {
-        rotations.insert(static_cast<int32_t>(baby));
+  if (replicated_state_blocks) {
+    rotations.insert(static_cast<int32_t>(dims.b_base));
+    rotations.insert(static_cast<int32_t>(dims.c_base));
+    for (int step = 1; step < payload.state_size; step *= 2) {
+      rotations.insert(static_cast<int32_t>(-stride * step));
+    }
+  } else {
+    const int giant_stride = dims.group_heads * stride;  // 4088
+    for (const int base : {dims.b_base, dims.c_base}) {
+      for (int b = 0; b < dims.group_heads; ++b) {
+        const int baby = base - stride * b;
+        if (baby != 0) {
+          rotations.insert(static_cast<int32_t>(baby));
+        }
       }
     }
-  }
-  for (int a = 1; a < payload.state_size / dims.group_heads; ++a) {
-    rotations.insert(static_cast<int32_t>(-giant_stride * a));
+    for (int a = 1; a < payload.state_size / dims.group_heads; ++a) {
+      rotations.insert(static_cast<int32_t>(-giant_stride * a));
+    }
   }
   // dt/decay head placement: rotate whole dt block of group g to slot 0, then
   // move head h_local from slot h_local to slot h_local*head_dim.
@@ -318,7 +327,8 @@ void verify_naf(const std::vector<int32_t>& indices) {
 // planner asserts key-set equality so the two cannot drift apart.
 auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int layers,
                           int streams, int stream_stride,
-                          const ReplicatedShape& rep_in, const ReplicatedShape& rep_out)
+                          const ReplicatedShape& rep_in, const ReplicatedShape& rep_out,
+                          bool replicated_state_blocks)
     -> std::map<int32_t, double> {
   if (layers <= 0 || streams <= 0 || stream_stride <= 0) {
     throw std::invalid_argument("rotation frequency geometry must be positive");
@@ -418,16 +428,24 @@ auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int
   for (int k = 0; k < int_log2(payload.state_size); ++k) {
     add(dims.group_block << k, G * S * L);
   }
-  // B/C placement babies and giants.
+  // B/C placement: logarithmic replication or legacy baby/giant selection.
   const int stride = dims.group_block - 1;
-  const int giant_stride = dims.group_heads * stride;
-  for (const int base : {dims.b_base, dims.c_base}) {
-    for (int b = 0; b < dims.group_heads; ++b) {
-      add(base - stride * b, S * L);
+  if (replicated_state_blocks) {
+    add(dims.b_base, S * L);
+    add(dims.c_base, S * L);
+    for (int step = 1; step < payload.state_size; step *= 2) {
+      add(-stride * step, 2.0 * S * L);
     }
-  }
-  for (int a = 1; a < payload.state_size / dims.group_heads; ++a) {
-    add(-giant_stride * a, 2.0 * S * L);
+  } else {
+    const int giant_stride = dims.group_heads * stride;
+    for (const int base : {dims.b_base, dims.c_base}) {
+      for (int b = 0; b < dims.group_heads; ++b) {
+        add(base - stride * b, S * L);
+      }
+    }
+    for (int a = 1; a < payload.state_size / dims.group_heads; ++a) {
+      add(-giant_stride * a, 2.0 * S * L);
+    }
   }
   // dt/decay head placement.
   for (int g = 0; g < dims.group_count; ++g) {
