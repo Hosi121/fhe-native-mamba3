@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -29,12 +30,14 @@ namespace {
 
 struct Config {
   std::string output_json;
+  std::string repo_commit = "working-tree";
   int ring_dim = 65536;
   int multiplicative_depth = 20;
   int scaling_mod_size = 40;
   int first_mod_size = 60;
   int iterations = 200;
   int warmup = 5;
+  std::string levels_csv;
   std::string security = "not-set";
   std::string secret_key_dist = "sparse-ternary";
 };
@@ -48,6 +51,23 @@ auto parse_int(std::string_view name, const char* value) -> int {
   }
 }
 
+auto parse_levels_csv(const std::string& value, int depth) -> std::vector<int> {
+  std::set<int> levels{0};
+  std::stringstream stream(value);
+  std::string token;
+  while (std::getline(stream, token, ',')) {
+    if (token.empty()) {
+      continue;
+    }
+    const int level = parse_int("--levels-csv", token.c_str());
+    if (level < 0 || level >= depth) {
+      throw std::invalid_argument("levels-csv entries must be in [0, depth)");
+    }
+    levels.insert(level);
+  }
+  return {levels.begin(), levels.end()};
+}
+
 auto parse_args(int argc, char* argv[]) -> Config {
   Config config;
   for (int i = 1; i < argc; ++i) {
@@ -58,6 +78,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
     const char* value = argv[++i];
     if (arg == "--output-json") {
       config.output_json = value;
+    } else if (arg == "--repo-commit") {
+      config.repo_commit = value;
     } else if (arg == "--ring-dim") {
       config.ring_dim = parse_int(arg, value);
     } else if (arg == "--depth" || arg == "--multiplicative-depth") {
@@ -70,6 +92,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.iterations = parse_int(arg, value);
     } else if (arg == "--warmup") {
       config.warmup = parse_int(arg, value);
+    } else if (arg == "--levels-csv") {
+      config.levels_csv = value;
     } else if (arg == "--security") {
       config.security = value;
     } else if (arg == "--secret-key-dist") {
@@ -197,25 +221,79 @@ auto main(int argc, char* argv[]) -> int {
       return seconds_since(start) * 1000.0 / args.iterations;
     };
 
+    struct LevelTiming {
+      int level = 0;
+      double ct_pt_mul_ms = 0.0;
+      double ct_ct_mul_ms = 0.0;
+      double rotation_ms = 0.0;
+      double add_ms = 0.0;
+    };
+    const auto levels = parse_levels_csv(args.levels_csv, args.multiplicative_depth);
+    std::vector<LevelTiming> level_timings;
+    level_timings.reserve(levels.size());
     std::cerr << "[fideslib_ctpt_probe] ring_dim=" << args.ring_dim
               << " depth=" << args.multiplicative_depth
-              << " iterations=" << args.iterations << std::endl;
-    const double ct_pt_mul_ms = measure_ms([&]() { auto result = cc->EvalMult(ct_a, plain_b); });
-    std::cerr << "[fideslib_ctpt_probe] ct_pt_mul_ms=" << ct_pt_mul_ms << std::endl;
-    const double ct_ct_mul_ms = measure_ms([&]() { auto result = cc->EvalMult(ct_a, ct_b); });
-    std::cerr << "[fideslib_ctpt_probe] ct_ct_mul_ms=" << ct_ct_mul_ms << std::endl;
-    const double rotation_ms = measure_ms([&]() { auto result = cc->EvalRotate(ct_a, 1); });
-    std::cerr << "[fideslib_ctpt_probe] rotation_ms=" << rotation_ms << std::endl;
-    const double add_ms = measure_ms([&]() { auto result = cc->EvalAdd(ct_a, ct_b); });
-    std::cerr << "[fideslib_ctpt_probe] add_ms=" << add_ms << std::endl;
+              << " iterations=" << args.iterations
+              << " levels=" << levels.size() << std::endl;
+    for (const int target_level : levels) {
+      auto level_ct_a = ct_a->Clone();
+      auto level_ct_b = ct_b->Clone();
+      // Match the decode kernel's proven `drop` alignment path. SetLevel
+      // discards leading RNS towers without inserting a measured operation.
+      level_ct_a->SetLevel(static_cast<uint32_t>(target_level));
+      level_ct_b->SetLevel(static_cast<uint32_t>(target_level));
+      if (static_cast<int>(level_ct_a->GetLevel()) != target_level ||
+          static_cast<int>(level_ct_b->GetLevel()) != target_level) {
+        throw std::runtime_error("failed to prepare requested ciphertext level");
+      }
+      auto level_plain_b = target_level == 0
+                               ? plain_b
+                               : cc->MakeCKKSPackedPlaintext(
+                                     values_b, 1, static_cast<uint32_t>(target_level),
+                                     nullptr, static_cast<uint32_t>(batch_size));
+      LevelTiming timing;
+      timing.level = target_level;
+      timing.ct_pt_mul_ms = measure_ms(
+          [&]() { auto result = cc->EvalMult(level_ct_a, level_plain_b); });
+      timing.ct_ct_mul_ms =
+          measure_ms([&]() { auto result = cc->EvalMult(level_ct_a, level_ct_b); });
+      timing.rotation_ms =
+          measure_ms([&]() { auto result = cc->EvalRotate(level_ct_a, 1); });
+      timing.add_ms = measure_ms([&]() { auto result = cc->EvalAdd(level_ct_a, level_ct_b); });
+      level_timings.push_back(timing);
+      std::cerr << "[fideslib_ctpt_probe] level=" << target_level
+                << " ct_pt_mul_ms=" << timing.ct_pt_mul_ms
+                << " ct_ct_mul_ms=" << timing.ct_ct_mul_ms
+                << " rotation_ms=" << timing.rotation_ms
+                << " add_ms=" << timing.add_ms << std::endl;
+    }
+    const auto& full_level = level_timings.front();
 
     std::ostringstream out;
     out << "{";
+    out << "\"stage\":\"fideslib-primitive-level-probe\",";
+    out << "\"version\":\"0.4.4\",";
+    out << "\"status\":\"passed\",\"passed\":true,";
+    out << "\"repo_commit\":\"" << args.repo_commit << "\",";
+    out << "\"backend\":{\"name\":\"fideslib\",\"device\":\"cuda\"},";
     out << "\"ring_dim\":" << args.ring_dim << ",";
-    out << "\"ct_pt_mul_ms\":" << ct_pt_mul_ms << ",";
-    out << "\"ct_ct_mul_ms\":" << ct_ct_mul_ms << ",";
-    out << "\"rotation_ms\":" << rotation_ms << ",";
-    out << "\"add_ms\":" << add_ms << ",";
+    out << "\"ct_pt_mul_ms\":" << full_level.ct_pt_mul_ms << ",";
+    out << "\"ct_ct_mul_ms\":" << full_level.ct_ct_mul_ms << ",";
+    out << "\"rotation_ms\":" << full_level.rotation_ms << ",";
+    out << "\"add_ms\":" << full_level.add_ms << ",";
+    out << "\"level_timings\":[";
+    for (std::size_t index = 0; index < level_timings.size(); ++index) {
+      if (index > 0) {
+        out << ",";
+      }
+      const auto& timing = level_timings[index];
+      out << "{\"level\":" << timing.level
+          << ",\"ct_pt_mul_ms\":" << timing.ct_pt_mul_ms
+          << ",\"ct_ct_mul_ms\":" << timing.ct_ct_mul_ms
+          << ",\"rotation_ms\":" << timing.rotation_ms
+          << ",\"add_ms\":" << timing.add_ms << "}";
+    }
+    out << "],";
     out << "\"batch_size\":" << batch_size << ",";
     out << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
     out << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
@@ -223,6 +301,11 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"iterations\":" << args.iterations << ",";
     out << "\"security\":\"" << args.security << "\",";
     out << "\"secret_key_dist\":\"" << args.secret_key_dist << "\"";
+    out << ",\"measurement_scope\":{";
+    out << "\"full_model_correctness_claimed\":false,";
+    out << "\"claim\":\"Level-indexed mean latency of isolated FIDESlib GPU "
+           "primitives; no Mamba layer or model correctness is claimed.\"";
+    out << "}";
     out << "}";
     write_payload(args.output_json, out.str());
     return EXIT_SUCCESS;
