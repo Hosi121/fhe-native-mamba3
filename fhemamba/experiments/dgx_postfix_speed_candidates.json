@@ -1,0 +1,51 @@
+{
+  "name": "postfix-24-layer-speed-candidates",
+  "version": "0.4.4",
+  "timeout_seconds": 1200,
+  "gpu_preflight": {
+    "required": true,
+    "poll_seconds": 30,
+    "timeout_seconds": 7200
+  },
+  "defaults": {
+    "LAYERS": "24",
+    "TOKENS": "1",
+    "ARTIFACT_VERSION": "0.4.4",
+    "REPO_COMMIT": "8b270e4bfed3e27b534a77741e5ad6184e236bf8",
+    "RING_DIM": "65536",
+    "MULTIPLICATIVE_DEPTH": "44",
+    "SCALING_MOD_SIZE": "59",
+    "FIRST_MOD_SIZE": "60",
+    "SECURITY": "not-set",
+    "AUTO_HEADROOM": "4",
+    "RESIDUAL_HEADROOM": "0",
+    "CARRIED_HEADROOM": "0",
+    "META_BTS": "1",
+    "META_BTS_ALPHA": "6",
+    "STATE_META_BTS_ALPHA": "-1",
+    "META_BTS_RESIDUAL_ALIGN_MODE": "unity",
+    "LEVEL_ALIGN_MODE": "drop",
+    "BSGS_REPLICAS": "auto",
+    "ROTATION_KEY_GIB": "45",
+    "ENCODE_THREADS": "8",
+    "REFRESH_RECURRENT_STATE_POST": "1",
+    "TOLERANCE": "0.05"
+  },
+  "experiments": [
+    {
+      "name": "postfix-balanced45-cache20-l24-t1",
+      "continue_on_infrastructure_failure": true,
+      "env": {
+        "ROTATION_KEYS": "balanced",
+        "PT_CACHE_GIB": "20"
+      }
+    },
+    {
+      "name": "postfix-compact-cache60-l24-t1",
+      "env": {
+        "ROTATION_KEYS": "compact",
+        "PT_CACHE_GIB": "60"
+      }
+    }
+  ]
+}
