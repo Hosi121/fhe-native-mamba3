@@ -157,6 +157,7 @@ def _calibrate_payload(
 
 @dataclass(frozen=True)
 class _TestVectors:
+    token_ids: list[int]
     embeddings: torch.Tensor
     layer_inputs: list[torch.Tensor]
     layer_outputs: list[torch.Tensor]
@@ -197,6 +198,7 @@ def _collect_test_vectors(
             layer_outputs[layer].append(hidden_states[layer][0, 0])
         expected_final.append(hidden_states[-1][0, 0])
     return _TestVectors(
+        token_ids=[int(value) for value in ids[0].tolist()],
         embeddings=embeddings,
         layer_inputs=[torch.stack(values) for values in layer_inputs],
         layer_outputs=[torch.stack(values) for values in layer_outputs],
@@ -565,6 +567,7 @@ def export_m1_payload(
             "source": "calibration_text",
         },
         "n_test_tokens": int(test_vectors.embeddings.shape[0]),
+        "test_token_ids": test_vectors.token_ids,
         "tensors": manifest,
         "dtype": "float32-le",
         "notes": [
@@ -666,6 +669,7 @@ def export_chain_payload(
         "format": "fhemamba-m2-chain-v1",
         "n_layers": n_layers,
         "n_test_tokens": int(test_vectors.embeddings.shape[0]),
+        "test_token_ids": test_vectors.token_ids,
         "final_norm_eps": model.backbone.norm_f.variance_epsilon,
         "layer_dirs": [f"layer_{layer:02d}" for layer in range(n_layers)],
         "tensors": manifest,

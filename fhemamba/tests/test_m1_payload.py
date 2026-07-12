@@ -102,9 +102,14 @@ def test_chain_export(tmp_path, monkeypatch) -> None:
     )
     chain = json.loads((out / "chain.json").read_text())
     assert chain["n_layers"] == 2
+    assert (
+        chain["test_token_ids"]
+        == _IdTokenizer()("The capital of France is", return_tensors="pt").input_ids[0, :2].tolist()
+    )
     for d in chain["layer_dirs"]:
         meta = json.loads((out / d / "meta.json").read_text())
         assert "test_layer_output_poly" in meta["tensors"]
+        assert meta["test_token_ids"] == chain["test_token_ids"]
     finals = np.fromfile(out / "chain_expected_final.bin", dtype="<f4").reshape(
         chain["tensors"]["chain_expected_final"]
     )
