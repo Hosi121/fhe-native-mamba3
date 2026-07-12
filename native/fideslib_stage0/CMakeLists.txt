@@ -24,6 +24,9 @@ target_include_directories(stage1_rank_gate_payload INTERFACE include)
 add_library(stage1_mamba2_config STATIC src/stage1_mamba2_config.cpp)
 target_include_directories(stage1_mamba2_config PUBLIC src)
 
+add_library(stage1_mamba2_payload STATIC src/stage1_mamba2_payload.cpp)
+target_include_directories(stage1_mamba2_payload PUBLIC src)
+
 add_executable(stage1_rank_gate_payload_eval src/stage1_rank_gate_payload_eval.cpp)
 target_link_libraries(
   stage1_rank_gate_payload_eval PRIVATE stage1_rank_gate_payload stage1_tail_payload)
@@ -66,7 +69,7 @@ if(FHE_STAGE0_BUILD_KERNEL)
     stage1_mamba2_decode_fideslib
     src/stage1_mamba2_decode_fideslib.cpp)
   target_link_libraries(
-    stage1_mamba2_decode_fideslib PRIVATE fideslib::fideslib CUDA::cudart stage1_mamba2_config stage1_rank_gate_payload stage1_tail_payload)
+    stage1_mamba2_decode_fideslib PRIVATE fideslib::fideslib CUDA::cudart stage1_mamba2_config stage1_mamba2_payload stage1_rank_gate_payload stage1_tail_payload)
   target_include_directories(
     stage1_mamba2_decode_fideslib PRIVATE
     ${OpenFHE_INCLUDE}
@@ -110,4 +113,10 @@ if(FHE_STAGE0_BUILD_TESTS)
     tests/test_stage1_mamba2_config.cpp)
   target_link_libraries(test_stage1_mamba2_config PRIVATE stage1_mamba2_config)
   add_test(NAME stage1_mamba2_config COMMAND test_stage1_mamba2_config)
+
+  add_executable(
+    test_stage1_mamba2_payload
+    tests/test_stage1_mamba2_payload.cpp)
+  target_link_libraries(test_stage1_mamba2_payload PRIVATE stage1_mamba2_payload)
+  add_test(NAME stage1_mamba2_payload COMMAND test_stage1_mamba2_payload)
 endif()
