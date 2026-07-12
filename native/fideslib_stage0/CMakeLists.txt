@@ -49,6 +49,17 @@ if(FHE_STAGE0_BUILD_KERNEL)
   set(CMAKE_CXX_COMPILER ${FIDESLIB_CXX_COMPILER})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${FIDESLIB_CXX_FLAGS}")
 
+  add_library(fideslib_handoff STATIC src/fideslib_handoff.cpp)
+  target_link_libraries(
+    fideslib_handoff PUBLIC fideslib::fideslib CUDA::cudart)
+  target_include_directories(
+    fideslib_handoff PRIVATE
+    ${OpenFHE_INCLUDE}
+    ${OpenFHE_INCLUDE}/core
+    ${OpenFHE_INCLUDE}/pke
+    ${OpenFHE_INCLUDE}/binfhe
+    ${OpenFHE_INCLUDE}/third-party/include)
+
   add_executable(stage0_static_mimo src/stage0_static_mimo.cpp)
   target_link_libraries(stage0_static_mimo PRIVATE fideslib::fideslib stage0_layout)
 
@@ -69,7 +80,7 @@ if(FHE_STAGE0_BUILD_KERNEL)
     stage1_mamba2_decode_fideslib
     src/stage1_mamba2_decode_fideslib.cpp)
   target_link_libraries(
-    stage1_mamba2_decode_fideslib PRIVATE fideslib::fideslib CUDA::cudart stage1_mamba2_config stage1_mamba2_payload stage1_rank_gate_payload stage1_tail_payload)
+    stage1_mamba2_decode_fideslib PRIVATE fideslib::fideslib CUDA::cudart fideslib_handoff stage1_mamba2_config stage1_mamba2_payload stage1_rank_gate_payload stage1_tail_payload)
   target_include_directories(
     stage1_mamba2_decode_fideslib PRIVATE
     ${OpenFHE_INCLUDE}
@@ -80,7 +91,7 @@ if(FHE_STAGE0_BUILD_KERNEL)
 
   add_executable(fideslib_client_server_probe src/fideslib_client_server_probe.cpp)
   target_link_libraries(
-    fideslib_client_server_probe PRIVATE fideslib::fideslib CUDA::cudart)
+    fideslib_client_server_probe PRIVATE fideslib::fideslib CUDA::cudart fideslib_handoff)
   target_include_directories(
     fideslib_client_server_probe PRIVATE
     ${OpenFHE_INCLUDE}

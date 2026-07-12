@@ -10,6 +10,8 @@
 #include <openfhe.h>
 #include <scheme/ckksrns/ckksrns-ser.h>
 
+#include "fideslib_handoff.hpp"
+
 #include <algorithm>
 #include <any>
 #include <cmath>
@@ -26,6 +28,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
+using fhemamba::handoff::copy_context_device_metadata;
+using fhemamba::handoff::deserialize_ciphertext;
+using fhemamba::handoff::serialize_ciphertext;
+using fhemamba::handoff::serialize_context;
+
 constexpr int kRingDim = 4096;
 constexpr int kDepth = 8;
 constexpr int kSlots = 16;
@@ -34,64 +41,6 @@ auto require(bool ok, const std::string& message) -> void {
   if (!ok) {
     throw std::runtime_error(message);
   }
-}
-
-auto serialize_ciphertext(const fs::path& path, const CryptoContext<DCRTPoly>& cc,
-                          const PublicKey<DCRTPoly>& public_key,
-                          Ciphertext<DCRTPoly>& ciphertext) -> void {
-  if (ciphertext->loaded) {
-    cc->Synchronize();
-    ciphertext->EnsureLazyCPUCopy();
-    auto& cpu_context =
-        std::any_cast<lbcrypto::CryptoContext<lbcrypto::DCRTPoly>&>(cc->cpu);
-    auto& cpu_ciphertext =
-        std::any_cast<lbcrypto::Ciphertext<lbcrypto::DCRTPoly>&>(ciphertext->cpu);
-    auto gpu_ciphertext = std::static_pointer_cast<FIDESlib::CKKS::Ciphertext>(
-        cc->GetDeviceCiphertext(ciphertext->gpu));
-    FIDESlib::CKKS::RawCipherText raw;
-    gpu_ciphertext->store(raw);
-
-    const auto cpu_towers = cpu_ciphertext->GetElements()[0].GetAllElements().size();
-    if (cpu_towers < static_cast<std::size_t>(raw.numRes)) {
-      std::vector<double> zero(1, 0.0);
-      auto plain = cpu_context->MakeCKKSPackedPlaintext(
-          zero, 1, cc->multiplicative_depth - gpu_ciphertext->getLevel());
-      const auto& public_key_impl =
-          std::any_cast<const lbcrypto::PublicKey<lbcrypto::DCRTPoly>&>(public_key->pimpl);
-      cpu_ciphertext = cpu_context->Encrypt(public_key_impl, plain);
-    }
-    FIDESlib::CKKS::GetOpenFHECipherText(cpu_ciphertext, raw);
-  }
-
-  const auto& cpu_ciphertext =
-      std::any_cast<const lbcrypto::Ciphertext<lbcrypto::DCRTPoly>&>(ciphertext->cpu);
-  require(lbcrypto::Serial::SerializeToFile(path.string(), cpu_ciphertext,
-                                            lbcrypto::SerType::BINARY),
-          "failed to serialize ciphertext: " + path.string());
-}
-
-auto deserialize_ciphertext(const fs::path& path, const CryptoContext<DCRTPoly>& cc)
-    -> Ciphertext<DCRTPoly> {
-  lbcrypto::Ciphertext<lbcrypto::DCRTPoly> cpu_ciphertext;
-  require(lbcrypto::Serial::DeserializeFromFile(path.string(), cpu_ciphertext,
-                                                lbcrypto::SerType::BINARY),
-          "failed to deserialize ciphertext: " + path.string());
-  auto context_copy = cc;
-  auto ciphertext =
-      std::make_shared<CiphertextImpl<DCRTPoly>>(std::move(context_copy));
-  ciphertext->cpu =
-      std::make_any<lbcrypto::Ciphertext<lbcrypto::DCRTPoly>>(std::move(cpu_ciphertext));
-  return ciphertext;
-}
-
-auto serialize_context(const fs::path& path, const CryptoContext<DCRTPoly>& cc) -> void {
-  require(fideslib::Serial::SerializeToFile(path.string(), cc, SerType::BINARY),
-          "failed to serialize context");
-}
-
-auto copy_context_device_metadata(const fs::path& source, const fs::path& destination) -> void {
-  fs::copy_file(source.string() + ".dev", destination.string() + ".dev",
-                fs::copy_options::overwrite_existing);
 }
 
 auto client_init(const fs::path& root) -> void {
