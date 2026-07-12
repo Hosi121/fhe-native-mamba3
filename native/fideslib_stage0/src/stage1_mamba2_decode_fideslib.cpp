@@ -340,6 +340,7 @@ struct LayerPlan {
 // Per-layer persistent ciphertext state carried across tokens.
 struct LayerRuntime {
   std::vector<Ciphertext<DCRTPoly>> state_cts;
+  std::vector<bool> state_refreshed_this_token;
   bool has_state = false;
   std::vector<Ciphertext<DCRTPoly>> conv_fifo;
 };
@@ -2705,7 +2706,7 @@ auto main(int argc, char* argv[]) -> int {
     // before out_proj, plus the per-iteration Newton check) keep every
     // ciphertext lineage within the depth-44 MAXP=64 geometry.
     // -----------------------------------------------------------------------
-    auto run_layer = [&](const LayerPlan& plan, LayerRuntime& runtime, int layer_index,
+    auto run_layer = [&](const LayerPlan& plan, LayerRuntime& runtime,
                          const Ciphertext<DCRTPoly>& hidden_ct, const std::string& tag,
                          int& layer_bootstraps) -> Ciphertext<DCRTPoly> {
       // This layer's measured carried bounds drive every state/FIFO refresh
@@ -2900,17 +2901,14 @@ auto main(int argc, char* argv[]) -> int {
             auto masked = mul_mask(readout, "mask.group", group_mask);
             return rotate(masked, -group_block * group);
           });
-          // Checkpoint: keep the updated state ready as carried lineage for
-          // the next token without changing this token's readout.
-          const int state_tail_requirement =
-              runtime.has_state &&
-                      (args.refresh_recurrent_state_post ||
-                       args.refresh_recurrent_state_post_layers.count(layer_index) > 0)
-                  ? args.multiplicative_depth
-                  : plan.req_state_tail;
-          maybe_bootstrap(runtime.state_cts[state_slot], state_tail_requirement,
+          // Only refresh here if the current readout cannot fit. A requested
+          // carry refresh is deferred until the token output is ready.
+          const int state_refreshes_before = state_bootstraps;
+          maybe_bootstrap(runtime.state_cts[state_slot], plan.req_state_tail,
                           tag + "state_post" + std::to_string(stream * group_count + group),
                           layer_bootstraps);
+          runtime.state_refreshed_this_token[state_slot] =
+              state_bootstraps > state_refreshes_before;
           ckks_levels[tag + state_name] =
               static_cast<int>(runtime.state_cts[state_slot]->GetLevel());
           debug_value_stats(runtime.state_cts[state_slot], tag + state_name);
@@ -3036,9 +3034,12 @@ auto main(int argc, char* argv[]) -> int {
     std::vector<LayerRuntime> layer_runtimes(layer_payloads.size());
     for (auto& runtime : layer_runtimes) {
       runtime.state_cts.resize(static_cast<std::size_t>(group_count * args.streams));
+      runtime.state_refreshed_this_token.resize(
+          static_cast<std::size_t>(group_count * args.streams));
     }
     std::vector<Ciphertext<DCRTPoly>> token_outputs;
     std::vector<int> token_bootstrap_counts;
+    std::vector<double> token_output_ready_seconds;
     std::map<std::string, int> summary_level_in;
     std::map<std::string, int> summary_level_out;
     std::map<std::string, double> debug_boundary_errors;
@@ -3048,6 +3049,7 @@ auto main(int argc, char* argv[]) -> int {
     std::vector<std::vector<double>> autoregressive_decrypted_outputs(
         static_cast<std::size_t>(args.tokens));
     double autoregressive_client_seconds = 0.0;
+    double deferred_state_refresh_seconds = 0.0;
     auto layer_key = [](int token, int layer) {
       std::string layer_text = std::to_string(layer);
       if (layer_text.size() < 2) {
@@ -3061,6 +3063,7 @@ auto main(int argc, char* argv[]) -> int {
                    : layer_payloads.front().tensors.at("test_layer_input");
 
     for (int token = 0; token < args.tokens; ++token) {
+      const auto token_start = now();
       int token_bootstraps_total = 0;
       if (args.debug_client_reencrypt_before_token.count(token) > 0) {
         const auto reencrypt_start = now();
@@ -3161,7 +3164,7 @@ auto main(int argc, char* argv[]) -> int {
                         layer_bootstraps);
         summary_level_in[key] = static_cast<int>(hidden_ct->GetLevel());
         hidden_ct = run_layer(plan,
-                              layer_runtimes[static_cast<std::size_t>(layer)], layer,
+                              layer_runtimes[static_cast<std::size_t>(layer)],
                               hidden_ct, tag, layer_bootstraps);
         summary_level_out[key] = static_cast<int>(hidden_ct->GetLevel());
         summary_bootstraps[key] = layer_bootstraps;
@@ -3250,6 +3253,7 @@ auto main(int argc, char* argv[]) -> int {
         ckks_levels["t" + std::to_string(token) + ".output"] =
             static_cast<int>(hidden_ct->GetLevel());
       }
+      token_output_ready_seconds.push_back(seconds_since(token_start));
       if (args.autoregressive_client_loop &&
           token >= chain.autoregressive_prompt_tokens - 1) {
         const auto client_start = now();
@@ -3294,6 +3298,39 @@ auto main(int argc, char* argv[]) -> int {
         log_phase("autoregressive client round trip after token " +
                   std::to_string(token) + " selected_id=" +
                   std::to_string(selected_id));
+      }
+      if (token > 0 &&
+          (args.refresh_recurrent_state_post ||
+           !args.refresh_recurrent_state_post_layers.empty())) {
+        const auto refresh_start = now();
+        for (int layer = 0; layer < layers_loaded; ++layer) {
+          if (!args.refresh_recurrent_state_post &&
+              args.refresh_recurrent_state_post_layers.count(layer) == 0) {
+            continue;
+          }
+          auto& runtime = layer_runtimes[static_cast<std::size_t>(layer)];
+          const auto& plan = layer_plans[static_cast<std::size_t>(layer)];
+          active_state_bound = plan.state_abs_max;
+          active_state_group_bounds = plan.state_group_abs_max;
+          active_fifo_bound = plan.fifo_abs_max;
+          active_checkpoint_bounds = plan.checkpoint_abs_max;
+          const std::string key = layer_key(token, layer);
+          int layer_bootstraps = 0;
+          for (std::size_t state = 0; state < runtime.state_cts.size(); ++state) {
+            if (!runtime.state_refreshed_this_token[state]) {
+              maybe_bootstrap(runtime.state_cts[state], args.multiplicative_depth,
+                              key + ".state_post" + std::to_string(state),
+                              layer_bootstraps);
+            }
+            ckks_levels[key + ".state" + std::to_string(state)] =
+                static_cast<int>(runtime.state_cts[state]->GetLevel());
+          }
+          summary_bootstraps[key] += layer_bootstraps;
+          token_bootstraps_total += layer_bootstraps;
+        }
+        deferred_state_refresh_seconds += seconds_since(refresh_start);
+        log_phase("deferred recurrent state refresh after token " +
+                  std::to_string(token) + " done");
       }
       token_outputs.push_back(hidden_ct);
       if (args.autoregressive_client_loop &&
@@ -3603,6 +3640,9 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"per_token_bootstrap_count\":";
     write_int_vector_json(out, token_bootstrap_counts);
     out << ",";
+    out << "\"per_token_output_ready_seconds\":";
+    write_double_vector_json(out, token_output_ready_seconds);
+    out << ",";
     out << "\"required_application_rotation_key_count\":" << rotation_indices.size() << ",";
     out << "\"estimated_token_output_levels\":";
     write_int_vector_json(out, depth_estimate.token_output_levels);
@@ -3715,6 +3755,8 @@ auto main(int argc, char* argv[]) -> int {
         << debug_client_reencrypt_seconds << ",";
     out << "\"autoregressive_client_seconds\":"
         << autoregressive_client_seconds << ",";
+    out << "\"deferred_state_refresh_seconds\":"
+        << deferred_state_refresh_seconds << ",";
     out << "\"load_context_seconds\":" << load_context_seconds << ",";
     out << "\"eval_seconds\":" << eval_seconds << ",";
     out << "\"decrypt_seconds\":" << decrypt_seconds;
@@ -3759,6 +3801,12 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"debug_client_reencrypt_simulation\":"
         << (args.debug_client_reencrypt_before_token.empty() ? "false" : "true") << ",";
     out << "\"recurrent_state_post_refresh\":"
+        << ((args.refresh_recurrent_state_post ||
+             !args.refresh_recurrent_state_post_layers.empty())
+                ? "true"
+                : "false")
+        << ",";
+    out << "\"recurrent_state_post_refresh_deferred_until_output_ready\":"
         << ((args.refresh_recurrent_state_post ||
              !args.refresh_recurrent_state_post_layers.empty())
                 ? "true"
