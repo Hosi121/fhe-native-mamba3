@@ -39,6 +39,8 @@ struct Config {
   bool skip_decrypt = false;
   std::string security = "128-classic";
   std::string secret_key_dist = "sparse-ternary";
+  std::string artifact_version = "0.0.0+bootstrap-probe";
+  std::string repo_commit = "working-tree";
   std::string output_json;
 };
 
@@ -101,6 +103,10 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.security = value;
     } else if (arg == "--secret-key-dist") {
       config.secret_key_dist = value;
+    } else if (arg == "--artifact-version") {
+      config.artifact_version = value;
+    } else if (arg == "--repo-commit") {
+      config.repo_commit = value;
     } else if (arg == "--output-json") {
       config.output_json = value;
     } else {
@@ -205,16 +211,19 @@ auto build_payload(
     bool decrypt_checked,
     int decrypt_failure_count) -> std::string {
   const bool target_shape_compatible = config.ring_dim >= 65536 && config.num_slots >= 32768 &&
-                                       config.multiplicative_depth >= 28 &&
-                                       config.scaling_mod_size <= 40;
+                                       config.multiplicative_depth >= 44 &&
+                                       config.scaling_mod_size >= 54;
   const bool security_claimed = config.security == "128-classic";
   const bool passed = decrypt_failure_count == 0;
   std::ostringstream out;
   out << "{";
+  out << "\"version\":\"" << config.artifact_version << "\",";
   out << "\"stage\":\"fideslib-gpu-stage1-bootstrap-latency\",";
+  out << "\"repo_commit\":\"" << config.repo_commit << "\",";
   out << "\"backend\":\"fideslib-gpu\",";
   out << "\"available\":true,";
   out << "\"encrypted\":true,";
+  out << "\"status\":\"" << (passed ? "passed" : "failed") << "\",";
   out << "\"passed\":" << (passed ? "true" : "false") << ",";
   out << "\"ring_dimension\":" << actual_ring_dim << ",";
   out << "\"batch_size\":" << config.num_slots << ",";

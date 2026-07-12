@@ -1,0 +1,52 @@
+--- a/src/CKKS/Bootstrap.cu
++++ b/src/CKKS/Bootstrap.cu
+@@ -214,6 +214,7 @@
+ 
+ 	{
+ 		ModRaise(ctxt, slots, correction, prescaled, sparse_encaps);
++		cudaDeviceSynchronize();
+ 		//------------------------------------------------------------------------------
+ 		// SETTING PARAMETERS FOR APPROXIMATE MODULAR REDUCTION
+ 		//------------------------------------------------------------------------------
+@@ -248,6 +249,7 @@
+ 		////////////////////////////////////////////////////////////////
+ 
+ 		Accumulate(ctxt, cc.GetBootPrecomputation(slots).accumulate_bStep, slots, cc.N / 2 / slots);
++		cudaDeviceSynchronize();
+ 	}
+ 
+ 	ctxt.slots = cc.N / 2 == slots ? slots : 2 * slots;
+@@ -263,6 +265,7 @@
+ 	} else {
+ 		EvalCoeffsToSlots(ctxt, slots, false);
+ 	}
++	cudaDeviceSynchronize();
+ 	//  std::cout << "ModRed" << std::endl;
+ 
+ 	if (cc.N / 2 == slots) {
+@@ -283,6 +286,7 @@
+ 			ctxt.rescale();
+ 		approxModReductionSparse(ctxt, scalar);
+ 	}
++	cudaDeviceSynchronize();
+ 
+ 	if (ctxt.NoiseLevel == 2) {
+ 		ctxt.rescale();
+@@ -295,14 +299,17 @@
+ 	} else {
+ 		EvalCoeffsToSlots(ctxt, slots, true);
+ 	}
++	cudaDeviceSynchronize();
+ 
+ 	if (cc.N / 2 != slots) {
+ 		aux.rotate(ctxt, slots);
+ 		ctxt.add(aux);
++		cudaDeviceSynchronize();
+ 	}
+ 
+ 	uint64_t corFactor = (uint64_t)1 << std::llround(correction);
+ 	multIntScalar(ctxt, corFactor);
++	cudaDeviceSynchronize();
+ 	if constexpr (PRINT) {
+ 		cudaDeviceSynchronize();
+ 		std::cout << "End bootstrap ";
