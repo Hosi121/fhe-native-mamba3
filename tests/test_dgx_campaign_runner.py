@@ -230,7 +230,11 @@ def test_campaign_gpu_preflight_blocks_launch_on_occupied_gpu(tmp_path: Path) ->
     _write_fake_runner(runner)
     nvidia_smi = tmp_path / "nvidia-smi"
     nvidia_smi.write_text(
-        "#!/bin/sh\nprintf '123, 4096\\n'\n",
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  --query-compute-apps=*) printf '123, 4096\\n' ;;\n"
+        "  --query-gpu=*) printf '99\\n' ;;\n"
+        "esac\n",
         encoding="utf-8",
     )
     nvidia_smi.chmod(0o755)
@@ -277,6 +281,59 @@ def test_campaign_gpu_preflight_blocks_launch_on_occupied_gpu(tmp_path: Path) ->
     assert not counter.exists()
     assert payload["experiments"][0]["state"] == "preflight-failed"
     assert "GPU remained occupied" in payload["experiments"][0]["issues"][0]
+
+
+def test_campaign_gpu_preflight_blocks_unreported_gpu_utilization(tmp_path: Path) -> None:
+    runner = tmp_path / "fake_runner.py"
+    _write_fake_runner(runner)
+    nvidia_smi = tmp_path / "nvidia-smi"
+    nvidia_smi.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  --query-compute-apps=*) exit 0 ;;\n"
+        "  --query-gpu=*) printf '94\\n' ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    nvidia_smi.chmod(0o755)
+    manifest = tmp_path / "campaign.json"
+    output = tmp_path / "campaign-result.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "gpu_preflight": {
+                    "required": True,
+                    "nvidia_smi": str(nvidia_smi),
+                    "poll_seconds": 0.01,
+                    "timeout_seconds": 0,
+                    "max_utilization_percent": 5,
+                },
+                "defaults": {"RESULTS_DIR": str(tmp_path / "results"), "TOKENS": "2"},
+                "experiments": [{"name": "blocked", "env": {"LAYERS": "2"}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "fhemamba/experiments/run_dgx_campaign.py",
+            "--manifest",
+            str(manifest),
+            "--runner",
+            str(runner),
+            "--output-json",
+            str(output),
+        ],
+        cwd=ROOT,
+        check=False,
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert completed.returncode == 1
+    issue = payload["experiments"][0]["issues"][0]
+    assert "utilization=94.0%" in issue
 
 
 def test_campaign_sighup_terminates_active_runner_group(tmp_path: Path) -> None:

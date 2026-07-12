@@ -228,27 +228,95 @@ def _gpu_processes(nvidia_smi: str) -> tuple[list[dict[str, int]], str | None]:
     return processes, None
 
 
+def _gpu_utilization(nvidia_smi: str) -> tuple[float, str | None]:
+    completed = subprocess.run(
+        [
+            nvidia_smi,
+            "--query-gpu=utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or f"{nvidia_smi} exited {completed.returncode}"
+        return 0.0, f"GPU utilization preflight failed: {message}"
+    values = []
+    for line in completed.stdout.splitlines():
+        try:
+            values.append(float(line.strip()))
+        except ValueError:
+            return 0.0, f"GPU utilization preflight returned an invalid row: {line!r}"
+    if not values:
+        return 0.0, "GPU utilization preflight returned no GPUs"
+    return max(values), None
+
+
+def _mem_available_gib(meminfo_path: str) -> tuple[float, str | None]:
+    try:
+        fields = Path(meminfo_path).read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return 0.0, f"memory preflight failed: {exc}"
+    for line in fields:
+        if line.startswith("MemAvailable:"):
+            parts = line.split()
+            if len(parts) >= 2:
+                try:
+                    return float(parts[1]) / 1024**2, None
+                except ValueError:
+                    break
+    return 0.0, f"memory preflight found no valid MemAvailable in {meminfo_path}"
+
+
 def _wait_for_idle_gpu(config: dict[str, Any] | None) -> tuple[float, str | None]:
     if not config or not bool(config.get("required")):
         return 0.0, None
     nvidia_smi = str(config.get("nvidia_smi", "nvidia-smi"))
     poll_seconds = float(config.get("poll_seconds", 30))
     timeout_seconds = float(config.get("timeout_seconds", 7200))
-    if poll_seconds <= 0 or timeout_seconds < 0:
-        raise ValueError("GPU preflight poll_seconds must be positive and timeout non-negative")
+    max_utilization = float(config.get("max_utilization_percent", 5))
+    min_mem_available_gib = float(config.get("min_mem_available_gib", 0))
+    stable_polls = int(config.get("stable_polls", 1))
+    meminfo_path = str(config.get("meminfo_path", "/proc/meminfo"))
+    if (
+        poll_seconds <= 0
+        or timeout_seconds < 0
+        or max_utilization < 0
+        or min_mem_available_gib < 0
+        or stable_polls <= 0
+    ):
+        raise ValueError("GPU preflight thresholds and polling values are invalid")
     started_at = time.monotonic()
+    idle_polls = 0
     while True:
         processes, issue = _gpu_processes(nvidia_smi)
         if issue:
             return time.monotonic() - started_at, issue
-        if not processes:
+        utilization, issue = _gpu_utilization(nvidia_smi)
+        if issue:
+            return time.monotonic() - started_at, issue
+        mem_available_gib, issue = _mem_available_gib(meminfo_path)
+        if issue:
+            return time.monotonic() - started_at, issue
+        idle = (
+            not processes
+            and utilization <= max_utilization
+            and mem_available_gib >= min_mem_available_gib
+        )
+        idle_polls = idle_polls + 1 if idle else 0
+        if idle_polls >= stable_polls:
             return time.monotonic() - started_at, None
         elapsed = time.monotonic() - started_at
         if elapsed >= timeout_seconds:
             occupied = ", ".join(
                 f"pid={item['pid']} memory={item['used_memory_mib']}MiB" for item in processes
             )
-            return elapsed, f"GPU remained occupied after {timeout_seconds}s: {occupied}"
+            detail = occupied or "no process rows"
+            return elapsed, (
+                f"GPU remained occupied after {timeout_seconds}s: {detail}; "
+                f"utilization={utilization}% mem_available={mem_available_gib:.1f}GiB"
+            )
         time.sleep(min(poll_seconds, max(0.0, timeout_seconds - elapsed)))
 
 

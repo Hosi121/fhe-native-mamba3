@@ -4,6 +4,9 @@
   "timeout_seconds": 4200,
   "gpu_preflight": {
     "required": true,
+    "max_utilization_percent": 5,
+    "min_mem_available_gib": 60,
+    "stable_polls": 2,
     "poll_seconds": 30,
     "timeout_seconds": 14400
   },
