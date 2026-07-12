@@ -53,6 +53,7 @@
 #include "fideslib_handoff.hpp"
 #include "stage1_mamba2_artifact.hpp"
 #include "stage1_mamba2_payload.hpp"
+#include "stage1_mamba2_process.hpp"
 
 #include <algorithm>
 #include <any>
@@ -93,10 +94,14 @@ using fhemamba::stage1::ChainPayload;
 using fhemamba::stage1::M1Payload;
 using fhemamba::stage1::parse_args;
 using fhemamba::stage1::json_escape;
+using fhemamba::stage1::count_server_secret_files;
+using fhemamba::stage1::handoff_paths;
 using fhemamba::stage1::payload_file_exists;
+using fhemamba::stage1::prepare_client_handoff;
 using fhemamba::stage1::read_chain_payload;
 using fhemamba::stage1::read_m1_payload;
 using fhemamba::stage1::require_same_layer_dims;
+using fhemamba::stage1::require_server_has_no_secret_files;
 using fhemamba::stage1::write_artifact_prefix;
 using fhemamba::stage1::write_double_map_json;
 using fhemamba::stage1::write_double_vector_json;
@@ -1382,20 +1387,17 @@ auto main(int argc, char* argv[]) -> int {
       }
     }
     if (args.process_role == "client-decrypt") {
-      const fs::path root(args.handoff_dir);
-      const auto client_dir = root / "client";
-      const auto server_dir = root / "server";
-      const auto exchange_dir = root / "exchange";
+      const auto paths = handoff_paths(args.handoff_dir);
       CryptoContext<DCRTPoly> client_context;
       PrivateKey<DCRTPoly> client_secret_key;
       require_serialized(
           fideslib::Serial::DeserializeFromFile(
-              (client_dir / "context.bin").string(), client_context,
+              (paths.client / "context.bin").string(), client_context,
               SerType::BINARY),
           "failed to deserialize client context");
       require_serialized(
           fideslib::Serial::DeserializeFromFile(
-              (client_dir / "secret-key.bin").string(), client_secret_key,
+              (paths.client / "secret-key.bin").string(), client_secret_key,
               SerType::BINARY),
           "failed to deserialize client secret key");
       const std::vector<double>& exact_reference =
@@ -1423,7 +1425,7 @@ auto main(int argc, char* argv[]) -> int {
       for (int token = 0; token < args.tokens; ++token) {
         try {
           auto output = deserialize_ciphertext(
-              exchange_dir /
+              paths.exchange /
                   ("output_t" + std::to_string(token) + ".ct"),
               client_context);
           const auto slots = decrypt_slots(
@@ -1453,17 +1455,7 @@ auto main(int argc, char* argv[]) -> int {
           max_error = 1.0e308;
         }
       }
-      int server_secret_key_files = 0;
-      if (fs::exists(server_dir)) {
-        for (const auto& entry :
-             fs::recursive_directory_iterator(server_dir)) {
-          if (entry.is_regular_file() &&
-              entry.path().filename().string().find("secret") !=
-                  std::string::npos) {
-            ++server_secret_key_files;
-          }
-        }
-      }
+      const int server_secret_key_files = count_server_secret_files(paths);
       const bool passed =
           max_error <= args.tolerance && server_secret_key_files == 0;
       std::ostringstream result;
@@ -1722,11 +1714,9 @@ auto main(int argc, char* argv[]) -> int {
     double rotate_keygen_seconds = 0.0;
     double bootstrap_precompute_seconds = 0.0;
     if (args.process_role == "server-eval") {
-      const fs::path server_dir = fs::path(args.handoff_dir) / "server";
-      if (fs::exists(server_dir / "secret-key.bin")) {
-        throw std::runtime_error(
-            "server artifact directory must not contain a secret key");
-      }
+      const auto paths = handoff_paths(args.handoff_dir);
+      const auto& server_dir = paths.server;
+      require_server_has_no_secret_files(paths);
       require_serialized(
           fideslib::Serial::DeserializeFromFile(
               (server_dir / "context.bin").string(), cc, SerType::BINARY),
@@ -1866,45 +1856,34 @@ auto main(int argc, char* argv[]) -> int {
       return cc->Encrypt(public_key, plain);
     };
     if (args.process_role == "client-init") {
-      const fs::path root(args.handoff_dir);
-      const auto client_dir = root / "client";
-      const auto server_dir = root / "server";
-      const auto exchange_dir = root / "exchange";
-      fs::create_directories(client_dir);
-      fs::create_directories(server_dir);
-      fs::create_directories(exchange_dir);
-      fs::permissions(client_dir, fs::perms::owner_all,
-                      fs::perm_options::replace);
-      if (fs::exists(server_dir / "secret-key.bin")) {
-        throw std::runtime_error(
-            "refusing client-init: server directory contains secret-key.bin");
-      }
-      serialize_context(client_dir / "context.bin", cc);
-      fs::copy_file(client_dir / "context.bin", server_dir / "context.bin",
+      const auto paths = handoff_paths(args.handoff_dir);
+      prepare_client_handoff(paths);
+      serialize_context(paths.client / "context.bin", cc);
+      fs::copy_file(paths.client / "context.bin", paths.server / "context.bin",
                     fs::copy_options::overwrite_existing);
-      copy_context_device_metadata(client_dir / "context.bin",
-                                   server_dir / "context.bin");
+      copy_context_device_metadata(paths.client / "context.bin",
+                                   paths.server / "context.bin");
       require_serialized(
           fideslib::Serial::SerializeToFile(
-              (server_dir / "public-key.bin").string(), public_key,
+              (paths.server / "public-key.bin").string(), public_key,
               SerType::BINARY),
           "failed to serialize public key");
       require_serialized(
           fideslib::Serial::SerializeToFile(
-              (client_dir / "secret-key.bin").string(), secret_key,
+              (paths.client / "secret-key.bin").string(), secret_key,
               SerType::BINARY),
           "failed to serialize secret key");
-      fs::permissions(client_dir / "secret-key.bin",
+      fs::permissions(paths.client / "secret-key.bin",
                       fs::perms::owner_read | fs::perms::owner_write,
                       fs::perm_options::replace);
       {
-        std::ofstream stream(server_dir / "eval-mult.bin",
+        std::ofstream stream(paths.server / "eval-mult.bin",
                              std::ios::binary);
         require_serialized(cc->SerializeEvalMultKey(stream, SerType::BINARY),
                            "failed to serialize multiplication keys");
       }
       {
-        std::ofstream stream(server_dir / "eval-rotation.bin",
+        std::ofstream stream(paths.server / "eval-rotation.bin",
                              std::ios::binary);
         require_serialized(
             cc->SerializeEvalAutomorphismKey(stream, SerType::BINARY),
@@ -1926,7 +1905,7 @@ auto main(int argc, char* argv[]) -> int {
         }
         auto input = encrypt_values(slots);
         serialize_ciphertext(
-            exchange_dir /
+            paths.exchange /
                 ("input_t" + std::to_string(token) + ".ct"),
             cc, public_key, input);
       }
@@ -3924,25 +3903,13 @@ auto main(int argc, char* argv[]) -> int {
               " bootstraps=" + std::to_string(bootstraps));
 
     if (args.process_role == "server-eval") {
-      const fs::path root(args.handoff_dir);
-      const auto server_dir = root / "server";
-      const auto exchange_dir = root / "exchange";
-      int server_secret_key_files = 0;
-      for (const auto& entry : fs::recursive_directory_iterator(server_dir)) {
-        if (entry.is_regular_file() &&
-            entry.path().filename().string().find("secret") !=
-                std::string::npos) {
-          ++server_secret_key_files;
-        }
-      }
-      if (server_secret_key_files != 0) {
-        throw std::runtime_error(
-            "server secret-key audit failed before output serialization");
-      }
+      const auto paths = handoff_paths(args.handoff_dir);
+      require_server_has_no_secret_files(paths);
+      const int server_secret_key_files = count_server_secret_files(paths);
       for (int token = 0; token < args.tokens; ++token) {
         auto& output = token_outputs[static_cast<std::size_t>(token)];
         serialize_ciphertext(
-            exchange_dir /
+            paths.exchange /
                 ("output_t" + std::to_string(token) + ".ct"),
             cc, public_key, output);
       }
