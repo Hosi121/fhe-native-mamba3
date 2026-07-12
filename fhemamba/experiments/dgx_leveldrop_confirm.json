@@ -1,0 +1,45 @@
+{
+  "name": "leveldrop-24-layer-confirmation",
+  "version": "0.4.4",
+  "timeout_seconds": 2400,
+  "gpu_preflight": {
+    "required": true,
+    "poll_seconds": 30,
+    "timeout_seconds": 7200
+  },
+  "defaults": {
+    "LAYERS": "24",
+    "TOKENS": "2",
+    "ARTIFACT_VERSION": "0.4.4",
+    "RING_DIM": "65536",
+    "MULTIPLICATIVE_DEPTH": "44",
+    "SCALING_MOD_SIZE": "59",
+    "FIRST_MOD_SIZE": "60",
+    "SECURITY": "not-set",
+    "PT_CACHE_GIB": "5",
+    "AUTO_HEADROOM": "4",
+    "RESIDUAL_HEADROOM": "0",
+    "CARRIED_HEADROOM": "0",
+    "META_BTS": "1",
+    "META_BTS_ALPHA": "6",
+    "STATE_META_BTS_ALPHA": "-1",
+    "DEBUG_LAYER_ERRORS": "0",
+    "REFRESH_RECURRENT_STATE_POST": "1",
+    "ROTATION_KEYS": "balanced",
+    "ROTATION_KEY_GIB": "30",
+    "LEVEL_ALIGN_MODE": "drop"
+  },
+  "experiments": [
+    {
+      "name": "sqnewton-dualref-statepost-a6-leveldrop-nodecrypt-balanced30-h4-cache5"
+    },
+    {
+      "name": "sqnewton-dualref-statepost-a6-leveldrop-nodecrypt-balanced30-h4-cache5-repeat2",
+      "when": {
+        "experiment": "sqnewton-dualref-statepost-a6-leveldrop-nodecrypt-balanced30-h4-cache5",
+        "passed": true,
+        "all_tokens_decrypt": true
+      }
+    }
+  ]
+}

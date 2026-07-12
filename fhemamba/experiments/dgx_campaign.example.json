@@ -1,0 +1,51 @@
+{
+  "name": "statepost-alpha-campaign",
+  "version": "0.4.4",
+  "timeout_seconds": 7200,
+  "gpu_preflight": {
+    "required": true,
+    "poll_seconds": 30,
+    "timeout_seconds": 7200
+  },
+  "defaults": {
+    "TOKENS": "2",
+    "ARTIFACT_VERSION": "0.4.4",
+    "RING_DIM": "65536",
+    "MULTIPLICATIVE_DEPTH": "44",
+    "SCALING_MOD_SIZE": "59",
+    "FIRST_MOD_SIZE": "60",
+    "SECURITY": "not-set",
+    "PT_CACHE_GIB": "5",
+    "AUTO_HEADROOM": "4",
+    "RESIDUAL_HEADROOM": "0",
+    "CARRIED_HEADROOM": "0",
+    "META_BTS": "1",
+    "STATE_META_BTS_ALPHA": "-1",
+    "DEBUG_LAYER_ERRORS": "0",
+    "REFRESH_RECURRENT_STATE_POST": "1",
+    "ROTATION_KEYS": "balanced",
+    "ROTATION_KEY_GIB": "30",
+    "LEVEL_ALIGN_MODE": "unity"
+  },
+  "experiments": [
+    {
+      "name": "statepost-a5-l12",
+      "env": {
+        "LAYERS": "12",
+        "META_BTS_ALPHA": "5"
+      }
+    },
+    {
+      "name": "statepost-a5-l24",
+      "when": {
+        "experiment": "statepost-a5-l12",
+        "all_tokens_decrypt": true,
+        "max_abs_error_lte": 0.05
+      },
+      "env": {
+        "LAYERS": "24",
+        "META_BTS_ALPHA": "5"
+      }
+    }
+  ]
+}

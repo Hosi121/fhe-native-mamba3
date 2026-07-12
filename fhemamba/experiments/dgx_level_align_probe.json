@@ -1,0 +1,46 @@
+{
+  "name": "level-align-real-ckks-probe",
+  "version": "0.4.4",
+  "timeout_seconds": 900,
+  "gpu_preflight": {
+    "required": true,
+    "poll_seconds": 30,
+    "timeout_seconds": 7200
+  },
+  "defaults": {
+    "LAYERS": "2",
+    "TOKENS": "2",
+    "ARTIFACT_VERSION": "0.4.4",
+    "RING_DIM": "65536",
+    "MULTIPLICATIVE_DEPTH": "44",
+    "SCALING_MOD_SIZE": "59",
+    "FIRST_MOD_SIZE": "60",
+    "SECURITY": "not-set",
+    "PT_CACHE_GIB": "20",
+    "AUTO_HEADROOM": "4",
+    "RESIDUAL_HEADROOM": "0",
+    "CARRIED_HEADROOM": "0",
+    "META_BTS": "1",
+    "META_BTS_ALPHA": "6",
+    "STATE_META_BTS_ALPHA": "-1",
+    "DEBUG_LAYER_ERRORS": "0",
+    "REFRESH_RECURRENT_STATE_POST": "1",
+    "ROTATION_KEYS": "compact",
+    "ROTATION_KEY_GIB": "45"
+  },
+  "experiments": [
+    {
+      "name": "levelalign-native-a6-h4-compact-cache20",
+      "continue_on_infrastructure_failure": true,
+      "env": {
+        "LEVEL_ALIGN_MODE": "native"
+      }
+    },
+    {
+      "name": "levelalign-drop-a6-h4-compact-cache20",
+      "env": {
+        "LEVEL_ALIGN_MODE": "drop"
+      }
+    }
+  ]
+}
