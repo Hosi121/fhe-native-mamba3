@@ -4,6 +4,38 @@ This note records primary-source findings that materially change the current
 130M, 24-layer encrypted-decode plan. It is an engineering decision record,
 not a claim that the cited designs have already been implemented here.
 
+## Implementation update (2026-07-13)
+
+The expensive 24-layer, two-token run remains intentionally deferred. Small
+correctness gates produced the following cumulative result with true BSGS,
+post-update recurrent-state refresh, full rotation keys, and direct level
+alignment:
+
+| 2-layer / 2-token configuration | eval | peak RSS | max error |
+|---|---:|---:|---:|
+| true BSGS correctness baseline, 5 GiB cache | 53.44 s | 42.72 GiB | 0.00104 |
+| consumption-level encoding on cache misses | 44.46 s | 42.73 GiB | 0.00154 |
+| 20 GiB budget + level-20 projection cache | 38.21 s | 48.98 GiB | 0.00185 |
+| projection input dropped to its consumed level | **37.41 s** | 48.98 GiB | **0.00098** |
+
+The final row is 30.0% faster than the restored-correctness baseline without
+changing the 38 executed bootstraps. The 20 GiB budget holds all 687 registered
+plaintexts in 11.01 GiB, so the evaluation loop has zero plaintext-cache
+misses. Projection late-level alignment performs seven guarded direct drops;
+the output levels and bootstrap placement remain unchanged.
+
+A FIDESlib GB10 microbenchmark at ring 65536, depth 44, and scale 59 confirms
+why level placement matters. Rotation latency falls from 7.17 ms at level 0 to
+3.35 ms at level 20 and 1.03 ms at level 38; ct-pt multiplication falls from
+1.07 ms to 0.58 ms and 0.04 ms respectively. The scheduler must therefore
+minimize total level-indexed latency rather than bootstrap count alone.
+
+The Cachemir native-layout port is still gated on a slot-exact simulator. Its
+published appendix provides mask formulas, but the current public code URL
+returns HTTP 410 and the preprocessing rotation in Algorithm 1 does not match
+the paper's Figure 4 toy layout. No native path will be promoted from the cost
+formula alone.
+
 ## Current bottleneck, measured locally
 
 The best recorded 24-layer, one-token DGX run takes 400.72 s. Its input and
