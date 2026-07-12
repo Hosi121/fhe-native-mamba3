@@ -23,6 +23,41 @@ loop with next token
 - Prefill uses the chunked scan schedule (same algebra as
   `reference.chunked_scan`); decode uses the sequential step.
 
+Implementation status (2026-07-12): payload export and the native one-process
+client-loop simulation support prompt 2 + generate 4 on the real 130M
+checkpoint. Exact and polynomial plaintext traces agree on all four selected
+tokens. The native binary compiles on dgx; a full five-step FHE measurement is
+pending GPU availability. The simulation explicitly reports intermediate
+client decrypts and does not claim process separation. Time steps remain
+sequential; throughput parallelism is across independent streams, not four
+future tokens from one history.
+
+Fixed-vector process separation is also integrated into the native kernel as
+three explicit roles. `client-init` generates keys and ciphertext inputs;
+`server-eval` has no private-key deserialization path, rejects decrypt/debug
+options, and serializes ciphertext outputs; `client-decrypt` owns the secret,
+correctness comparison, and server-directory audit. The dgx build passes, but
+the integrated round trip is not yet a measured success. The prior small CKKS
+serialization probe remains the only passing runtime evidence until the GPU
+smoke runs. Interactive autoregressive separation needs a persistent server
+session or per-step encrypted-state serialization and is the next protocol
+step.
+
+Client key artifacts are owner-only (`0700` directory, `0600` secret key,
+runner `umask 077`). Fixed/server roles skip the 50,288 x 768 client `lm_head`
+asset entirely; a dgx loader probe reduced RSS 1.126 -> 0.825 GB and wall
+2.37 -> 1.80 s while autoregressive mode still loads and validates it.
+
+Circuit privacy is an upstream constraint, not a local "encrypt zero" patch.
+OpenFHE's provable CKKS `NOISE_FLOODING_DECRYPT` requires two complete runs
+under independent key pairs. The official current example still says
+bootstrapping is unsupported in this mode, and the FIDESlib dependency on dgx
+embeds OpenFHE 1.4.2 with the same restriction. Until a bootstrap-compatible
+construction is available and measured, claims must stay in the semi-honest
+model and must not call ordinary rerandomization IND-CPA-D security. Primary
+references: [`CKKS_NOISE_FLOODING.md`](https://github.com/openfheorg/openfhe-development/blob/main/src/pke/examples/CKKS_NOISE_FLOODING.md),
+[`ckks-noise-flooding.cpp`](https://github.com/openfheorg/openfhe-development/blob/main/src/pke/examples/ckks-noise-flooding.cpp).
+
 ## Quality gate
 
 WikiText-2 test PPL, non-overlapping 1024-token windows. Budget: the fully
@@ -174,12 +209,39 @@ Constraints carried over from the old repo's measurements:
 
 ## Token-1 divergence anatomy and the re-prefill protocol (2026-07-07)
 
-Full-24-layer measurements vs slot-sim: t0 0.041 vs sim 0.048 (poly error
-dominates, CKKS adds little); t1 1.197 vs sim 0.027. The only cross-token
-ciphertext lineages are the SSM states and conv FIFOs, so t1's blowup is
-their refresh noise (~1e-3) amplified ~x40-1000 through 24 layers of gate
-multiplications — depth acts as a noise amplifier. This is a different
-regime from the single-layer +4e-3/token linear trend.
+Update (2026-07-12): correctness now uses an identical-polynomial reference,
+with the exact-op model gap reported separately. Per-layer telemetry localized
+the first token-1 decoding failure to layer 20. Refreshing all carried inputs
+at the token boundary, and even a diagnostic client decrypt/re-encrypt of all
+168 state/FIFO ciphertexts, did not fix it: the recurrent `decay * state`
+multiply consumes another level after either refresh. Refreshing each state
+immediately after `decay * state + update` fixes that level lineage and makes
+both 24-layer outputs decryptable. The best measured Meta-BTS setting
+(`alpha=6`) gives polynomial-circuit errors 0.0205/0.0683, 998.9 s evaluation,
+504 physical bootstraps, and 48.6 GiB peak memory. It still fails the 0.05
+token-1 tolerance gate. A zero-intermediate-decrypt `alpha=5` run is nearly
+identical at 0.0164/0.0688 (1012.2 s), confirming the decryptability result
+without debug telemetry. Replacing explicit unity-multiply level alignment
+with FIDESlib SetLevel passes a 2-layer probe and cuts 62.9 -> 54.8 s, but its
+24-layer token-1 error is 0.1032 despite a 998.9 -> 908.1 s speedup. It is
+therefore rejected for deep correctness. The re-prefill design below remains
+a protocol direction, not an implemented or measured success.
+
+The prompt-2/generate-4 polynomial trace was audited against the exact native
+ring-2^16 packing (6 state ciphertexts/layer, 4 heads/group). All 144 state
+groups fit the exported bound times the 1.1 margin. One of 24 conv FIFOs does
+not: layer 9 observed 11.980 versus calibrated 10.623 and allowed 11.685
+(2.53% over). This is too small to explain the earlier token-1 blowup alone,
+but proves arbitrary-prompt bound coverage is not yet guaranteed. Artifact:
+`results/autoregressive_bound_audit_mamba2_130m.json`.
+
+The only cross-token ciphertext lineages are the SSM states and conv FIFOs.
+Their refresh noise is amplified through 24 layers of gate multiplications,
+so depth remains a noise amplifier even after the missing post-update refresh
+is restored. This is a different regime from the single-layer
++4e-3/token linear trend. Short 2-layer alpha sweeps are not sufficient to
+choose the long-chain optimum: state `alpha=4` slightly beat `alpha=6` at two
+layers but more than doubled token-1 error at 24 layers.
 
 Fixes, in order:
 1. State-checkpoint bound tightening: per-layer measured |m| bounds for the

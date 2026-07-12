@@ -9,7 +9,7 @@ The active trunk is **[`fhemamba/`](fhemamba/README.md)** (design spec:
 its measured artifacts remain citable but its architecture claims were
 superseded by the rebuild.
 
-## Status (2026-07-07, v0.4.4)
+## Status (2026-07-12, v0.4.4)
 
 Verified, in order of the evidence chain:
 
@@ -22,15 +22,36 @@ Verified, in order of the evidence chain:
    ledger) matches the reference to 3e-5 on the real checkpoint.
 3. **Real encrypted execution on GPU (FIDESlib, Grace-Blackwell)** —
    layer 0 × 4 tokens: per-token error 2.7e-3…1.45e-2 (tolerance 5e-2);
-   **full 24-layer chain, token 0: 0.041 — pass**; token 1 diverges
-   (error-accumulation horizon; re-anchoring is the next design item).
-   Multi-token ciphertext state carry, zero intermediate decrypts,
-   NaN-honest error reporting.
+   the squared-polynomial RMSNorm path now passes **24 layers × 1 token**
+   without intermediate decrypts
+   (FHE-vs-identical-polynomial-circuit max error **0.0285**, 480.3 s
+   evaluation, 108 executed bootstraps, ring 2^16). The same artifact reports
+   the exact-model gap separately (0.1517); approximation quality is certified
+   by the PPL result in item 1 instead of being misreported as CKKS error.
+   For 24 layers × 2 tokens, refreshing each recurrent state immediately
+   after `decay * state + update` now keeps both final outputs decryptable.
+   The best diagnostic run has per-token polynomial-circuit errors
+   **0.0205/0.0683** (998.9 s evaluation, 504 physical bootstraps, peak
+   48.6 GiB); token 1 is still above the 0.05 gate, so this remains a failure
+   artifact rather than a multi-token correctness claim. A separate
+   zero-intermediate-decrypt run at `alpha=5` is nearly identical at
+   **0.0164/0.0688** (1012.2 s), confirming that debug telemetry is not the
+   reason token 1 is decryptable. These measured runs process pre-specified
+   encrypted token embeddings with ciphertext state carry.
+   These `security=not-set` artifacts are feasibility evidence, not 64-bit
+   security claims. Decrypted diagnostics are not fed
+   back into the ciphertext path; NaN-honest error reporting is enabled.
 4. **Systems findings** (upstream-relevant): FIDESlib `EvalBootstrap`
    requires ScalingModSize ≥ 54 (59 best) and has a GPU launch race on
    GB10/CUDA-13 (`CUDA_LAUNCH_BLOCKING=1` workaround); `MAXP=64` caps
    usable depth at ~44 (scale 59), addressed by mid-circuit bootstrap
-   checkpoints with magnitude-normalized refresh.
+   checkpoints with magnitude-normalized refresh. A 40 GiB plaintext cache
+   OOMs on a deep Spark run; compact rotation keys are stable with a 20 GiB
+   cache, while the lower-noise 30 GiB balanced key set needs a 5 GiB cache.
+   Replacing explicit unity-multiply level alignment passes at 2 layers and
+   cuts evaluation 62.9 -> 54.8 s (13%), but at 24 layers it raises token-1
+   error to 0.1032 despite cutting 998.9 -> 908.1 s, so the deep default stays
+   on the more accurate unity path.
 5. **Optimization round** (measured on dgx): plaintext-encode caching +
    8-thread parallel encoding cut the single-layer decode from 590.6 s to
    **384.3 s / 4 tokens (−35%)** with unchanged errors; host NTT encoding is
@@ -77,13 +98,41 @@ Verified, in order of the evidence chain:
     that would cut that noise exceed GB10 GPU memory at ring 2^17, so
     replicated + 128-bit needs a larger-memory GPU (B200-class), not an
     algorithm change.
+11. **Process-separated key handoff probe** — three independent invocations
+    now cover client keygen/encrypt, secret-key-free server evaluation, and
+    client decrypt (round-trip max error **1.79e-12**). The server artifact
+    directory contains only the context, public key, and evaluation keys.
+    This validates FIDESlib/OpenFHE serialization mechanics on dgx. The same
+    three roles are now integrated into the full-width Mamba kernel for fixed
+    input vectors: `client-init` writes keys and encrypted inputs,
+    `server-eval` loads no private key and writes encrypted outputs, and
+    `client-decrypt` verifies correctness and audits the server directory.
+    The integrated binary compiles on dgx and rejects all decrypt diagnostics
+    in the server role; its 1-layer smoke and 24-layer promotion remain
+    pending GPU availability. Autoregressive process separation and
+    return-path noise flooding remain open.
+12. **Autoregressive client loop implemented, GPU measurement pending** — an
+    existing 24-layer payload can now be extended without recalibration with
+    client-side embedding/`lm_head` assets. The real 130M checkpoint produces
+    the same greedy trace under exact and polynomial execution for prompt 2 +
+    generate 4 (`273, 253, 4687, 273`; five sequential server evaluations;
+    `fhemamba/results/autoregressive_trace_mamba2_130m.json`).
+    The native kernel now keeps encrypted SSM/FIFO state across those steps,
+    decrypts only `final_norm` at the client boundary, performs the real
+    50,288-way `lm_head`/argmax, and freshly encrypts the selected embedding.
+    It compiles on dgx; the full FHE run is queued behind an occupied GPU and
+    is not yet a correctness or latency result. This version is a one-process
+    protocol simulation, not full client/server key separation.
 
 **Not yet claimed**: a 128-bit-secure *protocol* (noise flooding on returned
 ciphertexts pending — current claim is 128-bit circuit parameters only),
 replicated BSGS *and* 128-bit together (memory/noise bound on GB10; needs a
 larger-memory GPU), long generation (re-prefill re-anchoring protocol designed
 in `fhemamba/DESIGN.md`, not implemented), end-to-end interactive demo (M3),
-full 24-layer chain at 128-bit parameters, models beyond 130M.
+an all-token-passing 24-layer chain without intermediate decrypts, a full
+24-layer chain at 128-bit parameters, a measured passing autoregressive FHE
+generation run, a measured full-kernel process-separated round trip,
+process-separated autoregressive execution, models beyond 130M.
 
 **Positioning**: at measured trajectory (148 → 14.7 s/token in one
 optimization cycle, same workstation GPU), latency-tolerant private batch
@@ -117,7 +166,8 @@ the dgx runbook notes inside the kernel's JSON output.
 ## Versioning
 
 - `0.4.x` — real OSS weights under real encryption; component milestones
-  (M1 single layer ✅, M2 full chain token-0 ✅, M3 interactive demo,
+  (M1 single layer complete, M2 multi-layer/full-chain correctness in progress,
+  M3 interactive demo,
   M4 multi-stream). Patch bumps within the series mark measured capability
   or performance increments (0.4.1: optimizations; 0.4.2: 128-bit parameters, composite keys,
   multi-stream; 0.4.3: input-replicated BSGS, 10x single-layer decode;
