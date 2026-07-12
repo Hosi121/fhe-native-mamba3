@@ -52,6 +52,7 @@
 #include "stage1_mamba2_config.hpp"
 #include "fideslib_handoff.hpp"
 #include "stage1_mamba2_artifact.hpp"
+#include "stage1_mamba2_depth.hpp"
 #include "stage1_mamba2_payload.hpp"
 #include "stage1_mamba2_plan.hpp"
 #include "stage1_mamba2_process.hpp"
@@ -96,11 +97,18 @@ using fhemamba::stage1::M1Payload;
 using fhemamba::stage1::parse_args;
 using fhemamba::stage1::json_escape;
 using fhemamba::stage1::count_server_secret_files;
+using fhemamba::stage1::cheb_baby_size;
+using fhemamba::stage1::cheb_ps_depth;
 using fhemamba::stage1::derive_packing;
+using fhemamba::stage1::DepthEstimate;
+using fhemamba::stage1::estimate_levels;
 using fhemamba::stage1::handoff_paths;
 using fhemamba::stage1::int_log2;
 using fhemamba::stage1::kBabyStepIn;
 using fhemamba::stage1::kBabyStepOut;
+using fhemamba::stage1::kAssumedBootstrapOutputLevel;
+using fhemamba::stage1::kChebCoefficientFloor;
+using fhemamba::stage1::kNewtonSegmentEstimate;
 using fhemamba::stage1::kPlaintextCoefficientFloor;
 using fhemamba::stage1::naf_steps;
 using fhemamba::stage1::PackingDims;
@@ -127,13 +135,13 @@ using fhemamba::stage1::write_runtime_failure_payload;
 using fhemamba::stage1::python_mod;
 using fhemamba::stage1::slot_bsgs_giant_with_zero;
 using fhemamba::stage1::verify_naf;
+using fhemamba::stage1::verify_cheb_ps_host;
 using fhemamba::handoff::copy_context_device_metadata;
 using fhemamba::handoff::deserialize_ciphertext;
 using fhemamba::handoff::require_serialized;
 using fhemamba::handoff::serialize_ciphertext;
 using fhemamba::handoff::serialize_context;
 
-constexpr double kChebCoefficientFloor = 1e-12;
 // dgx-measured FIDESlib v2.1.0 bootstrap output: GetLevel() == 18 after
 // EvalBootstrap at ring 131072/depth 44/scale 59 and ring 65536/depth 28/
 // scale 59 (fhemamba/results/dgx/bootstrap_probe_*.json, which report the
@@ -141,13 +149,7 @@ constexpr double kChebCoefficientFloor = 1e-12;
 // 26-level segment budget between mid-circuit refresh points. The refresh
 // floor kMinBootstrapGain skips refreshes that cannot usefully lower a
 // ciphertext (bootstrap output would be at or above its current level).
-constexpr int kAssumedBootstrapOutputLevel = 18;
 constexpr int kMinBootstrapGain = 8;
-// Policy-bounded Newton segment: iterations pause for a refresh when the
-// iterate runs low, so a Newton run never consumes more than roughly
-// depth - bootstrap_output - headroom levels in one lineage; 14 is the value
-// entering the max-segment estimate (headroom 12, 2 levels per iteration).
-constexpr int kNewtonSegmentEstimate = 14;
 // Parallel miss-path encoding: uncached BSGS diagonals are encoded in look-
 // ahead batches of encode_threads * this many entries, bounding the in-flight
 // plaintext memory (8 threads * 8 entries ~= 1.4 GiB at ring 65536/d44).
@@ -639,121 +641,6 @@ auto decrypt_slots(
 // T_{2i} = 2*T_i^2 - 1 and T_{2i+1} = 2*T_{i+1}*T_i - T_1.
 // ---------------------------------------------------------------------------
 
-auto ceil_log2(int value) -> int {
-  int log = 0;
-  while ((1 << log) < value) {
-    ++log;
-  }
-  return log;
-}
-
-auto cheb_baby_size(int degree) -> int {
-  const int levels = std::max(1, ceil_log2(degree + 1));
-  return 1 << ((levels + 1) / 2);
-}
-
-auto cheb_clenshaw_host(const std::vector<double>& coeffs, double t) -> double {
-  double b1 = 0.0;
-  double b2 = 0.0;
-  for (std::size_t index = coeffs.size(); index-- > 1;) {
-    const double next = 2.0 * t * b1 - b2 + coeffs[index];
-    b2 = b1;
-    b1 = next;
-  }
-  return t * b1 - b2 + coeffs[0];
-}
-
-auto cheb_ps_host(const std::vector<double>& coeffs, double u, int m) -> double {
-  std::vector<double> t_values(std::max<std::size_t>(coeffs.size() + 1, 2), 0.0);
-  t_values[0] = 1.0;
-  t_values[1] = u;
-  for (std::size_t i = 2; i < t_values.size(); ++i) {
-    t_values[i] = 2.0 * u * t_values[i - 1] - t_values[i - 2];
-  }
-  std::function<double(std::vector<double>)> rec = [&](std::vector<double> c) -> double {
-    const int n = static_cast<int>(c.size()) - 1;
-    if (n < m) {
-      double sum = 0.0;
-      for (int i = 0; i <= n; ++i) {
-        sum += c[static_cast<std::size_t>(i)] * t_values[static_cast<std::size_t>(i)];
-      }
-      return sum;
-    }
-    int k = m;
-    while (2 * k - 1 < n) {
-      k *= 2;
-    }
-    std::vector<double> btil(static_cast<std::size_t>(n - k + 1), 0.0);
-    for (int j = 0; j <= n - k; ++j) {
-      btil[static_cast<std::size_t>(j)] = 2.0 * c[static_cast<std::size_t>(k + j)];
-    }
-    btil[0] = c[static_cast<std::size_t>(k)];
-    std::vector<double> aprime(c.begin(), c.begin() + k);
-    for (int i = k + 1; i <= n; ++i) {
-      aprime[static_cast<std::size_t>(2 * k - i)] -= c[static_cast<std::size_t>(i)];
-    }
-    return rec(aprime) + t_values[static_cast<std::size_t>(k)] * rec(btil);
-  };
-  return rec(coeffs);
-}
-
-void verify_cheb_ps_host(const std::string& name, const std::vector<double>& coeffs) {
-  const int m = cheb_baby_size(static_cast<int>(coeffs.size()) - 1);
-  double max_error = 0.0;
-  for (int sample = 0; sample <= 400; ++sample) {
-    const double u = -1.0 + 2.0 * sample / 400.0;
-    const double reference = cheb_clenshaw_host(coeffs, u);
-    const double value = cheb_ps_host(coeffs, u, m);
-    max_error = std::max(max_error, std::abs(reference - value));
-  }
-  if (max_error > 1e-6) {
-    throw std::runtime_error("Chebyshev PS self-check failed for " + name + ": max error " +
-                             std::to_string(max_error));
-  }
-}
-
-// Level ledger of the PS recursion (levels above the level of u), used only
-// for the pre-run depth estimate.
-auto cheb_ps_depth(int degree) -> int {
-  const int m = cheb_baby_size(degree);
-  std::map<int, int> t_level;
-  std::function<int(int)> level_of = [&](int i) -> int {
-    if (i <= 1) {
-      return 0;
-    }
-    auto found = t_level.find(i);
-    if (found != t_level.end()) {
-      return found->second;
-    }
-    int level = 0;
-    if (i % 2 == 0) {
-      level = level_of(i / 2) + 1;
-    } else {
-      level = std::max(level_of((i + 1) / 2), level_of(i / 2)) + 1;
-    }
-    t_level[i] = level;
-    return level;
-  };
-  std::function<int(int)> rec = [&](int n) -> int {
-    if (n == 0) {
-      return 0;  // constant term: fresh low-level ciphertext, aligned upward
-    }
-    if (n < m) {
-      int deepest = 0;
-      for (int i = 1; i <= n; ++i) {
-        deepest = std::max(deepest, level_of(i));
-      }
-      return deepest + 1;  // scalar coefficient multiply
-    }
-    int k = m;
-    while (2 * k - 1 < n) {
-      k *= 2;
-    }
-    const int giant_term = std::max(level_of(k), rec(n - k)) + 1;
-    return std::max(rec(k - 1), giant_term);
-  };
-  return rec(degree);
-}
 
 // ---------------------------------------------------------------------------
 // Process telemetry + JSON writers (conventions of the rank/gate kernel).
@@ -820,103 +707,6 @@ void write_phase_operation_counts_json(
 
 // Per-token depth estimate from the poly degrees (mirrors the ciphertext
 // program's level arithmetic; validated against a slot-level simulation).
-struct DepthEstimate {
-  std::vector<int> token_output_levels;
-  int required_depth = 0;
-  int proj_level = 0;    // fresh-input level of the in_proj output
-  int update_level = 0;  // fresh-input level of the token-0 state update
-  // Segment requirements for the mid-circuit bootstrap checkpoints (same
-  // formulas as LayerPlan; used for the pre-run geometry warning).
-  int req_residual = 0;
-  int req_proj = 0;
-  int req_fifo = 0;
-  int req_conv = 0;
-  int req_dt = 0;
-  int req_decay = 0;
-  int req_state_pre = 0;
-  int req_state_tail = 0;
-  int req_y = 0;
-  int req_out = 0;
-  int max_segment = 0;
-};
-
-auto estimate_levels(
-    const M1Payload& payload,
-    int tokens,
-    const std::set<int>& bootstrap_before_token,
-    const std::set<int>& debug_client_reencrypt_before_token,
-    bool refresh_recurrent_state_post,
-    int streams) -> DepthEstimate {
-  // streams > 1 costs one extra level in each RMS variance reduction (the
-  // stream-base mask before the in-stride broadcast).
-  const int norm_extra = streams > 1 ? 1 : 0;
-  const auto& rms = payload.polys.at("rms_invsqrt");
-  const auto& gated = payload.polys.at("gated_rms_invsqrt");
-  const int rms_depth = cheb_ps_depth(static_cast<int>(rms.coeffs.size()) - 1);
-  const int conv_depth = cheb_ps_depth(
-      static_cast<int>(payload.polys.at("conv_silu").coeffs.size()) - 1);
-  const int gate_depth = cheb_ps_depth(
-      static_cast<int>(payload.polys.at("gate_silu").coeffs.size()) - 1);
-  const int dt_depth = cheb_ps_depth(
-      static_cast<int>(payload.polys.at("dt_softplus").coeffs.size()) - 1);
-  const auto& exp_spec = payload.polys.at("decay_exp");
-  const int exp_depth = cheb_ps_depth(static_cast<int>(exp_spec.coeffs.size()) - 1);
-
-  const int inv1 = 2 + norm_extra + rms_depth + 2 * rms.iterations;
-  const int proj = std::max(inv1, 1) + 1;
-  const int xconv = proj + 1 + conv_depth;
-  const int gate_lvl = proj + 1 + gate_depth;
-  const int dt_lvl = proj + 1 + dt_depth + 1;
-  const int decay_lvl = dt_lvl + 1 + exp_depth + exp_spec.squarings;
-  const int x_exp = xconv + 1;
-  const int bc_exp = xconv + 1;
-  const int dt_exp = dt_lvl + 1;
-  const int decay_exp_lvl = decay_lvl + 1;
-  const int dtx = std::max(x_exp, dt_exp) + 1;
-  const int update = std::max(dtx, bc_exp) + 1;
-
-  DepthEstimate estimate;
-  estimate.proj_level = proj;
-  estimate.update_level = update;
-  estimate.req_residual = proj + 1;
-  estimate.req_proj =
-      1 + std::max(conv_depth, std::max(gate_depth + 2, dt_depth + 1));
-  estimate.req_fifo = 2 + conv_depth;
-  estimate.req_conv = 6;
-  estimate.req_dt = 2 + exp_depth + exp_spec.squarings;
-  estimate.req_decay = 3;
-  estimate.req_state_pre = 5;
-  estimate.req_state_tail = 4;
-  estimate.req_y = 4 + norm_extra;
-  estimate.req_out = 2;
-  estimate.max_segment = std::max(
-      {estimate.req_residual, estimate.req_proj, estimate.req_fifo, estimate.req_conv,
-       estimate.req_dt, estimate.req_decay, estimate.req_state_pre,
-       estimate.req_state_tail, estimate.req_y, kNewtonSegmentEstimate});
-  int state = 0;
-  bool has_state = false;
-  for (int token = 0; token < tokens; ++token) {
-    if (has_state && debug_client_reencrypt_before_token.count(token) > 0) {
-      state = 0;
-    } else if (has_state && bootstrap_before_token.count(token) > 0) {
-      state = std::min(state, kAssumedBootstrapOutputLevel);
-    }
-    const bool recurrent_update = has_state;
-    state = recurrent_update ? std::max(decay_exp_lvl, state) + 1 : update;
-    if (recurrent_update && refresh_recurrent_state_post) {
-      state = kAssumedBootstrapOutputLevel;
-    }
-    has_state = true;
-    const int readout = std::max(state, bc_exp) + 2;  // *C then packed mask
-    const int y = std::max(readout, gate_lvl) + 1;
-    const int variance = y + 1 + norm_extra;
-    const int inv2 = variance + 1 + 2 * (gated.iterations - 1);
-    const int out = std::max(y + 1, inv2) + 1;
-    estimate.token_output_levels.push_back(out);
-    estimate.required_depth = std::max(estimate.required_depth, out);
-  }
-  return estimate;
-}
 
 }  // namespace
 
