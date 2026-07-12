@@ -22,10 +22,23 @@ def test_diagonal_count_drops_with_replication() -> None:
     # ct-pt (= plaintext encodes) is the measured bottleneck; replication cuts
     # it from n toward n/r.
     n, batch = 768, 32768
-    _, r = choose_window(3352, n, batch)
-    cost = replicated_cost(n, r, batch)
+    window, r = choose_window(3352, n, batch)
+    cost = replicated_cost(n, r, batch, window=window)
     assert cost.ct_pt_mul <= n // (r - 1)  # ~ n/r
     assert cost.ct_pt_mul < n / 6  # concrete: 110 << 768
+
+
+def test_cost_matches_native_replicated_schedule() -> None:
+    # These are the per-layer counts in the 24-layer native artifact. The
+    # replicated path is not yet baby-step/giant-step internally.
+    in_window, in_replicas = choose_window(3352, 768, 32768)
+    out_window, out_replicas = choose_window(768, 1536, 32768)
+
+    in_cost = replicated_cost(768, in_replicas, 32768, window=in_window)
+    out_cost = replicated_cost(1536, out_replicas, 32768, window=out_window)
+
+    assert (in_cost.ct_pt_mul, in_cost.rotations) == (110, 126)
+    assert (out_cost.ct_pt_mul, out_cost.rotations) == (154, 172)
 
 
 def test_matches_dense_on_random_seeds() -> None:
