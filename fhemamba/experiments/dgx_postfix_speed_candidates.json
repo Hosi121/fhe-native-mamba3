@@ -26,25 +26,25 @@
     "META_BTS_RESIDUAL_ALIGN_MODE": "unity",
     "LEVEL_ALIGN_MODE": "drop",
     "BSGS_REPLICAS": "auto",
-    "ROTATION_KEY_GIB": "45",
+    "ROTATION_KEY_GIB": "30",
     "ENCODE_THREADS": "8",
     "REFRESH_RECURRENT_STATE_POST": "1",
     "TOLERANCE": "0.05"
   },
   "experiments": [
     {
-      "name": "postfix-balanced45-cache20-l24-t1",
+      "name": "postfix-balanced30-cache5-l24-t1",
       "continue_on_infrastructure_failure": true,
       "env": {
         "ROTATION_KEYS": "balanced",
-        "PT_CACHE_GIB": "20"
+        "PT_CACHE_GIB": "5"
       }
     },
     {
-      "name": "postfix-compact-cache60-l24-t1",
+      "name": "postfix-compact-cache40-l24-t1",
       "env": {
         "ROTATION_KEYS": "compact",
-        "PT_CACHE_GIB": "60"
+        "PT_CACHE_GIB": "40"
       }
     }
   ]
