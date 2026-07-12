@@ -3255,6 +3255,9 @@ auto main(int argc, char* argv[]) -> int {
             static_cast<int>(hidden_ct->GetLevel());
       }
       token_output_ready_seconds.push_back(seconds_since(token_start));
+      // Materialize an independent output handle before later carry-only
+      // bootstraps reuse FIDES GPU work buffers.
+      token_outputs.push_back(hidden_ct->Clone());
       if (args.autoregressive_client_loop &&
           token >= chain.autoregressive_prompt_tokens - 1) {
         const auto client_start = now();
@@ -3333,7 +3336,6 @@ auto main(int argc, char* argv[]) -> int {
         log_phase("deferred recurrent state refresh after token " +
                   std::to_string(token) + " done");
       }
-      token_outputs.push_back(hidden_ct);
       if (args.autoregressive_client_loop &&
           !autoregressive_decrypted_outputs[static_cast<std::size_t>(token)].empty()) {
         // The client already consumed this output; retain only its plaintext
