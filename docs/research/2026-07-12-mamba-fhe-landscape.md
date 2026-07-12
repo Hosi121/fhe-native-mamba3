@@ -36,6 +36,37 @@ returns HTTP 410 and the preprocessing rotation in Algorithm 1 does not match
 the paper's Figure 4 toy layout. No native path will be promoted from the cost
 formula alone.
 
+### Recurrent-state implementation update
+
+The contiguous Mamba-2 B/C vectors now have a slot-exact logarithmic expansion
+path. It selects B+C once, copies each branch at powers of
+`group_block - 1`, keeps state-block seeds, and fills the blocks by rotate-add
+doubling. For one layer/token this replaces 256 ct-pt products with 3 and
+reduces the measured B/C phase from 1.639 s to 0.114 s. End-to-end evaluation
+falls from 8.45 s to 6.94 s; required rotation keys fall from 153 (26.89 GiB
+estimate) to 123 (21.62 GiB). The encrypted output passes at max error 0.00025.
+
+Post-update state refresh is now schedulable by recurrent-token interval. This
+is an experimental accuracy/latency control, not an automatic safety proof:
+
+| 2-layer encrypted chain | eval | state BTS | result |
+|---|---:|---:|---|
+| no forced state refresh, 2 tokens | 25.36 s | 0 | pass, max error 0.0166 |
+| interval 2, 4 tokens | 54.14 s | 12 | pass, max error 0.0330 |
+| interval 2, 6 tokens | 85.39 s | 24 | invalid gate: stale token-5 reference |
+| interval 1, 6 tokens | 123.05 s | 60 | invalid gate: stale token-5 reference |
+
+Refreshing only the final loaded layer fails by token 2 in the six-token probe,
+so a suffix-only policy may not be extrapolated to 24 layers. The two six-token
+interval probes exposed a separate payload-provenance defect: all eight input
+embeddings map exactly back to token IDs, but replaying the current exported
+polynomial operators matches the stored layer-1 reference only through token 4
+and differs by 26.36 at token 5. The native result at token 5 remains within
+0.027 of the exact model. Consequently the interval-1/2 six-token results are
+not accuracy evidence in either direction. New exports now record the fixed
+test token IDs; the reference payload must be regenerated and the six-token
+gate rerun before promoting any long-horizon refresh policy.
+
 ## Current bottleneck, measured locally
 
 The best recorded 24-layer, one-token DGX run takes 400.72 s. Its input and
