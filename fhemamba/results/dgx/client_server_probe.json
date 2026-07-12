@@ -1,0 +1,16 @@
+{
+  "version": "0.4.4",
+  "stage": "fideslib-client-server-probe",
+  "repo_commit": "working-tree",
+  "status": "passed",
+  "passed": true,
+  "parameters": {"ring_dimension": 4096, "multiplicative_depth": 8, "slots": 16, "security": "not-set"},
+  "measurements": {"max_abs_error": 1.78673742468e-12, "server_secret_key_files": 0},
+  "operation_counts": {"rotations": 1, "ct_pt_mul": 0, "ct_ct_mul": 1, "adds": 1, "bootstraps": 0},
+  "measurement_scope": {
+    "client_server_process_separation": true,
+    "server_secret_key_loaded": false,
+    "full_model_correctness_claimed": false,
+    "claim": "Separate-process CKKS keygen/encrypt, server evaluation, and client decrypt serialization probe; not the full Mamba pipeline."
+  }
+}
