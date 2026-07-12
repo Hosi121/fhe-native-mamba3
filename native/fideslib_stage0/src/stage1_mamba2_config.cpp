@@ -1,5 +1,6 @@
 #include "stage1_mamba2_config.hpp"
 
+#include <cmath>
 #include <exception>
 #include <sstream>
 #include <stdexcept>
@@ -10,7 +11,13 @@ namespace fhemamba::stage1 {
 
 auto parse_int(std::string_view name, const char* value) -> int {
   try {
-    return std::stoi(value);
+    const std::string text(value);
+    std::size_t consumed = 0;
+    const int parsed = std::stoi(text, &consumed);
+    if (consumed != text.size()) {
+      throw std::invalid_argument("trailing characters");
+    }
+    return parsed;
   } catch (const std::exception& exc) {
     throw std::invalid_argument(std::string("invalid integer for ") + std::string(name) + ": " +
                                 exc.what());
@@ -19,11 +26,28 @@ auto parse_int(std::string_view name, const char* value) -> int {
 
 auto parse_double_arg(std::string_view name, const char* value) -> double {
   try {
-    return std::stod(value);
+    const std::string text(value);
+    std::size_t consumed = 0;
+    const double parsed = std::stod(text, &consumed);
+    if (consumed != text.size() || !std::isfinite(parsed)) {
+      throw std::invalid_argument("must be a finite number without trailing characters");
+    }
+    return parsed;
   } catch (const std::exception& exc) {
     throw std::invalid_argument(std::string("invalid float for ") + std::string(name) + ": " +
                                 exc.what());
   }
+}
+
+auto parse_bool_arg(std::string_view name, std::string_view value) -> bool {
+  if (value == "1" || value == "true") {
+    return true;
+  }
+  if (value == "0" || value == "false") {
+    return false;
+  }
+  throw std::invalid_argument(std::string("invalid boolean for ") + std::string(name) +
+                              ": expected 0, 1, false, or true");
 }
 
 auto parse_int_set(std::string_view name, std::string_view value) -> std::set<int> {
@@ -49,17 +73,17 @@ auto parse_args(int argc, char* argv[]) -> Config {
     }
     const char* value = argv[++i];
     if (arg == "--debug-decrypt") {
-      config.debug_decrypt = (std::string_view(value) != "0");
+      config.debug_decrypt = parse_bool_arg(arg, value);
     } else if (arg == "--debug-refresh-probes") {
-      config.debug_refresh_probes = (std::string_view(value) != "0");
+      config.debug_refresh_probes = parse_bool_arg(arg, value);
     } else if (arg == "--debug-layer-errors") {
-      config.debug_layer_errors = (std::string_view(value) != "0");
+      config.debug_layer_errors = parse_bool_arg(arg, value);
     } else if (arg == "--bootstrap-norm-margin") {
       config.bootstrap_norm_margin = parse_double_arg(arg, value);
     } else if (arg == "--state-bootstrap-margin") {
       config.state_bootstrap_margin = parse_double_arg(arg, value);
     } else if (arg == "--meta-bts") {
-      config.meta_bts = (std::string_view(value) != "0");
+      config.meta_bts = parse_bool_arg(arg, value);
     } else if (arg == "--meta-bts-alpha") {
       config.meta_bts_alpha = parse_int(arg, value);
     } else if (arg == "--state-meta-bts-alpha") {
@@ -123,9 +147,9 @@ auto parse_args(int argc, char* argv[]) -> Config {
     } else if (arg == "--debug-client-reencrypt-before-token") {
       config.debug_client_reencrypt_before_token = parse_int_set(arg, value);
     } else if (arg == "--autoregressive-client-loop") {
-      config.autoregressive_client_loop = (std::string_view(value) != "0");
+      config.autoregressive_client_loop = parse_bool_arg(arg, value);
     } else if (arg == "--refresh-recurrent-state-post") {
-      config.refresh_recurrent_state_post = (std::string_view(value) != "0");
+      config.refresh_recurrent_state_post = parse_bool_arg(arg, value);
     } else if (arg == "--refresh-recurrent-state-post-layers") {
       config.refresh_recurrent_state_post_layers = parse_int_set(arg, value);
     } else if (arg == "--bootstrap-level-budget-cts") {
@@ -164,7 +188,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
         "process-separated autoregressive loop is not implemented yet");
   }
   if (config.process_role == "server-eval" &&
-      (config.debug_decrypt || config.debug_layer_errors ||
+      (config.debug_decrypt || config.debug_refresh_probes ||
+       config.debug_layer_errors ||
        !config.debug_client_reencrypt_before_token.empty())) {
     throw std::invalid_argument(
         "server-eval forbids every secret-key diagnostic option");
@@ -257,7 +282,7 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.bsgs_replicas != "auto" && config.bsgs_replicas != "1") {
     try {
-      if (std::stoi(config.bsgs_replicas) < 1) {
+      if (parse_int("--bsgs-replicas", config.bsgs_replicas.c_str()) < 1) {
         throw std::invalid_argument("");
       }
     } catch (const std::exception&) {

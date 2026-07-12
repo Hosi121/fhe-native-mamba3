@@ -54,6 +54,10 @@ auto main() -> int {
   require(server.input_chain == "chain", "chain input was not parsed");
   require(server.process_role == "server-eval", "server role was not parsed");
 
+  const auto explicit_false =
+      parse({"stage1", "--input", "payload", "--debug-decrypt", "false"});
+  require(!explicit_false.debug_decrypt, "false boolean was not parsed");
+
   require_invalid([] { parse({"stage1"}); });
   require_invalid([] {
     parse({"stage1", "--input", "one", "--input-chain", "two"});
@@ -78,6 +82,33 @@ auto main() -> int {
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--ring-dim", "65535"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--tokens", "4junk"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--tolerance", "nan"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--debug-decrypt", "yes"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--bsgs-replicas", "2junk"});
+  });
+  require_invalid([] {
+    parse({
+        "stage1",
+        "--input",
+        "payload",
+        "--process-role",
+        "server-eval",
+        "--handoff-dir",
+        "handoff",
+        "--output-json",
+        "result.json",
+        "--debug-refresh-probes",
+        "1",
+    });
   });
   require_invalid([] {
     parse({

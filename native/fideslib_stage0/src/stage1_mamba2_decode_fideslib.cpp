@@ -4526,7 +4526,8 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"multi_token_ciphertext_state_carry\":true,";
     out << "\"ciphertext_conv_fifo\":true,";
     out << "\"zero_intermediate_decrypts\":"
-        << ((args.debug_decrypt || args.debug_layer_errors ||
+        << ((args.debug_decrypt || args.debug_refresh_probes ||
+             args.debug_layer_errors ||
              !args.debug_client_reencrypt_before_token.empty() ||
              args.autoregressive_client_loop)
                 ? "false"
