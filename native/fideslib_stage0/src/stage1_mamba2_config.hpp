@@ -112,6 +112,11 @@ struct Config {
   // Apply a real baby-step/giant-step decomposition to the replicated
   // diagonal groups. Off preserves the measured replicated schedule.
   bool replicated_true_bsgs = false;
+  // In direct-drop alignment mode, discard projection-input towers that the
+  // following inverse-norm multiply would discard from the linear result
+  // anyway. This keeps residual/state branches unchanged while making the
+  // rotation-heavy VMM execute at a cheaper late level.
+  bool projection_late_level = false;
   double tolerance = 5e-2;
   std::set<int> bootstrap_before_token;
   // Diagnostic protocol simulation: decrypt and freshly encrypt every

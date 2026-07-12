@@ -1219,6 +1219,7 @@ auto main(int argc, char* argv[]) -> int {
     int adds = 0;
     int unity_multiplies = 0;
     int direct_level_drops = 0;
+    int projection_late_level_drops = 0;
     int bootstraps = 0;
     int state_bootstraps = 0;  // refreshes of carried-forward (state/FIFO) cts
     int meta_bts_applied = 0;  // refreshes that ran the double-BTS path
@@ -2840,6 +2841,25 @@ auto main(int argc, char* argv[]) -> int {
       return folded;
     };
 
+    auto late_level_projection_input = [&](const Ciphertext<DCRTPoly>& input,
+                                           const Ciphertext<DCRTPoly>& inverse,
+                                           int linear_levels) {
+      if (!args.projection_late_level || args.level_align_mode != "drop") {
+        return input;
+      }
+      const int inverse_level = static_cast<int>(inverse->GetLevel());
+      const int input_level = static_cast<int>(input->GetLevel());
+      const int target_level = inverse_level - linear_levels;
+      if (target_level <= input_level || target_level < 0) {
+        return input;
+      }
+      auto dropped = input->Clone();
+      dropped->SetLevel(static_cast<uint32_t>(target_level));
+      ++direct_level_drops;
+      ++projection_late_level_drops;
+      return dropped;
+    };
+
     // -----------------------------------------------------------------------
     // One full layer circuit (block norm ... residual add). State and conv
     // FIFO live in the per-layer runtime and stay ciphertext across tokens.
@@ -2876,12 +2896,15 @@ auto main(int argc, char* argv[]) -> int {
       debug_value_stats(inv_block, tag + "block_inv");
 
       auto proj_ct = time_phase("in_proj_bsgs", [&]() {
+        const auto linear_input = late_level_projection_input(
+            hidden_ct, inv_block, 1);
         Ciphertext<DCRTPoly> linear;
         if (rep_in.replicas > 1) {
-          linear = replicated_bsgs(hidden_ct, plan.in_w_folded, proj_dim, d_model, rep_in,
+          linear = replicated_bsgs(linear_input, plan.in_w_folded, proj_dim, d_model, rep_in,
                                    plan.cache_prefix + "bsgsrep_in.");
         } else {
-          auto babies = slot_bsgs_precompute_baby_rotations(rotate, hidden_ct, kBabyStepIn);
+          auto babies = slot_bsgs_precompute_baby_rotations(
+              rotate, linear_input, kBabyStepIn);
           linear = slot_bsgs_linear_block0_from_babies(
               cc, rotate, babies, plan.in_w_folded, d_model, proj_dim, kBabyStepIn,
               batch_size, ct_pt_muls, adds, plan.in_proj_table, &pt_cache_hits,
@@ -3145,13 +3168,17 @@ auto main(int argc, char* argv[]) -> int {
       // the gated-norm segment left it deeper than the BSGS entry allows).
       maybe_bootstrap(y_ct, plan.req_out, tag + "y_out", layer_bootstraps);
       auto out_ct = time_phase("out_proj_bsgs", [&]() {
+        const int linear_levels = rep_out.replicas > 1 ? 2 : 1;
+        const auto linear_input = late_level_projection_input(
+            y_ct, inv_gated, linear_levels);
         Ciphertext<DCRTPoly> linear;
         if (rep_out.replicas > 1) {
-          linear = replicated_bsgs(y_ct, plan.out_w_folded, d_model, d_inner, rep_out,
+          linear = replicated_bsgs(linear_input, plan.out_w_folded, d_model, d_inner, rep_out,
                                    plan.cache_prefix + "bsgsrep_out.");
           linear = mul_mask(linear, "mask.out_clean", out_clean_mask);
         } else {
-          auto babies = slot_bsgs_precompute_baby_rotations(rotate, y_ct, kBabyStepOut);
+          auto babies = slot_bsgs_precompute_baby_rotations(
+              rotate, linear_input, kBabyStepOut);
           linear = slot_bsgs_linear_block0_from_babies(
               cc, rotate, babies, plan.out_w_folded, d_inner, d_model, kBabyStepOut,
               batch_size, ct_pt_muls, adds, plan.out_proj_table, &pt_cache_hits,
@@ -3669,6 +3696,8 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"streams\":" << args.streams << ",";
     out << "\"stream_stride\":" << stream_stride << ",";
     out << "\"level_align_mode\":\"" << json_escape(args.level_align_mode) << "\",";
+    out << "\"projection_late_level\":"
+        << (args.projection_late_level ? "true" : "false") << ",";
     out << "\"bsgs_layout\":{";
     out << "\"mode\":\"" << json_escape(args.bsgs_replicas) << "\",";
     out << "\"true_bsgs\":" << (args.replicated_true_bsgs ? "true" : "false") << ",";
@@ -3914,6 +3943,8 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"adds\":" << adds << ",";
     out << "\"unity_level_align_muls\":" << unity_multiplies << ",";
     out << "\"direct_level_align_drops\":" << direct_level_drops << ",";
+    out << "\"projection_late_level_drops\":"
+        << projection_late_level_drops << ",";
     out << "\"bootstraps\":" << bootstraps;
     out << "},";
     out << "\"measurement_scope\":{";

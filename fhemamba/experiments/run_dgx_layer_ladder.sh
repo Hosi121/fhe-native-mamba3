@@ -39,6 +39,7 @@ ROTATION_KEY_GIB="${ROTATION_KEY_GIB:-45}"
 LEVEL_ALIGN_MODE="${LEVEL_ALIGN_MODE:-unity}"
 BSGS_REPLICAS="${BSGS_REPLICAS:-auto}"
 REPLICATED_TRUE_BSGS="${REPLICATED_TRUE_BSGS:-0}"
+PROJECTION_LATE_LEVEL="${PROJECTION_LATE_LEVEL:-0}"
 PT_CACHE_LEVEL="${PT_CACHE_LEVEL:-0}"
 PT_CACHE_WEIGHT_LEVEL="${PT_CACHE_WEIGHT_LEVEL:-0}"
 PT_MISS_CONSUMPTION_LEVEL="${PT_MISS_CONSUMPTION_LEVEL:-0}"
@@ -71,6 +72,7 @@ for layers in $LAYERS; do
     --security "$SECURITY" \
     --bsgs-replicas "$BSGS_REPLICAS" \
     --replicated-true-bsgs "$REPLICATED_TRUE_BSGS" \
+    --projection-late-level "$PROJECTION_LATE_LEVEL" \
     --rotation-keys "$ROTATION_KEYS" \
     --rotation-key-gib "$ROTATION_KEY_GIB" \
     --level-align-mode "$LEVEL_ALIGN_MODE" \

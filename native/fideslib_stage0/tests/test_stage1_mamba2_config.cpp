@@ -63,8 +63,11 @@ auto main() -> int {
       parse({"stage1", "--input", "payload", "--debug-decrypt", "false"});
   require(!explicit_false.debug_decrypt, "false boolean was not parsed");
   const auto true_bsgs = parse({"stage1", "--input", "payload", "--bsgs-replicas",
-                                "auto", "--replicated-true-bsgs", "true"});
+                                "auto", "--replicated-true-bsgs", "true",
+                                "--projection-late-level", "true"});
   require(true_bsgs.replicated_true_bsgs, "true replicated BSGS was not parsed");
+  require(true_bsgs.projection_late_level,
+          "projection late-level mode was not parsed");
   const auto consumption_plain =
       parse({"stage1", "--input", "payload", "--pt-cache-weight-level", "20",
              "--pt-miss-consumption-level", "1"});

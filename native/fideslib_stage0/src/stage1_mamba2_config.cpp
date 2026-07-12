@@ -128,6 +128,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.bsgs_replicas = value;
     } else if (arg == "--replicated-true-bsgs") {
       config.replicated_true_bsgs = parse_bool_arg(arg, value);
+    } else if (arg == "--projection-late-level") {
+      config.projection_late_level = parse_bool_arg(arg, value);
     } else if (arg == "--output-json") {
       config.output_json = value;
     } else if (arg == "--artifact-version") {
