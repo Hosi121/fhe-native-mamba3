@@ -1,0 +1,282 @@
+#include "stage1_mamba2_config.hpp"
+
+#include <exception>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+
+namespace fhemamba::stage1 {
+
+auto parse_int(std::string_view name, const char* value) -> int {
+  try {
+    return std::stoi(value);
+  } catch (const std::exception& exc) {
+    throw std::invalid_argument(std::string("invalid integer for ") + std::string(name) + ": " +
+                                exc.what());
+  }
+}
+
+auto parse_double_arg(std::string_view name, const char* value) -> double {
+  try {
+    return std::stod(value);
+  } catch (const std::exception& exc) {
+    throw std::invalid_argument(std::string("invalid float for ") + std::string(name) + ": " +
+                                exc.what());
+  }
+}
+
+auto parse_int_set(std::string_view name, std::string_view value) -> std::set<int> {
+  std::set<int> output;
+  std::string text(value);
+  std::stringstream stream(text);
+  std::string token;
+  while (std::getline(stream, token, ',')) {
+    if (token.empty()) {
+      continue;
+    }
+    output.insert(parse_int(name, token.c_str()));
+  }
+  return output;
+}
+
+auto parse_args(int argc, char* argv[]) -> Config {
+  Config config;
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg(argv[i]);
+    if (i + 1 >= argc) {
+      throw std::invalid_argument(std::string("missing value for ") + std::string(arg));
+    }
+    const char* value = argv[++i];
+    if (arg == "--debug-decrypt") {
+      config.debug_decrypt = (std::string_view(value) != "0");
+    } else if (arg == "--debug-refresh-probes") {
+      config.debug_refresh_probes = (std::string_view(value) != "0");
+    } else if (arg == "--debug-layer-errors") {
+      config.debug_layer_errors = (std::string_view(value) != "0");
+    } else if (arg == "--bootstrap-norm-margin") {
+      config.bootstrap_norm_margin = parse_double_arg(arg, value);
+    } else if (arg == "--state-bootstrap-margin") {
+      config.state_bootstrap_margin = parse_double_arg(arg, value);
+    } else if (arg == "--meta-bts") {
+      config.meta_bts = (std::string_view(value) != "0");
+    } else if (arg == "--meta-bts-alpha") {
+      config.meta_bts_alpha = parse_int(arg, value);
+    } else if (arg == "--state-meta-bts-alpha") {
+      config.state_meta_bts_alpha = parse_int(arg, value);
+    } else if (arg == "--meta-bts-residual-align-mode") {
+      config.meta_bts_residual_align_mode = value;
+    } else if (arg == "--input") {
+      config.input = value;
+    } else if (arg == "--input-chain") {
+      config.input_chain = value;
+    } else if (arg == "--max-layers") {
+      config.max_layers = parse_int(arg, value);
+    } else if (arg == "--auto-bootstrap-headroom") {
+      config.auto_bootstrap_headroom = parse_int(arg, value);
+    } else if (arg == "--residual-bootstrap-headroom") {
+      config.residual_bootstrap_headroom = parse_int(arg, value);
+    } else if (arg == "--carried-bootstrap-headroom") {
+      config.carried_bootstrap_headroom = parse_int(arg, value);
+    } else if (arg == "--pt-cache") {
+      config.pt_cache = value;
+    } else if (arg == "--pt-cache-gib") {
+      config.pt_cache_gib = parse_double_arg(arg, value);
+    } else if (arg == "--pt-cache-level") {
+      config.pt_cache_level = parse_int(arg, value);
+    } else if (arg == "--encode-threads") {
+      config.encode_threads = parse_int(arg, value);
+    } else if (arg == "--streams") {
+      config.streams = parse_int(arg, value);
+    } else if (arg == "--rotation-keys") {
+      config.rotation_keys = value;
+    } else if (arg == "--rotation-key-gib") {
+      config.rotation_key_gib = parse_double_arg(arg, value);
+    } else if (arg == "--level-align-mode") {
+      config.level_align_mode = value;
+    } else if (arg == "--bsgs-replicas") {
+      config.bsgs_replicas = value;
+    } else if (arg == "--output-json") {
+      config.output_json = value;
+    } else if (arg == "--artifact-version") {
+      config.artifact_version = value;
+    } else if (arg == "--repo-commit") {
+      config.repo_commit = value;
+    } else if (arg == "--process-role") {
+      config.process_role = value;
+    } else if (arg == "--handoff-dir") {
+      config.handoff_dir = value;
+    } else if (arg == "--ring-dim") {
+      config.ring_dim = parse_int(arg, value);
+    } else if (arg == "--depth" || arg == "--multiplicative-depth") {
+      config.multiplicative_depth = parse_int(arg, value);
+    } else if (arg == "--scaling-mod-size") {
+      config.scaling_mod_size = parse_int(arg, value);
+    } else if (arg == "--first-mod-size") {
+      config.first_mod_size = parse_int(arg, value);
+    } else if (arg == "--tokens") {
+      config.tokens = parse_int(arg, value);
+    } else if (arg == "--tolerance") {
+      config.tolerance = parse_double_arg(arg, value);
+    } else if (arg == "--bootstrap-before-token") {
+      config.bootstrap_before_token = parse_int_set(arg, value);
+    } else if (arg == "--debug-client-reencrypt-before-token") {
+      config.debug_client_reencrypt_before_token = parse_int_set(arg, value);
+    } else if (arg == "--autoregressive-client-loop") {
+      config.autoregressive_client_loop = (std::string_view(value) != "0");
+    } else if (arg == "--refresh-recurrent-state-post") {
+      config.refresh_recurrent_state_post = (std::string_view(value) != "0");
+    } else if (arg == "--refresh-recurrent-state-post-layers") {
+      config.refresh_recurrent_state_post_layers = parse_int_set(arg, value);
+    } else if (arg == "--bootstrap-level-budget-cts") {
+      config.bootstrap_level_budget_cts = parse_int(arg, value);
+    } else if (arg == "--bootstrap-level-budget-stc") {
+      config.bootstrap_level_budget_stc = parse_int(arg, value);
+    } else if (arg == "--bootstrap-bsgs-dim-cts") {
+      config.bootstrap_bsgs_dim_cts = parse_int(arg, value);
+    } else if (arg == "--bootstrap-bsgs-dim-stc") {
+      config.bootstrap_bsgs_dim_stc = parse_int(arg, value);
+    } else if (arg == "--security") {
+      config.security = value;
+    } else if (arg == "--secret-key-dist") {
+      config.secret_key_dist = value;
+    } else {
+      throw std::invalid_argument(std::string("unknown argument: ") + std::string(arg));
+    }
+  }
+  if (config.input.empty() == config.input_chain.empty()) {
+    throw std::invalid_argument("exactly one of --input or --input-chain is required");
+  }
+  if (config.process_role != "inline" && config.process_role != "client-init" &&
+      config.process_role != "server-eval" &&
+      config.process_role != "client-decrypt") {
+    throw std::invalid_argument(
+        "process-role must be inline, client-init, server-eval, or client-decrypt");
+  }
+  if (config.process_role != "inline" && config.handoff_dir.empty()) {
+    throw std::invalid_argument("non-inline process-role requires --handoff-dir");
+  }
+  if (config.process_role != "inline" && config.output_json.empty()) {
+    throw std::invalid_argument("non-inline process-role requires --output-json");
+  }
+  if (config.process_role != "inline" && config.autoregressive_client_loop) {
+    throw std::invalid_argument(
+        "process-separated autoregressive loop is not implemented yet");
+  }
+  if (config.process_role == "server-eval" &&
+      (config.debug_decrypt || config.debug_layer_errors ||
+       !config.debug_client_reencrypt_before_token.empty())) {
+    throw std::invalid_argument(
+        "server-eval forbids every secret-key diagnostic option");
+  }
+  if (config.ring_dim <= 0 || (config.ring_dim & (config.ring_dim - 1)) != 0) {
+    throw std::invalid_argument("ring-dim must be a positive power of two");
+  }
+  if (config.multiplicative_depth <= 0 || config.scaling_mod_size <= 0 ||
+      config.first_mod_size <= 0 || config.tokens <= 0 || config.tolerance <= 0.0 ||
+      config.max_layers < 0 || config.auto_bootstrap_headroom < 0 ||
+      config.residual_bootstrap_headroom < 0 ||
+      config.carried_bootstrap_headroom < 0 ||
+      config.bootstrap_level_budget_cts <= 0 || config.bootstrap_level_budget_stc <= 0 ||
+      config.bootstrap_bsgs_dim_cts < 0 || config.bootstrap_bsgs_dim_stc < 0) {
+    throw std::invalid_argument("invalid CKKS parameters");
+  }
+  for (const int token : config.bootstrap_before_token) {
+    if (token < 1 || token >= config.tokens) {
+      throw std::invalid_argument("bootstrap-before-token must be in [1, tokens-1]");
+    }
+  }
+  for (const int token : config.debug_client_reencrypt_before_token) {
+    if (token < 1 || token >= config.tokens) {
+      throw std::invalid_argument(
+          "debug-client-reencrypt-before-token must be in [1, tokens-1]");
+    }
+    if (config.bootstrap_before_token.count(token) > 0) {
+      throw std::invalid_argument(
+          "bootstrap and debug client re-encrypt schedules must be disjoint");
+    }
+  }
+  for (const int layer : config.refresh_recurrent_state_post_layers) {
+    if (layer < 0) {
+      throw std::invalid_argument("refresh-recurrent-state-post-layers must be nonnegative");
+    }
+  }
+  if (config.bootstrap_norm_margin <= 0.0) {
+    throw std::invalid_argument("bootstrap-norm-margin must be positive");
+  }
+  if (config.state_bootstrap_margin <= 0.0) {
+    throw std::invalid_argument("state-bootstrap-margin must be positive");
+  }
+  if (config.meta_bts_alpha < 0 || config.meta_bts_alpha > 40) {
+    throw std::invalid_argument("meta-bts-alpha must be in [0, 40]");
+  }
+  if (config.state_meta_bts_alpha < -1 || config.state_meta_bts_alpha > 40) {
+    throw std::invalid_argument("state-meta-bts-alpha must be in [-1, 40]");
+  }
+  if (config.meta_bts_residual_align_mode != "unity" &&
+      config.meta_bts_residual_align_mode != "drop" &&
+      config.meta_bts_residual_align_mode != "native") {
+    throw std::invalid_argument(
+        "meta-bts-residual-align-mode must be unity, drop, or native");
+  }
+  if (config.pt_cache != "auto" && config.pt_cache != "full" && config.pt_cache != "masks" &&
+      config.pt_cache != "off") {
+    throw std::invalid_argument("pt-cache must be auto, full, masks, or off");
+  }
+  if (config.pt_cache_gib < 0.0) {
+    throw std::invalid_argument("pt-cache-gib must be non-negative");
+  }
+  if (config.pt_cache_level < 0 || config.pt_cache_level >= config.multiplicative_depth) {
+    throw std::invalid_argument("pt-cache-level must be in [0, multiplicative-depth)");
+  }
+  if (config.encode_threads < 1 || config.encode_threads > 64) {
+    throw std::invalid_argument("encode-threads must be in [1, 64]");
+  }
+  if (config.streams < 1 || (config.streams & (config.streams - 1)) != 0) {
+    throw std::invalid_argument("streams must be a positive power of two");
+  }
+  if (config.streams > 1 && !config.input_chain.empty()) {
+    throw std::invalid_argument("streams > 1 requires --input (single-layer mode)");
+  }
+  if (config.autoregressive_client_loop && config.streams != 1) {
+    throw std::invalid_argument("autoregressive-client-loop requires streams == 1");
+  }
+  if (config.autoregressive_client_loop && config.input_chain.empty()) {
+    throw std::invalid_argument("autoregressive-client-loop requires --input-chain");
+  }
+  if (config.rotation_keys != "full" && config.rotation_keys != "balanced" &&
+      config.rotation_keys != "compact") {
+    throw std::invalid_argument("rotation-keys must be full, balanced, or compact");
+  }
+  if (config.rotation_key_gib <= 0.0) {
+    throw std::invalid_argument("rotation-key-gib must be positive");
+  }
+  if (config.level_align_mode != "unity" && config.level_align_mode != "drop" &&
+      config.level_align_mode != "native") {
+    throw std::invalid_argument("level-align-mode must be unity, drop, or native");
+  }
+  if (config.bsgs_replicas != "auto" && config.bsgs_replicas != "1") {
+    try {
+      if (std::stoi(config.bsgs_replicas) < 1) {
+        throw std::invalid_argument("");
+      }
+    } catch (const std::exception&) {
+      throw std::invalid_argument("bsgs-replicas must be auto, 1, or a positive integer");
+    }
+  }
+  if (config.bsgs_replicas != "1" && config.streams > 1) {
+    throw std::invalid_argument("bsgs-replicas requires --streams 1");
+  }
+  if (config.security != "not-set" && config.security != "128-classic") {
+    throw std::invalid_argument("security must be not-set or 128-classic");
+  }
+  if (config.secret_key_dist != "sparse-ternary" &&
+      config.secret_key_dist != "uniform-ternary" &&
+      config.secret_key_dist != "sparse-encapsulated") {
+    throw std::invalid_argument(
+        "secret-key-dist must be sparse-ternary, uniform-ternary, or sparse-encapsulated");
+  }
+  return config;
+}
+
+}  // namespace fhemamba::stage1
