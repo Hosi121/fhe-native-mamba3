@@ -13,8 +13,9 @@
 //   conv SiLU (Chebyshev) -> dt softplus^2 -> decay exp(dt*A) -> slot expands ->
 //   state update (3 head-group state ciphertexts) -> readout -> +D*x ->
 //   gate SiLU * y -> gated RMSNorm -> out_proj BSGS -> residual add.
-// State and conv FIFO stay ciphertext across tokens; there are zero
-// intermediate decrypts (per-token layer outputs are decrypted after the loop).
+// State and conv FIFO stay ciphertext across tokens. Fixed-vector mode has
+// zero intermediate decrypts; autoregressive client-loop mode intentionally
+// decrypts each completed final_norm for client-side token selection.
 //
 // Payload: fhemamba m1 export (meta.json + <name>.bin float32-LE row-major),
 // produced by fhemamba/src/fhemamba/m1_payload.py.
@@ -41,7 +42,15 @@
 
 #include <fideslib.hpp>
 
+#include <CKKS/Ciphertext.cuh>
+#include <CKKS/openfhe-interface/RawCiphertext.cuh>
+#include <ciphertext-ser.h>
+#include <cryptocontext-ser.h>
+#include <openfhe.h>
+#include <scheme/ckksrns/ckksrns-ser.h>
+
 #include <algorithm>
+#include <any>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -49,6 +58,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -63,6 +73,13 @@
 #include <vector>
 
 using namespace fideslib;
+namespace fs = std::filesystem;
+
+// FIDESlib's bootstrap uses several CUDA streams, while its release build
+// only synchronizes the device at the end when internal PRINT diagnostics are
+// enabled. Its own tests bracket bootstrap calls with an explicit device
+// synchronization; cuda_runtime.h is included through the serialization
+// bridge headers above.
 
 namespace {
 
@@ -98,6 +115,12 @@ struct Config {
   std::string output_json;
   std::string artifact_version = "0.0.0+unknown";
   std::string repo_commit = "unknown";
+  // Process-separated fixed-vector protocol. inline is the legacy one-process
+  // benchmark. client-init generates/serializes keys and encrypted inputs;
+  // server-eval loads only public/evaluation material and writes encrypted
+  // outputs; client-decrypt loads only the client secret and verifies them.
+  std::string process_role = "inline";
+  std::string handoff_dir;
   // FIDESlib v2.1.0 MAXP=64 tower cap: empirical max depth 50 at scale 40 and
   // 44 at scale 59; EvalBootstrap is numerically dead below scale 54 (dgx
   // findings). Defaults follow the working dgx geometry. Ring 65536 is also
@@ -109,6 +132,16 @@ struct Config {
   int tokens = 4;
   int max_layers = 0;  // chain mode: 0 = all layers
   int auto_bootstrap_headroom = 12;
+  // A layer output at level 26 has exactly the 18 levels required by the
+  // next block-norm-to-projection segment. Extra headroom here refreshes a
+  // potentially large residual at every layer and scales the refresh noise
+  // back up by that residual's calibration bound.
+  int residual_bootstrap_headroom = 0;
+  // Carried state/FIFO already have explicit requirements that cover their
+  // current-token update/readout lineage. Refreshing them merely to reserve
+  // the transient headroom injects avoidable noise on every token, so defer
+  // refresh until the carried lineage actually lacks the required levels.
+  int carried_bootstrap_headroom = 0;
   // Token-invariant plaintext cache (dgx: per-token MakeCKKSPackedPlaintext
   // re-encoding of BSGS diagonals is 89% of M1 wall time). "full" also caches
   // the BSGS diagonal tables, "masks" only the small select/broadcast/tap/
@@ -156,6 +189,11 @@ struct Config {
   // identical in all modes (rotations compose exactly and consume no levels).
   std::string rotation_keys = "full";
   double rotation_key_gib = 45.0;
+  // Level-only alignment can preserve the proven EvalMult(x, 1) lowering,
+  // ask SetLevel to adjust/drop in one call, or defer to the scale/level
+  // adjustment already inside FIDESlib EvalAdd/EvalMult. Both alternatives
+  // stay opt-in until real-CKKS parity passes.
+  std::string level_align_mode = "unity";
   // Input-replicated BSGS (spec: fhemamba/src/fhemamba/bsgs_layout.py; the
   // slot-exact simulator is the authority and the C++ schedule is verified
   // bitwise against it). "1" = legacy dense-diagonal path (bit-identical);
@@ -167,8 +205,25 @@ struct Config {
   std::string bsgs_replicas = "1";
   double tolerance = 5e-2;
   std::set<int> bootstrap_before_token;
+  // Diagnostic protocol simulation: decrypt and freshly encrypt every
+  // carried state/FIFO ciphertext at selected token boundaries. This models
+  // a client round trip but runs in one process; it is never an FHE-only or
+  // process-separation claim.
+  std::set<int> debug_client_reencrypt_before_token;
+  // End-to-end decode protocol simulation for a chain payload carrying
+  // autoregressive assets. The encrypted recurrent state remains server-side;
+  // after each completed decode step the client decrypts final_norm, applies
+  // lm_head + greedy argmax, looks up the selected embedding, and encrypts the
+  // next input. This first implementation is one process and therefore does
+  // not claim process or secret-key separation.
+  bool autoregressive_client_loop = false;
+  // Refresh recurrent states after decay*state + update, immediately before
+  // readout. Refreshing only the carried input cannot remove the extra level
+  // consumed by the recurrent ct-ct multiply.
+  bool refresh_recurrent_state_post = false;
+  std::set<int> refresh_recurrent_state_post_layers;
   int bootstrap_level_budget_cts = 5;
-  int bootstrap_level_budget_stc = 4;
+  int bootstrap_level_budget_stc = 5;
   int bootstrap_bsgs_dim_cts = 0;
   int bootstrap_bsgs_dim_stc = 0;
   std::string security = "not-set";
@@ -177,6 +232,9 @@ struct Config {
   // (max |value|, non-finite slot count). Voids the zero-intermediate-decrypt
   // privacy claim; for NaN localization, never for reported runs.
   bool debug_decrypt = false;
+  // Repeat-bootstrap probes are much more invasive than value telemetry and
+  // can perturb the GPU state being diagnosed. Keep them opt-in.
+  bool debug_refresh_probes = false;
   // Debug-only, cheap: decrypt just the residual at each layer boundary and
   // compare against that layer's exact-op boundary vectors (error-vs-depth
   // curve). 2 decrypts per layer per token; no refresh probes. Also voids the
@@ -185,7 +243,7 @@ struct Config {
   // Global multiplier on the per-checkpoint magnitude bounds used for the
   // pre-bootstrap normalization (see checkpoint_bound). Applies to TRANSIENT
   // per-layer activation checkpoints.
-  double bootstrap_norm_margin = 1.5;
+  double bootstrap_norm_margin = 1.1;
   // Separate, tighter multiplier for CARRIED-FORWARD ciphertexts (SSM state,
   // conv FIFO). Refresh at deg 1 adds a roughly fixed noise floor that the
   // undo-multiply by the bound B then scales up, so the noise injected into a
@@ -196,6 +254,25 @@ struct Config {
   // token-horizon (DESIGN.md dgx-only roadmap). B must stay >= true max |m|
   // (no clipping); 1.1 leaves 10% headroom over the measured bound.
   double state_bootstrap_margin = 1.1;
+  // Meta-BTS (double bootstrap with residual amplification) on CARRIED
+  // lineages only: y1 = BTS(x_n) carries error e1 ~ eps; the residual
+  // r = x_n - y1 = -e1 is amplified by 2^alpha (needs ONE live level, so the
+  // carried refresh trigger fires one level earlier), bootstrapped again
+  // (y2 = -e1*2^alpha + e2), scaled back and added: y1 + y2*2^-alpha =
+  // x_n + e2*2^-alpha — refresh error drops eps -> ~eps*2^-alpha. Applied to
+  // carried values and the high-sensitivity gated polynomial input. Cost per
+  // refresh: +1 EvalBootstrap (~13 ms warm), +2 pt-mults, +1 add.
+  bool meta_bts = false;
+  // The local residual probe keeps 2^12 inside the bootstrap message range;
+  // 2^16 exceeded it on every measured step.
+  int meta_bts_alpha = 12;
+  // Optional carried-state override. Negative inherits meta_bts_alpha so
+  // existing runs keep identical behavior.
+  int state_meta_bts_alpha = -1;
+  // The Meta-BTS residual x - BTS(x) is especially sensitive to alignment
+  // noise because its message is itself only bootstrap error. Allow this one
+  // alignment to use SetLevel without changing the rest of the deep circuit.
+  std::string meta_bts_residual_align_mode = "unity";
 };
 
 // Per-checkpoint message-magnitude bounds for the pre-bootstrap
@@ -209,8 +286,10 @@ struct Config {
 // moderate bound undershoot degrades gracefully instead of exploding.
 auto checkpoint_bound(const std::string& what) -> double {
   static constexpr std::pair<const char*, double> kBounds[] = {
+      {"final_norm_scaled", 1.0},  // final residual stays in normalized coordinates
       {"final_norm", 8.0},   // fallback (residual lineage)
       {"residual", 8.0},     // fallback; expected outputs |m| <= ~2.4
+      {"output", 8.0},       // fallback; calibrated per layer in new payloads
       {"conv_silu", 9.5},    // measured 9.20
       // Carried-forward lineages (state, conv FIFO): measured |m| maxima from
       // --debug-decrypt telemetry (mamba2-130m layer 0). These are the true
@@ -224,6 +303,8 @@ auto checkpoint_bound(const std::string& what) -> double {
       {"proj", 6.0},         // measured 5.73
       {"decay", 1.0},        // measured 1.00 (decay in [0, 1])
       {"dt", 0.5},           // measured 0.103
+      {"gated_poly_input", 1.0},  // affine-mapped gated variance
+      {"gated_variance", 1.0},  // -0.5 * V * initial_guess^2; calibrated <= 0.125
       {"y_out", 24.0},       // same lineage as y
       {"y", 24.0},           // measured 23.85 (check after "decay": "y" substring)
       {"newton", 4.0},       // fallback; rsqrt iterates (rms measured 0.13)
@@ -250,6 +331,7 @@ struct OperationCounts {
   int ct_ct_mul = 0;
   int adds = 0;
   int unity_level_align_muls = 0;
+  int direct_level_align_drops = 0;
   int bootstraps = 0;
 };
 
@@ -272,6 +354,7 @@ auto add_counts(OperationCounts lhs, const OperationCounts& rhs) -> OperationCou
   lhs.ct_ct_mul += rhs.ct_ct_mul;
   lhs.adds += rhs.adds;
   lhs.unity_level_align_muls += rhs.unity_level_align_muls;
+  lhs.direct_level_align_drops += rhs.direct_level_align_drops;
   lhs.bootstraps += rhs.bootstraps;
   return lhs;
 }
@@ -288,6 +371,8 @@ auto subtract_counts(const OperationCounts& after, const OperationCounts& before
       .adds = after.adds - before.adds,
       .unity_level_align_muls =
           after.unity_level_align_muls - before.unity_level_align_muls,
+      .direct_level_align_drops =
+          after.direct_level_align_drops - before.direct_level_align_drops,
       .bootstraps = after.bootstraps - before.bootstraps,
   };
 }
@@ -334,12 +419,22 @@ auto parse_args(int argc, char* argv[]) -> Config {
     const char* value = argv[++i];
     if (arg == "--debug-decrypt") {
       config.debug_decrypt = (std::string_view(value) != "0");
+    } else if (arg == "--debug-refresh-probes") {
+      config.debug_refresh_probes = (std::string_view(value) != "0");
     } else if (arg == "--debug-layer-errors") {
       config.debug_layer_errors = (std::string_view(value) != "0");
     } else if (arg == "--bootstrap-norm-margin") {
       config.bootstrap_norm_margin = parse_double_arg(arg, value);
     } else if (arg == "--state-bootstrap-margin") {
       config.state_bootstrap_margin = parse_double_arg(arg, value);
+    } else if (arg == "--meta-bts") {
+      config.meta_bts = (std::string_view(value) != "0");
+    } else if (arg == "--meta-bts-alpha") {
+      config.meta_bts_alpha = parse_int(arg, value);
+    } else if (arg == "--state-meta-bts-alpha") {
+      config.state_meta_bts_alpha = parse_int(arg, value);
+    } else if (arg == "--meta-bts-residual-align-mode") {
+      config.meta_bts_residual_align_mode = value;
     } else if (arg == "--input") {
       config.input = value;
     } else if (arg == "--input-chain") {
@@ -348,6 +443,10 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.max_layers = parse_int(arg, value);
     } else if (arg == "--auto-bootstrap-headroom") {
       config.auto_bootstrap_headroom = parse_int(arg, value);
+    } else if (arg == "--residual-bootstrap-headroom") {
+      config.residual_bootstrap_headroom = parse_int(arg, value);
+    } else if (arg == "--carried-bootstrap-headroom") {
+      config.carried_bootstrap_headroom = parse_int(arg, value);
     } else if (arg == "--pt-cache") {
       config.pt_cache = value;
     } else if (arg == "--pt-cache-gib") {
@@ -362,6 +461,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.rotation_keys = value;
     } else if (arg == "--rotation-key-gib") {
       config.rotation_key_gib = parse_double_arg(arg, value);
+    } else if (arg == "--level-align-mode") {
+      config.level_align_mode = value;
     } else if (arg == "--bsgs-replicas") {
       config.bsgs_replicas = value;
     } else if (arg == "--output-json") {
@@ -370,6 +471,10 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.artifact_version = value;
     } else if (arg == "--repo-commit") {
       config.repo_commit = value;
+    } else if (arg == "--process-role") {
+      config.process_role = value;
+    } else if (arg == "--handoff-dir") {
+      config.handoff_dir = value;
     } else if (arg == "--ring-dim") {
       config.ring_dim = parse_int(arg, value);
     } else if (arg == "--depth" || arg == "--multiplicative-depth") {
@@ -384,6 +489,14 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.tolerance = parse_double_arg(arg, value);
     } else if (arg == "--bootstrap-before-token") {
       config.bootstrap_before_token = parse_int_set(arg, value);
+    } else if (arg == "--debug-client-reencrypt-before-token") {
+      config.debug_client_reencrypt_before_token = parse_int_set(arg, value);
+    } else if (arg == "--autoregressive-client-loop") {
+      config.autoregressive_client_loop = (std::string_view(value) != "0");
+    } else if (arg == "--refresh-recurrent-state-post") {
+      config.refresh_recurrent_state_post = (std::string_view(value) != "0");
+    } else if (arg == "--refresh-recurrent-state-post-layers") {
+      config.refresh_recurrent_state_post_layers = parse_int_set(arg, value);
     } else if (arg == "--bootstrap-level-budget-cts") {
       config.bootstrap_level_budget_cts = parse_int(arg, value);
     } else if (arg == "--bootstrap-level-budget-stc") {
@@ -403,12 +516,36 @@ auto parse_args(int argc, char* argv[]) -> Config {
   if (config.input.empty() == config.input_chain.empty()) {
     throw std::invalid_argument("exactly one of --input or --input-chain is required");
   }
+  if (config.process_role != "inline" && config.process_role != "client-init" &&
+      config.process_role != "server-eval" &&
+      config.process_role != "client-decrypt") {
+    throw std::invalid_argument(
+        "process-role must be inline, client-init, server-eval, or client-decrypt");
+  }
+  if (config.process_role != "inline" && config.handoff_dir.empty()) {
+    throw std::invalid_argument("non-inline process-role requires --handoff-dir");
+  }
+  if (config.process_role != "inline" && config.output_json.empty()) {
+    throw std::invalid_argument("non-inline process-role requires --output-json");
+  }
+  if (config.process_role != "inline" && config.autoregressive_client_loop) {
+    throw std::invalid_argument(
+        "process-separated autoregressive loop is not implemented yet");
+  }
+  if (config.process_role == "server-eval" &&
+      (config.debug_decrypt || config.debug_layer_errors ||
+       !config.debug_client_reencrypt_before_token.empty())) {
+    throw std::invalid_argument(
+        "server-eval forbids every secret-key diagnostic option");
+  }
   if (config.ring_dim <= 0 || (config.ring_dim & (config.ring_dim - 1)) != 0) {
     throw std::invalid_argument("ring-dim must be a positive power of two");
   }
   if (config.multiplicative_depth <= 0 || config.scaling_mod_size <= 0 ||
       config.first_mod_size <= 0 || config.tokens <= 0 || config.tolerance <= 0.0 ||
       config.max_layers < 0 || config.auto_bootstrap_headroom < 0 ||
+      config.residual_bootstrap_headroom < 0 ||
+      config.carried_bootstrap_headroom < 0 ||
       config.bootstrap_level_budget_cts <= 0 || config.bootstrap_level_budget_stc <= 0 ||
       config.bootstrap_bsgs_dim_cts < 0 || config.bootstrap_bsgs_dim_stc < 0) {
     throw std::invalid_argument("invalid CKKS parameters");
@@ -418,11 +555,38 @@ auto parse_args(int argc, char* argv[]) -> Config {
       throw std::invalid_argument("bootstrap-before-token must be in [1, tokens-1]");
     }
   }
+  for (const int token : config.debug_client_reencrypt_before_token) {
+    if (token < 1 || token >= config.tokens) {
+      throw std::invalid_argument(
+          "debug-client-reencrypt-before-token must be in [1, tokens-1]");
+    }
+    if (config.bootstrap_before_token.count(token) > 0) {
+      throw std::invalid_argument(
+          "bootstrap and debug client re-encrypt schedules must be disjoint");
+    }
+  }
+  for (const int layer : config.refresh_recurrent_state_post_layers) {
+    if (layer < 0) {
+      throw std::invalid_argument("refresh-recurrent-state-post-layers must be nonnegative");
+    }
+  }
   if (config.bootstrap_norm_margin <= 0.0) {
     throw std::invalid_argument("bootstrap-norm-margin must be positive");
   }
   if (config.state_bootstrap_margin <= 0.0) {
     throw std::invalid_argument("state-bootstrap-margin must be positive");
+  }
+  if (config.meta_bts_alpha < 0 || config.meta_bts_alpha > 40) {
+    throw std::invalid_argument("meta-bts-alpha must be in [0, 40]");
+  }
+  if (config.state_meta_bts_alpha < -1 || config.state_meta_bts_alpha > 40) {
+    throw std::invalid_argument("state-meta-bts-alpha must be in [-1, 40]");
+  }
+  if (config.meta_bts_residual_align_mode != "unity" &&
+      config.meta_bts_residual_align_mode != "drop" &&
+      config.meta_bts_residual_align_mode != "native") {
+    throw std::invalid_argument(
+        "meta-bts-residual-align-mode must be unity, drop, or native");
   }
   if (config.pt_cache != "auto" && config.pt_cache != "full" && config.pt_cache != "masks" &&
       config.pt_cache != "off") {
@@ -443,12 +607,22 @@ auto parse_args(int argc, char* argv[]) -> Config {
   if (config.streams > 1 && !config.input_chain.empty()) {
     throw std::invalid_argument("streams > 1 requires --input (single-layer mode)");
   }
+  if (config.autoregressive_client_loop && config.streams != 1) {
+    throw std::invalid_argument("autoregressive-client-loop requires streams == 1");
+  }
+  if (config.autoregressive_client_loop && config.input_chain.empty()) {
+    throw std::invalid_argument("autoregressive-client-loop requires --input-chain");
+  }
   if (config.rotation_keys != "full" && config.rotation_keys != "balanced" &&
       config.rotation_keys != "compact") {
     throw std::invalid_argument("rotation-keys must be full, balanced, or compact");
   }
   if (config.rotation_key_gib <= 0.0) {
     throw std::invalid_argument("rotation-key-gib must be positive");
+  }
+  if (config.level_align_mode != "unity" && config.level_align_mode != "drop" &&
+      config.level_align_mode != "native") {
+    throw std::invalid_argument("level-align-mode must be unity, drop, or native");
   }
   if (config.bsgs_replicas != "auto" && config.bsgs_replicas != "1") {
     try {
@@ -630,6 +804,12 @@ struct M1Payload {
   int n_test_tokens = 0;
   double eps_block = 0.0;
   double eps_gated = 0.0;
+  // Calibration-only carried-lineage magnitude maxima. < 0 means absent or
+  // untrusted (older exports measured the evaluation prompt itself).
+  double state_abs_max = -1.0;
+  std::vector<double> state_head_abs_max;
+  double fifo_abs_max = -1.0;
+  std::map<std::string, double> checkpoint_abs_max;
   std::map<std::string, PolySpec> polys;
   std::map<std::string, std::vector<double>> tensors;
   std::map<std::string, std::vector<int>> shapes;
@@ -659,6 +839,78 @@ auto read_bin_tensor(const std::string& dir, const std::string& name,
     throw std::runtime_error("failed to read " + path);
   }
   return {raw.begin(), raw.end()};
+}
+
+void require_serialized(bool ok, const std::string& message) {
+  if (!ok) {
+    throw std::runtime_error(message);
+  }
+}
+
+void serialize_ciphertext(const fs::path& path, const CryptoContext<DCRTPoly>& cc,
+                          const PublicKey<DCRTPoly>& public_key,
+                          Ciphertext<DCRTPoly>& ciphertext) {
+  if (ciphertext->loaded) {
+    cc->Synchronize();
+    ciphertext->EnsureLazyCPUCopy();
+    auto& cpu_context =
+        std::any_cast<lbcrypto::CryptoContext<lbcrypto::DCRTPoly>&>(cc->cpu);
+    auto& cpu_ciphertext =
+        std::any_cast<lbcrypto::Ciphertext<lbcrypto::DCRTPoly>&>(ciphertext->cpu);
+    auto gpu_ciphertext = std::static_pointer_cast<FIDESlib::CKKS::Ciphertext>(
+        cc->GetDeviceCiphertext(ciphertext->gpu));
+    FIDESlib::CKKS::RawCipherText raw;
+    gpu_ciphertext->store(raw);
+    const auto cpu_towers =
+        cpu_ciphertext->GetElements()[0].GetAllElements().size();
+    if (cpu_towers < static_cast<std::size_t>(raw.numRes)) {
+      std::vector<double> zero(1, 0.0);
+      auto plain = cpu_context->MakeCKKSPackedPlaintext(
+          zero, 1, cc->multiplicative_depth - gpu_ciphertext->getLevel());
+      const auto& public_key_impl =
+          std::any_cast<const lbcrypto::PublicKey<lbcrypto::DCRTPoly>&>(
+              public_key->pimpl);
+      cpu_ciphertext = cpu_context->Encrypt(public_key_impl, plain);
+    }
+    FIDESlib::CKKS::GetOpenFHECipherText(cpu_ciphertext, raw);
+  }
+  const auto& cpu_ciphertext =
+      std::any_cast<const lbcrypto::Ciphertext<lbcrypto::DCRTPoly>&>(
+          ciphertext->cpu);
+  require_serialized(
+      lbcrypto::Serial::SerializeToFile(path.string(), cpu_ciphertext,
+                                        lbcrypto::SerType::BINARY),
+      "failed to serialize ciphertext: " + path.string());
+}
+
+auto deserialize_ciphertext(const fs::path& path,
+                            const CryptoContext<DCRTPoly>& cc)
+    -> Ciphertext<DCRTPoly> {
+  lbcrypto::Ciphertext<lbcrypto::DCRTPoly> cpu_ciphertext;
+  require_serialized(
+      lbcrypto::Serial::DeserializeFromFile(path.string(), cpu_ciphertext,
+                                            lbcrypto::SerType::BINARY),
+      "failed to deserialize ciphertext: " + path.string());
+  auto context_copy = cc;
+  auto ciphertext =
+      std::make_shared<CiphertextImpl<DCRTPoly>>(std::move(context_copy));
+  ciphertext->cpu =
+      std::make_any<lbcrypto::Ciphertext<lbcrypto::DCRTPoly>>(
+          std::move(cpu_ciphertext));
+  return ciphertext;
+}
+
+void serialize_context(const fs::path& path,
+                       const CryptoContext<DCRTPoly>& cc) {
+  require_serialized(
+      fideslib::Serial::SerializeToFile(path.string(), cc, SerType::BINARY),
+      "failed to serialize context: " + path.string());
+}
+
+void copy_context_device_metadata(const fs::path& source,
+                                  const fs::path& destination) {
+  fs::copy_file(source.string() + ".dev", destination.string() + ".dev",
+                fs::copy_options::overwrite_existing);
 }
 
 auto parse_poly_spec(const std::string& object_text) -> PolySpec {
@@ -695,6 +947,35 @@ auto read_m1_payload(const std::string& dir) -> M1Payload {
   payload.eps_block = json_number(eps, "block_norm");
   payload.eps_gated = json_number(eps, "gated_norm");
   payload.n_test_tokens = static_cast<int>(json_number(meta, "n_test_tokens"));
+  if (find_key_value_pos(meta, "carried_bounds") != std::string::npos) {
+    const auto carried = json_balanced(meta, "carried_bounds", '{', '}');
+    // Values without an explicit independent-calibration provenance came
+    // from the evaluation prompt in the first exporter implementation. Do
+    // not let those benchmark-leaked bounds change the encrypted circuit.
+    if (find_key_value_pos(carried, "source") != std::string::npos &&
+        json_string(carried, "source") == "calibration_text") {
+      payload.state_abs_max = json_number(carried, "state_abs_max");
+      if (find_key_value_pos(carried, "state_head_abs_max") != std::string::npos) {
+        payload.state_head_abs_max = json_number_list(
+            json_balanced(carried, "state_head_abs_max", '[', ']'));
+        if (payload.state_head_abs_max.size() !=
+            static_cast<std::size_t>(payload.num_heads)) {
+          throw std::runtime_error("state_head_abs_max length must equal num_heads");
+        }
+      }
+      payload.fifo_abs_max = json_number(carried, "fifo_abs_max");
+      if (find_key_value_pos(carried, "checkpoint_abs_max") != std::string::npos) {
+        const auto checkpoints =
+            json_balanced(carried, "checkpoint_abs_max", '{', '}');
+        for (const auto* name : {"residual", "proj", "conv_silu", "dt", "y",
+                                 "output", "gated_variance", "gated_newton"}) {
+          if (find_key_value_pos(checkpoints, name) != std::string::npos) {
+            payload.checkpoint_abs_max[name] = json_number(checkpoints, name);
+          }
+        }
+      }
+    }
+  }
 
   const auto polys = json_balanced(meta, "polys", '{', '}');
   for (const auto* name : {"conv_silu", "gate_silu", "dt_softplus", "decay_exp",
@@ -714,6 +995,18 @@ auto read_m1_payload(const std::string& dir) -> M1Payload {
     }
     payload.shapes[name] = shape;
     payload.tensors[name] = read_bin_tensor(dir, name, shape);
+  }
+  if (find_key_value_pos(tensors, "test_layer_output_poly") != std::string::npos) {
+    const auto shape_values = json_number_list(
+        json_balanced(tensors, "test_layer_output_poly", '[', ']'));
+    std::vector<int> shape;
+    shape.reserve(shape_values.size());
+    for (const double value : shape_values) {
+      shape.push_back(static_cast<int>(value));
+    }
+    payload.shapes["test_layer_output_poly"] = shape;
+    payload.tensors["test_layer_output_poly"] =
+        read_bin_tensor(dir, "test_layer_output_poly", shape);
   }
   payload.proj_dim = payload.shapes.at("in_proj_w").at(0);
   if (payload.proj_dim != payload.d_inner + payload.conv_dim + payload.num_heads) {
@@ -761,9 +1054,24 @@ struct ChainPayload {
   std::vector<double> final_norm_w;
   std::vector<double> input_embeddings;  // (tokens, d_model) row-major
   std::vector<double> expected_final;    // (tokens, d_model) row-major
+  std::vector<double> expected_poly_final;  // identical polynomial circuit
+  bool has_autoregressive = false;
+  int autoregressive_prompt_tokens = 0;
+  int autoregressive_generate_tokens = 0;
+  int autoregressive_server_evaluations = 0;
+  int autoregressive_vocab_size = 0;
+  std::vector<int> autoregressive_expected_generated_ids;
+  std::vector<double> autoregressive_embeddings;
+  std::vector<double> autoregressive_expected_poly_final;
+  std::vector<double> autoregressive_expected_exact_final;
+  std::vector<double> client_embedding_w;
+  // Empty means the checkpoint ties lm_head to client_embedding_w.
+  std::vector<double> client_lm_head_w;
+  std::vector<double> client_lm_head_b;
 };
 
-auto read_chain_payload(const std::string& dir) -> ChainPayload {
+auto read_chain_payload(const std::string& dir,
+                        bool load_autoregressive_assets) -> ChainPayload {
   ChainPayload chain;
   const auto meta = read_text_file(dir + "/chain.json");
   if (json_string(meta, "format") != "fhemamba-m2-chain-v1") {
@@ -794,6 +1102,71 @@ auto read_chain_payload(const std::string& dir) -> ChainPayload {
       chain.expected_final = std::move(values);
     }
   }
+  if (find_key_value_pos(tensors, "chain_expected_poly_final") != std::string::npos) {
+    const auto shape_values = json_number_list(
+        json_balanced(tensors, "chain_expected_poly_final", '[', ']'));
+    std::vector<int> shape;
+    shape.reserve(shape_values.size());
+    for (const double value : shape_values) {
+      shape.push_back(static_cast<int>(value));
+    }
+    chain.expected_poly_final =
+        read_bin_tensor(dir, "chain_expected_poly_final", shape);
+  }
+  const auto autoregressive_pos = find_key_value_pos(meta, "autoregressive");
+  if (autoregressive_pos != std::string::npos && meta[autoregressive_pos] == '{') {
+    chain.has_autoregressive = true;
+    const auto autoregressive = json_balanced(meta, "autoregressive", '{', '}');
+    if (json_string(autoregressive, "protocol") != "client-in-loop-greedy-v1") {
+      throw std::runtime_error("unsupported autoregressive payload protocol");
+    }
+    chain.autoregressive_prompt_tokens =
+        static_cast<int>(json_number(autoregressive, "prompt_tokens"));
+    chain.autoregressive_generate_tokens =
+        static_cast<int>(json_number(autoregressive, "generate_tokens"));
+    chain.autoregressive_server_evaluations =
+        static_cast<int>(json_number(autoregressive, "server_evaluations"));
+    for (const double value : json_number_list(
+             json_balanced(autoregressive, "poly_generated_ids", '[', ']'))) {
+      chain.autoregressive_expected_generated_ids.push_back(static_cast<int>(value));
+    }
+    if (!load_autoregressive_assets) {
+      return chain;
+    }
+    const auto read_root_tensor = [&](const std::string& name,
+                                      std::vector<int>* output_shape = nullptr) {
+      const auto shape_values =
+          json_number_list(json_balanced(tensors, name, '[', ']'));
+      std::vector<int> shape;
+      shape.reserve(shape_values.size());
+      for (const double value : shape_values) {
+        shape.push_back(static_cast<int>(value));
+      }
+      if (output_shape != nullptr) {
+        *output_shape = shape;
+      }
+      return read_bin_tensor(dir, name, shape);
+    };
+    std::vector<int> embedding_shape;
+    chain.client_embedding_w =
+        read_root_tensor("client_embedding_w", &embedding_shape);
+    if (embedding_shape.size() != 2) {
+      throw std::runtime_error("client_embedding_w must be rank 2");
+    }
+    chain.autoregressive_vocab_size = embedding_shape[0];
+    if (find_key_value_pos(tensors, "client_lm_head_w") != std::string::npos) {
+      chain.client_lm_head_w = read_root_tensor("client_lm_head_w");
+    }
+    if (find_key_value_pos(tensors, "client_lm_head_b") != std::string::npos) {
+      chain.client_lm_head_b = read_root_tensor("client_lm_head_b");
+    }
+    chain.autoregressive_embeddings =
+        read_root_tensor("autoregressive_poly_embeddings");
+    chain.autoregressive_expected_poly_final =
+        read_root_tensor("autoregressive_poly_expected_final");
+    chain.autoregressive_expected_exact_final =
+        read_root_tensor("autoregressive_exact_expected_final");
+  }
   return chain;
 }
 
@@ -820,6 +1193,9 @@ struct LayerPlan {
   double b_rms = 0.0;
   double a_rms_v = 0.0;
   double gated_guess_v = 0.0;
+  double a_gated_v = 0.0;
+  double b_gated = 0.0;
+  double gated_damping_mean = 0.0;
   int rms_iterations = 0;
   int gated_iterations = 0;
   int exp_squarings = 0;
@@ -828,6 +1204,7 @@ struct LayerPlan {
   std::vector<double> gate_coeffs;
   std::vector<double> dt_coeffs;
   std::vector<double> exp_coeffs;
+  std::vector<double> gated_coeffs;
   std::vector<double> in_w_folded;
   std::vector<double> out_w_folded;
   std::vector<std::vector<double>> conv_tap_masks;
@@ -850,6 +1227,12 @@ struct LayerPlan {
   int req_state_tail = 0;  // updated state -> readout -> y
   int req_y = 0;           // y -> variance + out_proj entry
   int req_out = 0;         // y at out_proj -> final multiply + residual add
+  // Per-layer measured carried-lineage bounds (< 0 -> generic fallback).
+  double state_abs_max = -1.0;
+  std::vector<double> state_group_abs_max;
+  double fifo_abs_max = -1.0;
+  double y_scale = 1.0;
+  std::map<std::string, double> checkpoint_abs_max;
   // Plaintext-cache wiring: key prefix ("L00." ...) for this layer's
   // token-invariant vectors, and encode-once BSGS diagonal tables (null when
   // the cache mode excludes them).
@@ -1492,7 +1875,24 @@ void align_levels(
     const CryptoContext<DCRTPoly>& cc,
     Ciphertext<DCRTPoly>& lhs,
     Ciphertext<DCRTPoly>& rhs,
-    int& unity_multiplies) {
+    const std::string& mode,
+    int& unity_multiplies,
+    int& direct_drops) {
+  if (mode == "native") {
+    return;
+  }
+  if (mode == "drop") {
+    const auto target = std::max(lhs->GetLevel(), rhs->GetLevel());
+    if (lhs->GetLevel() < target) {
+      lhs->SetLevel(target);
+      ++direct_drops;
+    }
+    if (rhs->GetLevel() < target) {
+      rhs->SetLevel(target);
+      ++direct_drops;
+    }
+    return;
+  }
   for (int guard = 0; guard < 128 && lhs->GetLevel() < rhs->GetLevel(); ++guard) {
     const auto before = lhs->GetLevel();
     cc->EvalMultInPlace(lhs, 1.0);
@@ -1517,7 +1917,8 @@ auto decrypt_slots(
     Ciphertext<DCRTPoly> ciphertext,
     size_t length) -> std::vector<double> {
   Plaintext plaintext;
-  cc->Decrypt(secret_key, ciphertext, &plaintext);
+  auto ciphertext_handle = ciphertext->Clone();
+  cc->Decrypt(secret_key, ciphertext_handle, &plaintext);
   plaintext->SetLength(length);
   auto values = plaintext->GetRealPackedValue();
   values.resize(length);
@@ -1814,6 +2215,7 @@ void write_operation_counts_json(std::ostringstream& out, const OperationCounts&
   out << "\"ct_ct_mul\":" << counts.ct_ct_mul << ",";
   out << "\"adds\":" << counts.adds << ",";
   out << "\"unity_level_align_muls\":" << counts.unity_level_align_muls << ",";
+  out << "\"direct_level_align_drops\":" << counts.direct_level_align_drops << ",";
   out << "\"bootstraps\":" << counts.bootstraps;
   out << "}";
 }
@@ -1862,8 +2264,20 @@ void write_runtime_failure_payload(
   out << "\"multiplicative_depth\":" << args.multiplicative_depth << ",";
   out << "\"scaling_mod_size\":" << args.scaling_mod_size << ",";
   out << "\"tokens\":" << args.tokens << ",";
+  out << "\"process_role\":\"" << json_escape(args.process_role) << "\",";
+  out << "\"autoregressive_client_loop\":"
+      << (args.autoregressive_client_loop ? "true" : "false") << ",";
+  out << "\"level_align_mode\":\"" << json_escape(args.level_align_mode) << "\",";
+  out << "\"meta_bts_residual_align_mode\":\""
+      << json_escape(args.meta_bts_residual_align_mode) << "\",";
   out << "\"bootstrap_before_token\":";
   write_int_set_json(out, args.bootstrap_before_token);
+  out << ",\"debug_client_reencrypt_before_token\":";
+  write_int_set_json(out, args.debug_client_reencrypt_before_token);
+  out << ",\"refresh_recurrent_state_post\":"
+      << (args.refresh_recurrent_state_post ? "true" : "false");
+  out << ",\"refresh_recurrent_state_post_layers\":";
+  write_int_set_json(out, args.refresh_recurrent_state_post_layers);
   out << "},";
   out << "\"measurement_scope\":{";
   out << "\"non_success_probe\":true,";
@@ -1901,6 +2315,8 @@ auto estimate_levels(
     const M1Payload& payload,
     int tokens,
     const std::set<int>& bootstrap_before_token,
+    const std::set<int>& debug_client_reencrypt_before_token,
+    bool refresh_recurrent_state_post,
     int streams) -> DepthEstimate {
   // streams > 1 costs one extra level in each RMS variance reduction (the
   // stream-base mask before the in-stride broadcast).
@@ -1951,10 +2367,16 @@ auto estimate_levels(
   int state = 0;
   bool has_state = false;
   for (int token = 0; token < tokens; ++token) {
-    if (has_state && bootstrap_before_token.count(token) > 0) {
+    if (has_state && debug_client_reencrypt_before_token.count(token) > 0) {
+      state = 0;
+    } else if (has_state && bootstrap_before_token.count(token) > 0) {
       state = std::min(state, kAssumedBootstrapOutputLevel);
     }
-    state = has_state ? std::max(decay_exp_lvl, state) + 1 : update;
+    const bool recurrent_update = has_state;
+    state = recurrent_update ? std::max(decay_exp_lvl, state) + 1 : update;
+    if (recurrent_update && refresh_recurrent_state_post) {
+      state = kAssumedBootstrapOutputLevel;
+    }
     has_state = true;
     const int readout = std::max(state, bc_exp) + 2;  // *C then packed mask
     const int y = std::max(readout, gate_lvl) + 1;
@@ -1980,7 +2402,8 @@ auto main(int argc, char* argv[]) -> int {
     ChainPayload chain;
     std::vector<M1Payload> layer_payloads;
     if (chain_mode) {
-      chain = read_chain_payload(args.input_chain);
+      chain = read_chain_payload(args.input_chain,
+                                 args.autoregressive_client_loop);
       const int layers_to_load =
           args.max_layers > 0 ? std::min(args.max_layers, chain.n_layers) : chain.n_layers;
       layer_payloads.reserve(static_cast<std::size_t>(layers_to_load));
@@ -1988,7 +2411,7 @@ auto main(int argc, char* argv[]) -> int {
         layer_payloads.push_back(read_m1_payload(
             args.input_chain + "/" + chain.layer_dirs[static_cast<std::size_t>(layer)]));
       }
-      if (args.tokens > chain.n_test_tokens) {
+      if (!args.autoregressive_client_loop && args.tokens > chain.n_test_tokens) {
         throw std::runtime_error("--tokens exceeds n_test_tokens in the chain payload");
       }
     } else {
@@ -1997,9 +2420,33 @@ auto main(int argc, char* argv[]) -> int {
     const auto& dims_payload = layer_payloads.front();
     const int layers_loaded = static_cast<int>(layer_payloads.size());
     const bool full_chain = chain_mode && layers_loaded == chain.n_layers;
+    if (args.autoregressive_client_loop) {
+      if (!chain.has_autoregressive) {
+        throw std::runtime_error(
+            "autoregressive-client-loop requested but payload has no assets");
+      }
+      if (!full_chain) {
+        throw std::runtime_error("autoregressive-client-loop requires the full layer chain");
+      }
+      if (args.tokens != chain.autoregressive_server_evaluations) {
+        throw std::runtime_error(
+            "--tokens must equal autoregressive server_evaluations (" +
+            std::to_string(chain.autoregressive_server_evaluations) + ")");
+      }
+      if (chain.autoregressive_server_evaluations !=
+          chain.autoregressive_prompt_tokens +
+              chain.autoregressive_generate_tokens - 1) {
+        throw std::runtime_error("invalid autoregressive evaluation count");
+      }
+      if (args.debug_layer_errors) {
+        throw std::runtime_error(
+            "debug-layer-errors has no per-layer autoregressive references");
+      }
+    }
     for (std::size_t index = 0; index < layer_payloads.size(); ++index) {
       require_same_layer_dims(dims_payload, layer_payloads[index], index);
-      if (args.tokens > layer_payloads[index].n_test_tokens) {
+      if (!args.autoregressive_client_loop &&
+          args.tokens > layer_payloads[index].n_test_tokens) {
         throw std::runtime_error("--tokens exceeds n_test_tokens in layer payload " +
                                  std::to_string(index));
       }
@@ -2009,6 +2456,151 @@ auto main(int argc, char* argv[]) -> int {
         }
       }
     }
+    if (args.autoregressive_client_loop) {
+      const auto evaluations =
+          static_cast<std::size_t>(chain.autoregressive_server_evaluations);
+      const auto width = static_cast<std::size_t>(dims_payload.d_model);
+      const auto vocab = static_cast<std::size_t>(chain.autoregressive_vocab_size);
+      if (chain.autoregressive_expected_generated_ids.size() !=
+              static_cast<std::size_t>(chain.autoregressive_generate_tokens) ||
+          chain.autoregressive_embeddings.size() != evaluations * width ||
+          chain.autoregressive_expected_poly_final.size() != evaluations * width ||
+          chain.autoregressive_expected_exact_final.size() != evaluations * width ||
+          chain.client_embedding_w.size() != vocab * width ||
+          (!chain.client_lm_head_w.empty() &&
+           chain.client_lm_head_w.size() != vocab * width) ||
+          (!chain.client_lm_head_b.empty() &&
+           chain.client_lm_head_b.size() != vocab)) {
+        throw std::runtime_error("autoregressive tensor shape mismatch");
+      }
+    }
+    if (args.process_role == "client-decrypt") {
+      const fs::path root(args.handoff_dir);
+      const auto client_dir = root / "client";
+      const auto server_dir = root / "server";
+      const auto exchange_dir = root / "exchange";
+      CryptoContext<DCRTPoly> client_context;
+      PrivateKey<DCRTPoly> client_secret_key;
+      require_serialized(
+          fideslib::Serial::DeserializeFromFile(
+              (client_dir / "context.bin").string(), client_context,
+              SerType::BINARY),
+          "failed to deserialize client context");
+      require_serialized(
+          fideslib::Serial::DeserializeFromFile(
+              (client_dir / "secret-key.bin").string(), client_secret_key,
+              SerType::BINARY),
+          "failed to deserialize client secret key");
+      const std::vector<double>& exact_reference =
+          chain_mode
+              ? (full_chain
+                     ? chain.expected_final
+                     : layer_payloads.back().tensors.at("test_layer_output"))
+              : layer_payloads.front().tensors.at("test_layer_output");
+      const bool has_poly_reference =
+          chain_mode &&
+          (full_chain
+               ? !chain.expected_poly_final.empty()
+               : layer_payloads.back().tensors.count(
+                     "test_layer_output_poly") > 0);
+      const std::vector<double>& reference =
+          has_poly_reference
+              ? (full_chain
+                     ? chain.expected_poly_final
+                     : layer_payloads.back().tensors.at(
+                           "test_layer_output_poly"))
+              : exact_reference;
+      std::vector<double> per_token_errors;
+      std::vector<int> per_token_decrypt_ok;
+      double max_error = 0.0;
+      for (int token = 0; token < args.tokens; ++token) {
+        try {
+          auto output = deserialize_ciphertext(
+              exchange_dir /
+                  ("output_t" + std::to_string(token) + ".ct"),
+              client_context);
+          const auto slots = decrypt_slots(
+              client_context, client_secret_key, output,
+              static_cast<std::size_t>(dims_payload.d_model));
+          double token_error = 0.0;
+          for (int slot = 0; slot < dims_payload.d_model; ++slot) {
+            const double difference = std::abs(
+                slots[static_cast<std::size_t>(slot)] -
+                reference[static_cast<std::size_t>(token) *
+                              dims_payload.d_model +
+                          slot]);
+            if (!std::isfinite(difference)) {
+              token_error = 1.0e308;
+              break;
+            }
+            token_error = std::max(token_error, difference);
+          }
+          per_token_decrypt_ok.push_back(1);
+          per_token_errors.push_back(token_error);
+          max_error = std::max(max_error, token_error);
+        } catch (const std::exception& exc) {
+          log_phase("client decrypt token " + std::to_string(token) +
+                    " failed: " + exc.what());
+          per_token_decrypt_ok.push_back(0);
+          per_token_errors.push_back(1.0e308);
+          max_error = 1.0e308;
+        }
+      }
+      int server_secret_key_files = 0;
+      if (fs::exists(server_dir)) {
+        for (const auto& entry :
+             fs::recursive_directory_iterator(server_dir)) {
+          if (entry.is_regular_file() &&
+              entry.path().filename().string().find("secret") !=
+                  std::string::npos) {
+            ++server_secret_key_files;
+          }
+        }
+      }
+      const bool passed =
+          max_error <= args.tolerance && server_secret_key_files == 0;
+      std::ostringstream result;
+      result << "{";
+      write_artifact_prefix(result, args);
+      result << "\"status\":\"" << (passed ? "passed" : "failed")
+             << "\",";
+      result << "\"passed\":" << (passed ? "true" : "false") << ",";
+      result << "\"parameters\":{\"process_role\":\"client-decrypt\",";
+      result << "\"tokens\":" << args.tokens << ",";
+      result << "\"layers\":" << layers_loaded << ",";
+      result << "\"tolerance\":" << args.tolerance << "},";
+      result << "\"measurements\":{\"max_abs_error\":" << max_error
+             << ",\"per_token_max_abs_error\":";
+      write_double_vector_json(result, per_token_errors);
+      result << ",\"per_token_decrypt_ok\":";
+      write_int_vector_json(result, per_token_decrypt_ok);
+      result << ",\"server_secret_key_files\":"
+             << server_secret_key_files << "},";
+      result << "\"measurement_scope\":{";
+      result << "\"client_server_process_separation\":true,";
+      result << "\"server_secret_key_loaded\":false,";
+      result << "\"full_model_correctness_claimed\":"
+             << (full_chain ? "true" : "false") << ",";
+      result << "\"claim\":\"Client-only decryption and correctness "
+                "verification of ciphertext outputs produced by the "
+                "process-separated Mamba server.\"}";
+      result << "}";
+      write_payload(args.output_json, result.str());
+      return passed ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    const bool all_carried_bounds_calibrated =
+        std::all_of(layer_payloads.begin(), layer_payloads.end(), [](const auto& payload) {
+          return payload.state_abs_max >= 0.0 && payload.fifo_abs_max >= 0.0;
+        });
+    const bool all_state_head_bounds_calibrated =
+        std::all_of(layer_payloads.begin(), layer_payloads.end(), [](const auto& payload) {
+          return payload.state_head_abs_max.size() ==
+                 static_cast<std::size_t>(payload.num_heads);
+        });
+    const bool all_checkpoint_bounds_calibrated =
+        std::all_of(layer_payloads.begin(), layer_payloads.end(), [](const auto& payload) {
+          return payload.checkpoint_abs_max.size() == 8;
+        });
     const int batch_size = args.ring_dim / 2;
     const auto packing = derive_packing(dims_payload, batch_size);
     // Multi-stream packing geometry: S streams at stride batch/S. Every
@@ -2137,11 +2729,19 @@ auto main(int argc, char* argv[]) -> int {
     // Depth estimate per layer (degrees are frozen across layers, but the
     // decay range-reduction squarings differ); merge to the worst layer for
     // the segment map and geometry warning.
-    auto depth_estimate = estimate_levels(dims_payload, args.tokens,
-                                          args.bootstrap_before_token, args.streams);
+    auto depth_estimate = estimate_levels(
+        dims_payload, args.tokens, args.bootstrap_before_token,
+        args.debug_client_reencrypt_before_token,
+        args.refresh_recurrent_state_post ||
+            args.refresh_recurrent_state_post_layers.count(0) > 0,
+        args.streams);
     for (std::size_t index = 1; index < layer_payloads.size(); ++index) {
-      const auto candidate = estimate_levels(layer_payloads[index], args.tokens,
-                                             args.bootstrap_before_token, args.streams);
+      const auto candidate = estimate_levels(
+          layer_payloads[index], args.tokens, args.bootstrap_before_token,
+          args.debug_client_reencrypt_before_token,
+          args.refresh_recurrent_state_post ||
+              args.refresh_recurrent_state_post_layers.count(static_cast<int>(index)) > 0,
+          args.streams);
       depth_estimate.required_depth =
           std::max(depth_estimate.required_depth, candidate.required_depth);
       depth_estimate.req_dt = std::max(depth_estimate.req_dt, candidate.req_dt);
@@ -2209,43 +2809,84 @@ auto main(int argc, char* argv[]) -> int {
       parameters.SetNumLargeDigits(3);
     }
 
-    CryptoContext<DCRTPoly> cc = GenCryptoContext(parameters);
-    cc->Enable(PKE);
-    cc->Enable(KEYSWITCH);
-    cc->Enable(LEVELEDSHE);
-    if (bootstrap_available) {
-      cc->Enable(ADVANCEDSHE);
-      cc->Enable(FHE);
-    }
-    auto keys = cc->KeyGen();
-    cc->EvalMultKeyGen(keys.secretKey);
-    log_phase("context setup done");
-    const auto keygen_start = now();
-    log_phase("rotation keygen begin mode=" + args.rotation_keys +
-              " count=" + std::to_string(rotation_keygen_indices.size()));
-    cc->EvalRotateKeyGen(keys.secretKey, rotation_keygen_indices);
-    const double rotate_keygen_seconds = seconds_since(keygen_start);
-    log_phase("rotation keygen done");
+    CryptoContext<DCRTPoly> cc;
+    PublicKey<DCRTPoly> public_key;
+    PrivateKey<DCRTPoly> secret_key;
+    double rotate_keygen_seconds = 0.0;
     double bootstrap_precompute_seconds = 0.0;
-    if (bootstrap_available) {
-      const auto bootstrap_precompute_start = now();
-      log_phase("bootstrap setup/keygen begin");
-      const std::vector<uint32_t> level_budget = {
-          static_cast<uint32_t>(args.bootstrap_level_budget_cts),
-          static_cast<uint32_t>(args.bootstrap_level_budget_stc),
-      };
-      const std::vector<uint32_t> bsgs_dim = {
-          static_cast<uint32_t>(args.bootstrap_bsgs_dim_cts),
-          static_cast<uint32_t>(args.bootstrap_bsgs_dim_stc),
-      };
-      cc->EvalBootstrapSetup(level_budget, bsgs_dim, static_cast<uint32_t>(batch_size), 0);
-      cc->EvalBootstrapKeyGen(keys.secretKey, static_cast<uint32_t>(batch_size));
-      bootstrap_precompute_seconds = seconds_since(bootstrap_precompute_start);
-      log_phase("bootstrap setup/keygen done");
+    if (args.process_role == "server-eval") {
+      const fs::path server_dir = fs::path(args.handoff_dir) / "server";
+      if (fs::exists(server_dir / "secret-key.bin")) {
+        throw std::runtime_error(
+            "server artifact directory must not contain a secret key");
+      }
+      require_serialized(
+          fideslib::Serial::DeserializeFromFile(
+              (server_dir / "context.bin").string(), cc, SerType::BINARY),
+          "failed to deserialize server context");
+      require_serialized(
+          fideslib::Serial::DeserializeFromFile(
+              (server_dir / "public-key.bin").string(), public_key,
+              SerType::BINARY),
+          "failed to deserialize server public key");
+      {
+        std::ifstream stream(server_dir / "eval-mult.bin",
+                             std::ios::binary);
+        require_serialized(
+            cc->DeserializeEvalMultKey(stream, SerType::BINARY),
+            "failed to deserialize multiplication keys");
+      }
+      {
+        std::ifstream stream(server_dir / "eval-rotation.bin",
+                             std::ios::binary);
+        require_serialized(
+            cc->DeserializeEvalAutomorphismKey(stream, SerType::BINARY),
+            "failed to deserialize rotation/bootstrap keys");
+      }
+      log_phase("server public/evaluation key load done secret_key_loaded=false");
+    } else {
+      cc = GenCryptoContext(parameters);
+      cc->Enable(PKE);
+      cc->Enable(KEYSWITCH);
+      cc->Enable(LEVELEDSHE);
+      if (bootstrap_available) {
+        cc->Enable(ADVANCEDSHE);
+        cc->Enable(FHE);
+      }
+      auto generated_keys = cc->KeyGen();
+      public_key = generated_keys.publicKey;
+      secret_key = generated_keys.secretKey;
+      cc->EvalMultKeyGen(secret_key);
+      log_phase("context setup done");
+      const auto keygen_start = now();
+      log_phase("rotation keygen begin mode=" + args.rotation_keys +
+                " count=" + std::to_string(rotation_keygen_indices.size()));
+      cc->EvalRotateKeyGen(secret_key, rotation_keygen_indices);
+      rotate_keygen_seconds = seconds_since(keygen_start);
+      log_phase("rotation keygen done");
+      if (bootstrap_available) {
+        const auto bootstrap_precompute_start = now();
+        log_phase("bootstrap setup/keygen begin");
+        const std::vector<uint32_t> level_budget = {
+            static_cast<uint32_t>(args.bootstrap_level_budget_cts),
+            static_cast<uint32_t>(args.bootstrap_level_budget_stc),
+        };
+        const std::vector<uint32_t> bsgs_dim = {
+            static_cast<uint32_t>(args.bootstrap_bsgs_dim_cts),
+            static_cast<uint32_t>(args.bootstrap_bsgs_dim_stc),
+        };
+        cc->EvalBootstrapSetup(level_budget, bsgs_dim,
+                               static_cast<uint32_t>(batch_size), 0);
+        cc->EvalBootstrapKeyGen(secret_key,
+                                static_cast<uint32_t>(batch_size));
+        bootstrap_precompute_seconds =
+            seconds_since(bootstrap_precompute_start);
+        log_phase("bootstrap setup/keygen done");
+      }
     }
     const auto load_start = now();
     log_phase("load context begin");
-    cc->LoadContext(keys.publicKey);
+    cc->LoadContext(public_key);
     const double load_context_seconds = seconds_since(load_start);
     log_phase("load context done");
     const double setup_seconds = seconds_since(setup_start);
@@ -2260,9 +2901,13 @@ auto main(int argc, char* argv[]) -> int {
     int ct_ct_muls = 0;
     int adds = 0;
     int unity_multiplies = 0;
+    int direct_level_drops = 0;
     int bootstraps = 0;
     int state_bootstraps = 0;  // refreshes of carried-forward (state/FIFO) cts
+    int meta_bts_applied = 0;  // refreshes that ran the double-BTS path
+    int debug_client_reencrypt_ciphertexts = 0;
     double bootstrap_eval_seconds = 0.0;
+    double debug_client_reencrypt_seconds = 0.0;
     std::map<std::string, double> phase_timings;
     std::map<std::string, OperationCounts> phase_operation_counts;
     std::map<std::string, int> ckks_levels;
@@ -2276,6 +2921,7 @@ auto main(int argc, char* argv[]) -> int {
           .ct_ct_mul = ct_ct_muls,
           .adds = adds,
           .unity_level_align_muls = unity_multiplies,
+          .direct_level_align_drops = direct_level_drops,
           .bootstraps = bootstraps,
       };
     };
@@ -2310,8 +2956,93 @@ auto main(int argc, char* argv[]) -> int {
     };
     auto encrypt_values = [&](const std::vector<double>& values) {
       auto plain = make_plain(values);
-      return cc->Encrypt(keys.publicKey, plain);
+      return cc->Encrypt(public_key, plain);
     };
+    if (args.process_role == "client-init") {
+      const fs::path root(args.handoff_dir);
+      const auto client_dir = root / "client";
+      const auto server_dir = root / "server";
+      const auto exchange_dir = root / "exchange";
+      fs::create_directories(client_dir);
+      fs::create_directories(server_dir);
+      fs::create_directories(exchange_dir);
+      fs::permissions(client_dir, fs::perms::owner_all,
+                      fs::perm_options::replace);
+      if (fs::exists(server_dir / "secret-key.bin")) {
+        throw std::runtime_error(
+            "refusing client-init: server directory contains secret-key.bin");
+      }
+      serialize_context(client_dir / "context.bin", cc);
+      fs::copy_file(client_dir / "context.bin", server_dir / "context.bin",
+                    fs::copy_options::overwrite_existing);
+      copy_context_device_metadata(client_dir / "context.bin",
+                                   server_dir / "context.bin");
+      require_serialized(
+          fideslib::Serial::SerializeToFile(
+              (server_dir / "public-key.bin").string(), public_key,
+              SerType::BINARY),
+          "failed to serialize public key");
+      require_serialized(
+          fideslib::Serial::SerializeToFile(
+              (client_dir / "secret-key.bin").string(), secret_key,
+              SerType::BINARY),
+          "failed to serialize secret key");
+      fs::permissions(client_dir / "secret-key.bin",
+                      fs::perms::owner_read | fs::perms::owner_write,
+                      fs::perm_options::replace);
+      {
+        std::ofstream stream(server_dir / "eval-mult.bin",
+                             std::ios::binary);
+        require_serialized(cc->SerializeEvalMultKey(stream, SerType::BINARY),
+                           "failed to serialize multiplication keys");
+      }
+      {
+        std::ofstream stream(server_dir / "eval-rotation.bin",
+                             std::ios::binary);
+        require_serialized(
+            cc->SerializeEvalAutomorphismKey(stream, SerType::BINARY),
+            "failed to serialize rotation/bootstrap keys");
+      }
+      const std::vector<double>& client_inputs =
+          chain_mode ? chain.input_embeddings
+                     : layer_payloads.front().tensors.at("test_layer_input");
+      for (int token = 0; token < args.tokens; ++token) {
+        std::vector<double> slots(static_cast<std::size_t>(batch_size), 0.0);
+        for (int stream = 0; stream < args.streams; ++stream) {
+          const auto base = static_cast<std::size_t>(stream * stream_stride);
+          for (int slot = 0; slot < dims_payload.d_model; ++slot) {
+            slots[base + static_cast<std::size_t>(slot)] =
+                client_inputs[static_cast<std::size_t>(token) *
+                                  dims_payload.d_model +
+                              slot];
+          }
+        }
+        auto input = encrypt_values(slots);
+        serialize_ciphertext(
+            exchange_dir /
+                ("input_t" + std::to_string(token) + ".ct"),
+            cc, public_key, input);
+      }
+      std::ostringstream result;
+      result << "{";
+      write_artifact_prefix(result, args);
+      result << "\"status\":\"passed\",\"passed\":true,";
+      result << "\"parameters\":{\"process_role\":\"client-init\",";
+      result << "\"tokens\":" << args.tokens << ",\"layers\":"
+             << layers_loaded << "},";
+      result << "\"measurements\":{\"encrypted_inputs_written\":"
+             << args.tokens << "},";
+      result << "\"measurement_scope\":{";
+      result << "\"client_server_process_separation\":true,";
+      result << "\"server_secret_key_loaded\":false,";
+      result << "\"full_model_correctness_claimed\":false,";
+      result << "\"claim\":\"Client key generation and encrypted input "
+                "serialization for the process-separated Mamba kernel; no "
+                "server evaluation is claimed by this phase.\"}";
+      result << "}";
+      write_payload(args.output_json, result.str());
+      return EXIT_SUCCESS;
+    }
     auto ones_ct = encrypt_values(std::vector<double>(static_cast<size_t>(batch_size), 1.0));
 
     // -----------------------------------------------------------------------
@@ -2401,14 +3132,22 @@ auto main(int argc, char* argv[]) -> int {
     };
     // Mutating aligned add: both handles may be level-boosted in place.
     auto add_aligned = [&](Ciphertext<DCRTPoly> lhs, Ciphertext<DCRTPoly> rhs) {
-      align_levels(cc, lhs, rhs, unity_multiplies);
+      align_levels(
+          cc, lhs, rhs, args.level_align_mode, unity_multiplies, direct_level_drops);
       ++adds;
       return cc->EvalAdd(lhs, rhs);
     };
     auto mul_aligned = [&](Ciphertext<DCRTPoly> lhs, Ciphertext<DCRTPoly> rhs) {
-      align_levels(cc, lhs, rhs, unity_multiplies);
+      align_levels(
+          cc, lhs, rhs, args.level_align_mode, unity_multiplies, direct_level_drops);
       ++ct_ct_muls;
       return cc->EvalMult(lhs, rhs);
+    };
+    auto sub_aligned = [&](Ciphertext<DCRTPoly> lhs, Ciphertext<DCRTPoly> rhs,
+                           const std::string& mode) {
+      align_levels(cc, lhs, rhs, mode, unity_multiplies, direct_level_drops);
+      ++adds;
+      return cc->EvalSub(lhs, rhs);
     };
     auto add_scalar = [&](const Ciphertext<DCRTPoly>& ciphertext, double scalar) {
       return add_aligned(ciphertext, scaled_clone(ones_ct, scalar));
@@ -2416,7 +3155,7 @@ auto main(int argc, char* argv[]) -> int {
     auto add_const_vector = [&](const Ciphertext<DCRTPoly>& ciphertext,
                                 const std::string& key, const std::vector<double>& values) {
       auto plain = cached_plain(key, values);
-      return add_aligned(ciphertext, cc->Encrypt(keys.publicKey, plain));
+      return add_aligned(ciphertext, cc->Encrypt(public_key, plain));
     };
     auto mul_mask = [&](const Ciphertext<DCRTPoly>& ciphertext, const std::string& key,
                         const std::vector<double>& mask) {
@@ -2593,8 +3332,8 @@ auto main(int argc, char* argv[]) -> int {
         return;
       }
       Plaintext plaintext;
-      auto ciphertext_handle = ciphertext;  // Decrypt takes a non-const ref
-      cc->Decrypt(keys.secretKey, ciphertext_handle, &plaintext);
+      auto ciphertext_handle = ciphertext->Clone();
+      cc->Decrypt(secret_key, ciphertext_handle, &plaintext);
       plaintext->SetLength(static_cast<std::size_t>(batch_size));
       const auto complex_slots = plaintext->GetCKKSPackedValue();
       double max_real = 0.0;
@@ -2617,7 +3356,7 @@ auto main(int argc, char* argv[]) -> int {
       // Lineage refresh probe: test-bootstrap a normalized clone to find the
       // earliest op whose output poisons EvalBootstrap (values are known
       // clean here; a NaN probe means the ciphertext state is the trigger).
-      if (non_finite == 0 && std::isfinite(max_real)) {
+      if (args.debug_refresh_probes && non_finite == 0 && std::isfinite(max_real)) {
         // Repeat the probe: identical inputs sometimes refresh clean and
         // sometimes NaN, so count outcomes to expose nondeterminism.
         int poisoned_runs = 0;
@@ -2629,9 +3368,15 @@ auto main(int argc, char* argv[]) -> int {
             while (probe->GetNoiseScaleDeg() > 1) {
               cc->RescaleInPlace(probe);
             }
+            if (cudaDeviceSynchronize() != 0) {
+              throw std::runtime_error("CUDA synchronization failed before debug bootstrap");
+            }
             auto refreshed = cc->EvalBootstrap(probe);
+            if (cudaDeviceSynchronize() != 0) {
+              throw std::runtime_error("CUDA synchronization failed after debug bootstrap");
+            }
             Plaintext probe_plain;
-            cc->Decrypt(keys.secretKey, refreshed, &probe_plain);
+            cc->Decrypt(secret_key, refreshed, &probe_plain);
             probe_plain->SetLength(static_cast<std::size_t>(batch_size));
             auto probe_values = probe_plain->GetRealPackedValue();
             for (const double value : probe_values) {
@@ -2655,13 +3400,46 @@ auto main(int argc, char* argv[]) -> int {
     // runtime GetLevel(); the assumed-bootstrap-output constant plus the
     // minimum-gain floor guard against refreshing near-fresh ciphertexts.
     // -----------------------------------------------------------------------
+    // Per-layer measured carried-lineage bounds, set at run_layer entry from
+    // the active layer's payload (< 0 -> no measurement -> generic fallback).
+    double active_state_bound = -1.0;
+    std::vector<double> active_state_group_bounds;
+    double active_fifo_bound = -1.0;
+    std::map<std::string, double> active_checkpoint_bounds;
+    bool carried_bound_fallback_warned = false;
+    auto eval_bootstrap_synced = [&](const Ciphertext<DCRTPoly>& input) {
+      if (cudaDeviceSynchronize() != 0) {
+        throw std::runtime_error("CUDA synchronization failed before EvalBootstrap");
+      }
+      auto output = cc->EvalBootstrap(input);
+      if (cudaDeviceSynchronize() != 0) {
+        throw std::runtime_error("CUDA synchronization failed after EvalBootstrap");
+      }
+      return output;
+    };
     auto maybe_bootstrap = [&](Ciphertext<DCRTPoly>& ciphertext, int requirement,
                                const std::string& what, int& counter) {
       if (!bootstrap_available) {
         return;
       }
       const int level = static_cast<int>(ciphertext->GetLevel());
-      if (args.multiplicative_depth - level >= requirement + args.auto_bootstrap_headroom) {
+      const bool carried = is_carried_checkpoint(what);
+      const bool residual_checkpoint = what.find("residual") != std::string::npos;
+      const bool use_meta_bts =
+          args.meta_bts &&
+          (carried || what.find("gated_poly_input") != std::string::npos);
+      // Meta-BTS residual amplification needs one live level after the
+      // normalize/rescale, so eligible checkpoints trigger one level earlier.
+      const int meta_headroom = use_meta_bts ? 1 : 0;
+      int policy_headroom = args.auto_bootstrap_headroom;
+      if (residual_checkpoint) {
+        policy_headroom = args.residual_bootstrap_headroom;
+      }
+      if (carried) {
+        policy_headroom = args.carried_bootstrap_headroom;
+      }
+      if (args.multiplicative_depth - level >=
+          requirement + meta_headroom + policy_headroom) {
         return;
       }
       if (level < kAssumedBootstrapOutputLevel + kMinBootstrapGain) {
@@ -2675,12 +3453,58 @@ auto main(int argc, char* argv[]) -> int {
       // undo-multiply scales the refresh noise floor by the bound, so carried
       // lineages (state, FIFO) use the tighter state margin to inject less
       // noise per token; transient activations keep the looser margin.
-      const bool carried = is_carried_checkpoint(what);
-      const double bound = checkpoint_bound(what) *
-                           (carried ? args.state_bootstrap_margin : args.bootstrap_norm_margin);
+      double base_bound = checkpoint_bound(what);
+      if (!carried) {
+        const bool scaled_y = what.find("y_scaled") != std::string::npos;
+        for (const auto* name : {"gated_variance", "gated_newton", "residual", "output",
+                                 "proj", "conv_silu", "dt"}) {
+          const auto found = active_checkpoint_bounds.find(name);
+          if (found != active_checkpoint_bounds.end() &&
+              what.find(name) != std::string::npos) {
+            base_bound = found->second;
+            break;
+          }
+        }
+        if (scaled_y) {
+          base_bound = 1.0;
+        } else {
+          const auto y_bound = active_checkpoint_bounds.find("y");
+          if (y_bound != active_checkpoint_bounds.end() &&
+              what.find(".y") != std::string::npos) {
+            base_bound = y_bound->second;
+          }
+        }
+      }
       if (carried) {
         ++state_bootstraps;
+        // Export-time carried bounds replace the generic 24/6 values. State
+        // checkpoints use the maximum for the heads packed in that state
+        // ciphertext when the payload supplies head-wise calibration; older
+        // independent-calibration payloads retain their per-layer scalar.
+        const bool is_fifo = what.find("fifo") != std::string::npos;
+        double measured = is_fifo ? active_fifo_bound : active_state_bound;
+        if (!is_fifo && !active_state_group_bounds.empty()) {
+          std::size_t digit = what.size();
+          while (digit > 0 && what[digit - 1] >= '0' && what[digit - 1] <= '9') {
+            --digit;
+          }
+          if (digit < what.size()) {
+            const auto state_slot = static_cast<std::size_t>(std::stoul(what.substr(digit)));
+            measured = active_state_group_bounds[
+                state_slot % active_state_group_bounds.size()];
+          }
+        }
+        if (measured >= 0.0) {
+          base_bound = measured;
+        } else if (!carried_bound_fallback_warned) {
+          carried_bound_fallback_warned = true;
+          log_phase("WARNING: payload lacks independent calibration carried_bounds; "
+                    "falling back to the generic 24/6 state/FIFO bounds (regenerate the "
+                    "payload to tighten refresh noise)");
+        }
       }
+      const double bound = base_bound *
+                           (carried ? args.state_bootstrap_margin : args.bootstrap_norm_margin);
       const auto bootstrap_start = now();
       time_phase("bootstrap", [&]() {
         cc->EvalMultInPlace(ciphertext, 1.0 / bound);
@@ -2695,8 +3519,8 @@ auto main(int argc, char* argv[]) -> int {
           // debug-only; logs a warning so a too-tight margin is caught in sim
           // before it silently corrupts a run.
           Plaintext clip_plain;
-          auto clip_handle = ciphertext;
-          cc->Decrypt(keys.secretKey, clip_handle, &clip_plain);
+          auto clip_handle = ciphertext->Clone();
+          cc->Decrypt(secret_key, clip_handle, &clip_plain);
           clip_plain->SetLength(static_cast<std::size_t>(batch_size));
           double clip_max = 0.0;
           for (const double value : clip_plain->GetRealPackedValue()) {
@@ -2710,29 +3534,60 @@ auto main(int argc, char* argv[]) -> int {
                       " (bound too tight; raise the margin)");
           }
         }
-        if (args.debug_decrypt) {
+        if (args.debug_refresh_probes) {
           // Forensic split (debug only): bootstrap a fresh re-encryption of
           // the exact same values at the same level. If the fresh copy
           // refreshes cleanly while the original NaNs, the failure lives in
           // the ciphertext state (noise / GPU-side metadata), not the values.
           Plaintext forensic_plain;
-          auto forensic_handle = ciphertext;
-          cc->Decrypt(keys.secretKey, forensic_handle, &forensic_plain);
+          auto forensic_handle = ciphertext->Clone();
+          cc->Decrypt(secret_key, forensic_handle, &forensic_plain);
           forensic_plain->SetLength(static_cast<std::size_t>(batch_size));
           auto forensic_values = forensic_plain->GetRealPackedValue();
           forensic_values.resize(static_cast<std::size_t>(batch_size));
           Plaintext reencoded = cc->MakeCKKSPackedPlaintext(
               forensic_values, 1, ciphertext->GetLevel(), nullptr,
               static_cast<uint32_t>(batch_size));
-          auto fresh = cc->Encrypt(keys.publicKey, reencoded);
-          auto fresh_refreshed = cc->EvalBootstrap(fresh);
+          auto fresh = cc->Encrypt(public_key, reencoded);
+          auto fresh_refreshed = eval_bootstrap_synced(fresh);
           debug_value_stats(fresh_refreshed, "forensic_fresh_bootstrap." + what);
         }
-        ciphertext = cc->EvalBootstrap(ciphertext);
-        ++bootstraps;
-        ++counter;
-        cc->EvalMultInPlace(ciphertext, bound);
-        ++ct_pt_muls;
+        if (use_meta_bts) {
+          // Meta-BTS: x_n is the normalized deg-1 input at this point.
+          const int meta_alpha =
+              carried && args.state_meta_bts_alpha >= 0
+                  ? args.state_meta_bts_alpha
+                  : args.meta_bts_alpha;
+          const double amplify = std::pow(2.0, meta_alpha);
+          auto x_n = ciphertext->Clone();
+          auto y1 = eval_bootstrap_synced(ciphertext);
+          ++bootstraps;
+          // r = x_n - y1 = -e1, formed at x_n's (deep) level: negate a fresh
+          // clone of y1. This residual is itself only bootstrap error, so it
+          // has a separate alignment knob from the rest of the circuit.
+          auto residual = sub_aligned(
+              x_n, y1, args.meta_bts_residual_align_mode);
+          cc->EvalMultInPlace(residual, amplify);  // the reserved live level
+          ++ct_pt_muls;
+          while (residual->GetNoiseScaleDeg() > 1) {
+            cc->RescaleInPlace(residual);
+          }
+          debug_value_stats(residual, "meta_bts_residual." + what);
+          auto y2 = eval_bootstrap_synced(residual);  // -e1*2^alpha + e2
+          ++bootstraps;
+          ++meta_bts_applied;
+          auto correction = scaled_clone(y2, 1.0 / amplify);
+          ciphertext = add_aligned(y1, correction);  // x_n + e2*2^-alpha
+          ++counter;
+          cc->EvalMultInPlace(ciphertext, bound);
+          ++ct_pt_muls;
+        } else {
+          ciphertext = eval_bootstrap_synced(ciphertext);
+          ++bootstraps;
+          ++counter;
+          cc->EvalMultInPlace(ciphertext, bound);
+          ++ct_pt_muls;
+        }
       });
       debug_value_stats(ciphertext, "post_bootstrap." + what);
       bootstrap_eval_seconds += seconds_since(bootstrap_start);
@@ -2784,6 +3639,21 @@ auto main(int argc, char* argv[]) -> int {
     auto make_layer_plan = [&](const M1Payload& payload) {
       LayerPlan plan;
       plan.eps_block = payload.eps_block;
+      plan.state_abs_max = payload.state_abs_max;
+      if (payload.state_head_abs_max.size() == static_cast<std::size_t>(heads)) {
+        plan.state_group_abs_max.reserve(static_cast<std::size_t>(group_count));
+        for (int group = 0; group < group_count; ++group) {
+          const auto begin = payload.state_head_abs_max.begin() + group * group_heads;
+          plan.state_group_abs_max.push_back(
+              *std::max_element(begin, begin + group_heads));
+        }
+      }
+      plan.fifo_abs_max = payload.fifo_abs_max;
+      plan.checkpoint_abs_max = payload.checkpoint_abs_max;
+      if (const auto y_bound = plan.checkpoint_abs_max.find("y");
+          y_bound != plan.checkpoint_abs_max.end()) {
+        plan.y_scale = std::max(1.0, y_bound->second);
+      }
       plan.eps_gated = payload.eps_gated;
       const auto& p_conv = payload.polys.at("conv_silu");
       const auto& p_gate = payload.polys.at("gate_silu");
@@ -2806,13 +3676,27 @@ auto main(int argc, char* argv[]) -> int {
       plan.exp_squarings = p_exp.squarings;
       plan.conv_coeffs = p_conv.coeffs;
       plan.gate_coeffs = p_gate.coeffs;
+      if (p_gated.kind == "sq-poly-newton") {
+        for (double& coefficient : plan.gate_coeffs) {
+          coefficient /= plan.y_scale;
+        }
+      }
       plan.dt_coeffs = p_dt.coeffs;
       plan.exp_coeffs = p_exp.coeffs;
       plan.rms_coeffs = p_rms.coeffs;
       for (double& coefficient : plan.rms_coeffs) {
         coefficient *= p_rms.damping / std::sqrt(static_cast<double>(d_model));
       }
-      plan.gated_guess_v = p_gated.guess / std::sqrt(static_cast<double>(d_inner));
+      if (p_gated.kind == "sq-poly-newton") {
+        const auto [a_gated, b_gated] = affine(p_gated.lo, p_gated.hi);
+        plan.a_gated_v = a_gated / static_cast<double>(d_inner);
+        plan.b_gated = b_gated;
+        plan.gated_coeffs = p_gated.coeffs;
+        plan.gated_damping_mean = p_gated.damping;
+      } else {
+        plan.gated_guess_v =
+            p_gated.guess / std::sqrt(static_cast<double>(d_inner));
+      }
 
       const auto& in_proj_w = payload.tensors.at("in_proj_w");
       const auto& block_norm_w = payload.tensors.at("block_norm_w");
@@ -2827,13 +3711,17 @@ auto main(int argc, char* argv[]) -> int {
       }
       const auto& out_proj_w = payload.tensors.at("out_proj_w");
       const auto& gated_norm_w = payload.tensors.at("gated_norm_w");
+      const double gated_weight_fold =
+          p_gated.kind == "sq-poly-newton"
+              ? plan.y_scale
+              : std::sqrt(static_cast<double>(d_inner));
       plan.out_w_folded.assign(out_proj_w.size(), 0.0);
       for (int output = 0; output < d_model; ++output) {
         for (int input = 0; input < d_inner; ++input) {
           const auto index = static_cast<std::size_t>(output) * d_inner + input;
           plan.out_w_folded[index] =
               out_proj_w[index] * gated_norm_w[static_cast<std::size_t>(input)] *
-              std::sqrt(static_cast<double>(d_inner));
+              gated_weight_fold;
         }
       }
 
@@ -2929,17 +3817,29 @@ auto main(int argc, char* argv[]) -> int {
     std::vector<double> final_rms_coeffs;
     double final_a_rms_v = 0.0;
     double final_b_rms = 0.0;
+    double final_norm_scale = 1.0;
     int final_rms_iterations = 0;
     std::vector<double> final_w_vec;
     if (full_chain) {
       const auto& p_rms_final = layer_payloads.back().polys.at("rms_invsqrt");
       const auto [a_rms_f, b_rms_f] = affine(p_rms_final.lo, p_rms_final.hi);
-      final_a_rms_v = a_rms_f / static_cast<double>(d_model);
+      if (const auto output_bound = layer_plans.back().checkpoint_abs_max.find("output");
+          output_bound != layer_plans.back().checkpoint_abs_max.end()) {
+        final_norm_scale = std::max(1.0, output_bound->second * args.bootstrap_norm_margin);
+      }
+      // If h' = h/B, then mean(h^2) = B^2*mean(h'^2), while the inverse
+      // required by RMSNorm is 1/sqrt(sum(h'^2)) = B/sqrt(sum(h^2)). Reuse
+      // the certified original-domain polynomial by scaling its affine input
+      // by B^2 and its output coefficients by B.
+      final_a_rms_v =
+          a_rms_f * final_norm_scale * final_norm_scale /
+          static_cast<double>(d_model);
       final_b_rms = b_rms_f;
       final_rms_iterations = p_rms_final.iterations;
       final_rms_coeffs = p_rms_final.coeffs;
       for (double& coefficient : final_rms_coeffs) {
-        coefficient *= p_rms_final.damping / std::sqrt(static_cast<double>(d_model));
+        coefficient *= p_rms_final.damping * final_norm_scale /
+                       std::sqrt(static_cast<double>(d_model));
       }
       final_w_vec.assign(batch, 0.0);
       for (int slot = 0; slot < d_model; ++slot) {
@@ -3512,9 +4412,16 @@ auto main(int argc, char* argv[]) -> int {
     // before out_proj, plus the per-iteration Newton check) keep every
     // ciphertext lineage within the depth-44 MAXP=64 geometry.
     // -----------------------------------------------------------------------
-    auto run_layer = [&](const LayerPlan& plan, LayerRuntime& runtime,
+    auto run_layer = [&](const LayerPlan& plan, LayerRuntime& runtime, int layer_index,
                          const Ciphertext<DCRTPoly>& hidden_ct, const std::string& tag,
                          int& layer_bootstraps) -> Ciphertext<DCRTPoly> {
+      // This layer's measured carried bounds drive every state/FIFO refresh
+      // inside the call (single-threaded, sequential -> a shared active value
+      // is safe and avoids threading it through every maybe_bootstrap site).
+      active_state_bound = plan.state_abs_max;
+      active_state_group_bounds = plan.state_group_abs_max;
+      active_fifo_bound = plan.fifo_abs_max;
+      active_checkpoint_bounds = plan.checkpoint_abs_max;
       // Block RMSNorm inverse sqrt on V = sum(x^2) + d_model*eps; the sqrt(w)
       // and norm weights are folded into the in_proj plaintexts, so proj =
       // BSGS(h) * inv (inv is a uniform broadcast and commutes with matmul).
@@ -3618,6 +4525,14 @@ auto main(int argc, char* argv[]) -> int {
                             plan.b_exp);
         auto value = eval_chebyshev(u, plan.exp_coeffs);
         for (int squaring = 0; squaring < plan.exp_squarings; ++squaring) {
+          // Some layers need 12-15 range-reduction squarings because a few
+          // heads have very negative A*dt. Do not wait until the final decay
+          // ciphertext is at level ~40: refresh the bounded [0, 1] partial
+          // exponential while it can still be bootstrapped reliably.
+          const int remaining_squarings = plan.exp_squarings - squaring;
+          maybe_bootstrap(value, remaining_squarings + plan.req_decay,
+                          tag + "decay_sq" + std::to_string(squaring),
+                          layer_bootstraps);
           ++ct_ct_muls;
           value = cc->EvalMult(value, value);
         }
@@ -3682,7 +4597,13 @@ auto main(int argc, char* argv[]) -> int {
           });
           // Checkpoint: the updated state feeds this token's readout and is
           // the carried lineage for the next token.
-          maybe_bootstrap(runtime.state_cts[state_slot], plan.req_state_tail,
+          const int state_tail_requirement =
+              runtime.has_state &&
+                      (args.refresh_recurrent_state_post ||
+                       args.refresh_recurrent_state_post_layers.count(layer_index) > 0)
+                  ? args.multiplicative_depth
+                  : plan.req_state_tail;
+          maybe_bootstrap(runtime.state_cts[state_slot], state_tail_requirement,
                           tag + "state_post" + std::to_string(stream * group_count + group),
                           layer_bootstraps);
           ckks_levels[tag + state_name] =
@@ -3721,25 +4642,64 @@ auto main(int argc, char* argv[]) -> int {
         auto combined = add_aligned(y_ssm, skip);
         return mul_aligned(combined, gate_ct);
       });
-      // Checkpoint: y enters the gated-norm variance chain and out_proj.
-      maybe_bootstrap(y_ct, plan.req_y, tag + "y", layer_bootstraps);
+      // Keep squared-polynomial payloads in a statically normalized y
+      // coordinate. Its inverse scale is folded into out_proj, so the
+      // RMSNorm result is unchanged while any y refresh stays near unit
+      // magnitude.
+      const double y_normalization =
+          plan.gated_coeffs.empty() ? 1.0 : plan.y_scale;
+      maybe_bootstrap(y_ct, plan.req_y,
+                      tag + (plan.gated_coeffs.empty() ? "y" : "y_scaled"),
+                      layer_bootstraps);
       ckks_levels[tag + "y"] = static_cast<int>(y_ct->GetLevel());
       debug_value_stats(y_ct, tag + "y");
 
-      // Gated RMSNorm on V2 = sum(y^2) + d_inner*eps with constant-guess
-      // Newton; sqrt(w) and the gated norm weights are folded into out_proj,
-      // and inv2 (uniform broadcast) is applied after the BSGS matmul.
+      // Gated RMSNorm on V2 = sum(y^2) + d_inner*eps. New payloads evaluate
+      // a polynomial approximation of v^(-1/4), square it, and apply four
+      // Newton refinements. Legacy payloads retain the normalized
+      // constant-guess path. The gated norm weights (and, for legacy sum
+      // variance payloads, sqrt(w)) are folded into out_proj; the uniform
+      // inverse is applied after the BSGS matmul.
       auto inv_gated = time_phase("gated_norm", [&]() {
         ++ct_ct_muls;
         auto squared = cc->EvalMult(y_ct, y_ct);
         auto variance = norm_variance_sum(squared);
-        variance = add_scalar(variance, d_inner * plan.eps_gated);
-        // First iteration on the constant guess is affine in V.
+        const double y_normalization_squared = y_normalization * y_normalization;
+        variance = add_scalar(
+            variance,
+            d_inner * plan.eps_gated / y_normalization_squared);
+        if (!plan.gated_coeffs.empty()) {
+          auto u = add_scalar(
+              scaled_clone(variance,
+                           plan.a_gated_v * y_normalization_squared),
+              plan.b_gated);
+          const int gated_requirement =
+              cheb_ps_depth(static_cast<int>(plan.gated_coeffs.size()) - 1) +
+              1 + 2 * plan.gated_iterations;
+          maybe_bootstrap(u, gated_requirement,
+                          tag + "gated_poly_input", layer_bootstraps);
+          auto quarter_root = eval_chebyshev(u, plan.gated_coeffs);
+          ++ct_ct_muls;
+          auto guess = cc->EvalMult(quarter_root, quarter_root);
+          guess = scaled_clone(guess, plan.gated_damping_mean);
+          // Refine against the mean variance, not its d_inner-wide sum.
+          // Reconstructing the sum from a bootstrapped affine coordinate
+          // amplifies its refresh error by d_inner before every Newton step.
+          auto mean_neg_half = scaled_clone(
+              add_scalar(u->Clone(), -plan.b_gated),
+              -0.5 / (plan.a_gated_v * static_cast<double>(d_inner)));
+          return newton_refine(guess, mean_neg_half, plan.gated_iterations,
+                               tag + "gated_newton", layer_bootstraps);
+        }
         const double c0 = plan.gated_guess_v;
-        auto y_first = add_scalar(scaled_clone(variance, -0.5 * c0 * c0 * c0), 1.5 * c0);
-        auto v_neg_half = scaled_clone(variance, -0.5);
-        return newton_refine(y_first, v_neg_half, plan.gated_iterations - 1,
-                             tag + "gated_newton", layer_bootstraps);
+        auto u_neg_half = scaled_clone(variance, -0.5 * c0 * c0);
+        maybe_bootstrap(u_neg_half, kNewtonSegmentEstimate,
+                        tag + "gated_variance", layer_bootstraps);
+        // First iteration from z0=1 is affine in U: z1=1.5-0.5U.
+        auto z_first = add_scalar(u_neg_half->Clone(), 1.5);
+        auto z = newton_refine(z_first, u_neg_half, plan.gated_iterations - 1,
+                               tag + "gated_newton", layer_bootstraps);
+        return scaled_clone(z, c0);
       });
       ckks_levels[tag + "gated_inv"] = static_cast<int>(inv_gated->GetLevel());
       debug_value_stats(inv_gated, tag + "gated_inv");
@@ -3787,6 +4747,11 @@ auto main(int argc, char* argv[]) -> int {
     std::map<std::string, int> summary_level_out;
     std::map<std::string, double> debug_boundary_errors;
     std::map<std::string, int> summary_bootstraps;
+    std::vector<int> autoregressive_selected_ids;
+    std::vector<double> autoregressive_next_embedding;
+    std::vector<std::vector<double>> autoregressive_decrypted_outputs(
+        static_cast<std::size_t>(args.tokens));
+    double autoregressive_client_seconds = 0.0;
     auto layer_key = [](int token, int layer) {
       std::string layer_text = std::to_string(layer);
       if (layer_text.size() < 2) {
@@ -3795,78 +4760,146 @@ auto main(int argc, char* argv[]) -> int {
       return "t" + std::to_string(token) + ".L" + layer_text;
     };
     const std::vector<double>& input_vectors =
-        chain_mode ? chain.input_embeddings
+        args.autoregressive_client_loop ? chain.autoregressive_embeddings
+        : chain_mode ? chain.input_embeddings
                    : layer_payloads.front().tensors.at("test_layer_input");
 
     for (int token = 0; token < args.tokens; ++token) {
-      if (args.bootstrap_before_token.count(token) > 0) {
-        const auto bootstrap_start = now();
-        time_phase("bootstrap", [&]() {
-          for (auto& runtime : layer_runtimes) {
-            if (!runtime.has_state) {
-              continue;
-            }
-            for (auto& state_ct : runtime.state_cts) {
-              state_ct = cc->EvalBootstrap(state_ct);
-              ++bootstraps;
-            }
-            for (auto& fifo_ct : runtime.conv_fifo) {
-              fifo_ct = cc->EvalBootstrap(fifo_ct);
-              ++bootstraps;
-            }
+      int token_bootstraps_total = 0;
+      if (args.debug_client_reencrypt_before_token.count(token) > 0) {
+        const auto reencrypt_start = now();
+        for (std::size_t layer = 0; layer < layer_runtimes.size(); ++layer) {
+          auto& runtime = layer_runtimes[layer];
+          if (!runtime.has_state) {
+            continue;
           }
-        });
-        bootstrap_eval_seconds += seconds_since(bootstrap_start);
+          const std::string tag =
+              layer_key(token, static_cast<int>(layer)) + ".client_reencrypt.";
+          const auto reencrypt = [&](Ciphertext<DCRTPoly>& ciphertext,
+                                     const std::string& name) {
+            auto slots = decrypt_slots(cc, secret_key, ciphertext,
+                                       static_cast<std::size_t>(batch_size));
+            ciphertext = encrypt_values(slots);
+            ++debug_client_reencrypt_ciphertexts;
+            ckks_levels[tag + name] = static_cast<int>(ciphertext->GetLevel());
+          };
+          for (std::size_t state = 0; state < runtime.state_cts.size(); ++state) {
+            reencrypt(runtime.state_cts[state], "state" + std::to_string(state));
+          }
+          for (std::size_t fifo = 0; fifo < runtime.conv_fifo.size(); ++fifo) {
+            reencrypt(runtime.conv_fifo[fifo], "fifo" + std::to_string(fifo));
+          }
+        }
+        debug_client_reencrypt_seconds += seconds_since(reencrypt_start);
+        log_phase("DEBUG client re-encrypt before token " + std::to_string(token) +
+                  " done ciphertexts=" +
+                  std::to_string(debug_client_reencrypt_ciphertexts));
+      }
+      if (args.bootstrap_before_token.count(token) > 0) {
+        for (std::size_t layer = 0; layer < layer_runtimes.size(); ++layer) {
+          auto& runtime = layer_runtimes[layer];
+          if (!runtime.has_state) {
+            continue;
+          }
+          const auto& plan = layer_plans[layer];
+          active_state_bound = plan.state_abs_max;
+          active_state_group_bounds = plan.state_group_abs_max;
+          active_fifo_bound = plan.fifo_abs_max;
+          active_checkpoint_bounds = plan.checkpoint_abs_max;
+          const std::string tag = layer_key(token, static_cast<int>(layer)) + ".scheduled.";
+          for (std::size_t state = 0; state < runtime.state_cts.size(); ++state) {
+            maybe_bootstrap(runtime.state_cts[state], args.multiplicative_depth,
+                            tag + "state" + std::to_string(state),
+                            token_bootstraps_total);
+          }
+          for (std::size_t fifo = 0; fifo < runtime.conv_fifo.size(); ++fifo) {
+            maybe_bootstrap(runtime.conv_fifo[fifo], args.multiplicative_depth,
+                            tag + "fifo" + std::to_string(fifo),
+                            token_bootstraps_total);
+          }
+        }
         log_phase("bootstrap before token " + std::to_string(token) + " done");
       }
 
       // Encrypt this token's layer input / embedding exactly once.
       auto hidden_ct = time_phase("encrypt_input", [&]() {
+        if (args.process_role == "server-eval") {
+          return deserialize_ciphertext(
+              fs::path(args.handoff_dir) / "exchange" /
+                  ("input_t" + std::to_string(token) + ".ct"),
+              cc);
+        }
         std::vector<double> hidden(batch, 0.0);
+        const bool generated_input =
+            args.autoregressive_client_loop &&
+            token >= chain.autoregressive_prompt_tokens;
+        if (generated_input &&
+            autoregressive_next_embedding.size() !=
+                static_cast<std::size_t>(d_model)) {
+          throw std::runtime_error("missing client-selected autoregressive embedding");
+        }
         for (int stream = 0; stream < args.streams; ++stream) {
           const auto base = static_cast<std::size_t>(stream * stream_stride);
           for (int slot = 0; slot < d_model; ++slot) {
             hidden[base + static_cast<std::size_t>(slot)] =
-                input_vectors[static_cast<std::size_t>(token) * d_model + slot];
+                generated_input
+                    ? autoregressive_next_embedding[static_cast<std::size_t>(slot)]
+                    : input_vectors[static_cast<std::size_t>(token) * d_model + slot];
           }
         }
         return encrypt_values(hidden);
       });
 
-      int token_bootstraps_total = 0;
       for (int layer = 0; layer < layers_loaded; ++layer) {
         const std::string key = layer_key(token, layer);
         const std::string tag = key + ".";
         int layer_bootstraps = 0;
-        maybe_bootstrap(hidden_ct, layer_plans[static_cast<std::size_t>(layer)].req_residual,
-                        tag + "residual", layer_bootstraps);
+        const auto& plan = layer_plans[static_cast<std::size_t>(layer)];
+        // The residual checkpoint is outside run_layer, so select this
+        // layer's calibrated bounds before refreshing the handoff.
+        active_state_bound = plan.state_abs_max;
+        active_state_group_bounds = plan.state_group_abs_max;
+        active_fifo_bound = plan.fifo_abs_max;
+        active_checkpoint_bounds = plan.checkpoint_abs_max;
+        maybe_bootstrap(hidden_ct, plan.req_residual, tag + "residual",
+                        layer_bootstraps);
         summary_level_in[key] = static_cast<int>(hidden_ct->GetLevel());
-        hidden_ct = run_layer(layer_plans[static_cast<std::size_t>(layer)],
-                              layer_runtimes[static_cast<std::size_t>(layer)],
+        hidden_ct = run_layer(plan,
+                              layer_runtimes[static_cast<std::size_t>(layer)], layer,
                               hidden_ct, tag, layer_bootstraps);
         summary_level_out[key] = static_cast<int>(hidden_ct->GetLevel());
         summary_bootstraps[key] = layer_bootstraps;
         token_bootstraps_total += layer_bootstraps;
         if (args.debug_layer_errors) {
+          const auto& layer_payload = layer_payloads[static_cast<std::size_t>(layer)];
+          const auto poly_boundary = layer_payload.tensors.find("test_layer_output_poly");
           const auto& boundary =
-              layer_plans[static_cast<std::size_t>(layer)].test_layer_output;
-          const auto slots =
-              decrypt_slots(cc, keys.secretKey, hidden_ct,
-                            static_cast<std::size_t>(d_model));
+              poly_boundary != layer_payload.tensors.end()
+                  ? poly_boundary->second
+                  : layer_plans[static_cast<std::size_t>(layer)].test_layer_output;
           double boundary_error = 0.0;
           int non_finite = 0;
-          for (int slot = 0; slot < d_model; ++slot) {
-            const double diff = std::abs(
-                slots[static_cast<std::size_t>(slot)] -
-                boundary[static_cast<std::size_t>(token) * d_model + slot]);
-            if (!std::isfinite(diff)) {
-              ++non_finite;
-              continue;
+          try {
+            const auto slots =
+                decrypt_slots(cc, secret_key, hidden_ct,
+                              static_cast<std::size_t>(d_model));
+            for (int slot = 0; slot < d_model; ++slot) {
+              const double diff = std::abs(
+                  slots[static_cast<std::size_t>(slot)] -
+                  boundary[static_cast<std::size_t>(token) * d_model + slot]);
+              if (!std::isfinite(diff)) {
+                ++non_finite;
+                continue;
+              }
+              boundary_error = std::max(boundary_error, diff);
             }
-            boundary_error = std::max(boundary_error, diff);
-          }
-          if (non_finite > 0) {
+            if (non_finite > 0) {
+              boundary_error = 1.0e308;
+            }
+          } catch (const std::exception& exc) {
             boundary_error = 1.0e308;
+            non_finite = d_model;
+            log_phase("DEBUG boundary " + key + " decrypt_failed error=" + exc.what());
           }
           debug_boundary_errors[key] = boundary_error;
           log_phase("DEBUG boundary " + key + " error=" +
@@ -3879,13 +4912,21 @@ auto main(int argc, char* argv[]) -> int {
 
       if (full_chain) {
         int final_bootstraps = 0;
+        // Keep the large final residual in normalized coordinates. Undoing
+        // this scale after BTS would amplify its refresh noise by O(10^3),
+        // and RMSNorm cancels the scale analytically anyway.
+        hidden_ct = scaled_clone(hidden_ct, 1.0 / final_norm_scale);
         maybe_bootstrap(hidden_ct, final_norm_requirement,
-                        "t" + std::to_string(token) + ".final_norm", final_bootstraps);
+                        "t" + std::to_string(token) + ".final_norm_scaled",
+                        final_bootstraps);
         hidden_ct = time_phase("final_norm", [&]() {
           ++ct_ct_muls;
           auto squared = cc->EvalMult(hidden_ct, hidden_ct);
           auto variance = norm_variance_sum(squared);
-          variance = add_scalar(variance, d_model * chain.final_norm_eps);
+          variance = add_scalar(
+              variance,
+              d_model * chain.final_norm_eps /
+                  (final_norm_scale * final_norm_scale));
           auto u = add_scalar(scaled_clone(variance, final_a_rms_v), final_b_rms);
           auto guess = eval_chebyshev(u, final_rms_coeffs);
           auto v_neg_half = scaled_clone(variance, -0.5);
@@ -3898,8 +4939,73 @@ auto main(int argc, char* argv[]) -> int {
         token_bootstraps_total += final_bootstraps;
         ckks_levels["t" + std::to_string(token) + ".final_norm"] =
             static_cast<int>(hidden_ct->GetLevel());
+      } else {
+        // A truncated chain has no next-layer residual checkpoint. Refresh
+        // only when the final ciphertext has fewer than twelve levels left,
+        // using the independently calibrated layer-output bound.
+        constexpr int kDecryptHeadroom = 12;
+        int final_output_bootstraps = 0;
+        const int output_requirement =
+            std::max(0, kDecryptHeadroom - args.auto_bootstrap_headroom);
+        maybe_bootstrap(hidden_ct, output_requirement,
+                        "t" + std::to_string(token) + ".output",
+                        final_output_bootstraps);
+        token_bootstraps_total += final_output_bootstraps;
+        ckks_levels["t" + std::to_string(token) + ".output"] =
+            static_cast<int>(hidden_ct->GetLevel());
+      }
+      if (args.autoregressive_client_loop &&
+          token >= chain.autoregressive_prompt_tokens - 1) {
+        const auto client_start = now();
+        auto client_hidden = decrypt_slots(
+            cc, secret_key, hidden_ct, static_cast<std::size_t>(d_model));
+        const auto& lm_head = chain.client_lm_head_w.empty()
+                                  ? chain.client_embedding_w
+                                  : chain.client_lm_head_w;
+        int selected_id = -1;
+        double selected_logit = -std::numeric_limits<double>::infinity();
+        for (int vocab = 0; vocab < chain.autoregressive_vocab_size; ++vocab) {
+          double logit = chain.client_lm_head_b.empty()
+                             ? 0.0
+                             : chain.client_lm_head_b[static_cast<std::size_t>(vocab)];
+          const auto row = static_cast<std::size_t>(vocab) * d_model;
+          for (int slot = 0; slot < d_model; ++slot) {
+            logit += lm_head[row + static_cast<std::size_t>(slot)] *
+                     client_hidden[static_cast<std::size_t>(slot)];
+          }
+          if (!std::isfinite(logit)) {
+            throw std::runtime_error("non-finite autoregressive client logit");
+          }
+          if (logit > selected_logit) {
+            selected_logit = logit;
+            selected_id = vocab;
+          }
+        }
+        if (selected_id < 0) {
+          throw std::runtime_error("autoregressive client argmax failed");
+        }
+        autoregressive_selected_ids.push_back(selected_id);
+        autoregressive_decrypted_outputs[static_cast<std::size_t>(token)] =
+            std::move(client_hidden);
+        if (token + 1 < args.tokens) {
+          const auto row = static_cast<std::size_t>(selected_id) * d_model;
+          autoregressive_next_embedding.assign(
+              chain.client_embedding_w.begin() + static_cast<std::ptrdiff_t>(row),
+              chain.client_embedding_w.begin() +
+                  static_cast<std::ptrdiff_t>(row + d_model));
+        }
+        autoregressive_client_seconds += seconds_since(client_start);
+        log_phase("autoregressive client round trip after token " +
+                  std::to_string(token) + " selected_id=" +
+                  std::to_string(selected_id));
       }
       token_outputs.push_back(hidden_ct);
+      if (args.autoregressive_client_loop &&
+          !autoregressive_decrypted_outputs[static_cast<std::size_t>(token)].empty()) {
+        // The client already consumed this output; retain only its plaintext
+        // measurement instead of pinning one ciphertext per generated token.
+        token_outputs.back() = nullptr;
+      }
       token_bootstrap_counts.push_back(token_bootstraps_total);
       log_phase("token " + std::to_string(token) + " done output_level=" +
                 std::to_string(hidden_ct->GetLevel()) +
@@ -3910,22 +5016,93 @@ auto main(int argc, char* argv[]) -> int {
               " ct_pt=" + std::to_string(ct_pt_muls) + " ct_ct=" + std::to_string(ct_ct_muls) +
               " bootstraps=" + std::to_string(bootstraps));
 
+    if (args.process_role == "server-eval") {
+      const fs::path root(args.handoff_dir);
+      const auto server_dir = root / "server";
+      const auto exchange_dir = root / "exchange";
+      int server_secret_key_files = 0;
+      for (const auto& entry : fs::recursive_directory_iterator(server_dir)) {
+        if (entry.is_regular_file() &&
+            entry.path().filename().string().find("secret") !=
+                std::string::npos) {
+          ++server_secret_key_files;
+        }
+      }
+      if (server_secret_key_files != 0) {
+        throw std::runtime_error(
+            "server secret-key audit failed before output serialization");
+      }
+      for (int token = 0; token < args.tokens; ++token) {
+        auto& output = token_outputs[static_cast<std::size_t>(token)];
+        serialize_ciphertext(
+            exchange_dir /
+                ("output_t" + std::to_string(token) + ".ct"),
+            cc, public_key, output);
+      }
+      std::ostringstream result;
+      result << "{";
+      write_artifact_prefix(result, args);
+      result << "\"status\":\"passed\",\"passed\":true,";
+      result << "\"parameters\":{\"process_role\":\"server-eval\",";
+      result << "\"tokens\":" << args.tokens << ",\"layers\":"
+             << layers_loaded << "},";
+      result << "\"measurements\":{\"encrypted_outputs_written\":"
+             << args.tokens << ",\"server_secret_key_files\":"
+             << server_secret_key_files << ",\"eval_seconds\":"
+             << eval_seconds << "},";
+      result << "\"operation_counts\":{\"rotations\":" << rotations
+             << ",\"ct_pt_mul\":" << ct_pt_muls
+             << ",\"ct_ct_mul\":" << ct_ct_muls << ",\"adds\":"
+             << adds << ",\"bootstraps\":" << bootstraps << "},";
+      result << "\"measurement_scope\":{";
+      result << "\"client_server_process_separation\":true,";
+      result << "\"server_secret_key_loaded\":false,";
+      result << "\"encrypted_full_layer_chain_evaluated\":"
+             << (full_chain ? "true" : "false") << ",";
+      result << "\"full_model_correctness_claimed\":false,";
+      result << "\"claim\":\"Secret-key-free server evaluation and "
+                "encrypted output serialization; correctness is established "
+                "only by the separate client-decrypt phase.\"}";
+      result << "}";
+      write_payload(args.output_json, result.str());
+      return EXIT_SUCCESS;
+    }
+
     // -----------------------------------------------------------------------
     // Decrypt per-token outputs (only after the loop) and compare.
     // -----------------------------------------------------------------------
     const auto decrypt_start = now();
     log_phase("decrypt begin");
-    // Single layer: compare against the layer's test vectors. Truncated
-    // chain: the residual after the last loaded layer must match that layer's
-    // exact-op boundary vectors. Full chain: compare the final-norm output.
-    const std::vector<double>& test_output =
-        chain_mode ? (full_chain ? chain.expected_final
+    // Cryptographic correctness compares against the identical polynomial
+    // circuit. Exact-op vectors remain a separate approximation-quality
+    // measurement. Older payloads have only the exact vectors and retain the
+    // legacy behavior.
+    const std::vector<double>& exact_test_output =
+        args.autoregressive_client_loop
+            ? chain.autoregressive_expected_exact_final
+        : chain_mode ? (full_chain ? chain.expected_final
                                  : layer_payloads.back().tensors.at("test_layer_output"))
                    : layer_payloads.front().tensors.at("test_layer_output");
+    const bool has_poly_reference =
+        args.autoregressive_client_loop || (chain_mode &&
+        (full_chain ? !chain.expected_poly_final.empty()
+                    : layer_payloads.back().tensors.count("test_layer_output_poly") > 0));
+    const std::vector<double>& test_output =
+        args.autoregressive_client_loop
+            ? chain.autoregressive_expected_poly_final
+        : has_poly_reference
+            ? (full_chain
+                   ? chain.expected_poly_final
+                   : layer_payloads.back().tensors.at("test_layer_output_poly"))
+            : exact_test_output;
     std::vector<double> per_token_errors;
+    std::vector<double> per_token_exact_errors;
+    std::vector<int> per_token_decrypt_ok;
     std::vector<double> token0_decrypted_sample;
     std::vector<double> token0_expected_sample;
+    std::vector<double> token0_exact_sample;
     double max_error = 0.0;
+    double max_exact_error = 0.0;
     double max_interstream_deviation = 0.0;
     for (int token = 0; token < args.tokens; ++token) {
       // Decrypt through the last stream's stride; every stream's output is
@@ -3933,16 +5110,36 @@ auto main(int argc, char* argv[]) -> int {
       // through circuit-independent lineages, so agreement IS the check).
       const auto decrypt_length = static_cast<std::size_t>(
           (args.streams - 1) * stream_stride + d_model);
-      const auto slots = decrypt_slots(
-          cc, keys.secretKey, token_outputs[static_cast<std::size_t>(token)],
-          decrypt_length);
+      std::vector<double> slots;
+      try {
+        const auto& cached =
+            autoregressive_decrypted_outputs[static_cast<std::size_t>(token)];
+        slots = cached.empty()
+                    ? decrypt_slots(
+                          cc, secret_key,
+                          token_outputs[static_cast<std::size_t>(token)],
+                          decrypt_length)
+                    : cached;
+        per_token_decrypt_ok.push_back(1);
+      } catch (const std::exception& exc) {
+        per_token_decrypt_ok.push_back(0);
+        per_token_errors.push_back(1.0e308);
+        per_token_exact_errors.push_back(1.0e308);
+        max_error = 1.0e308;
+        max_exact_error = 1.0e308;
+        log_phase("token " + std::to_string(token) +
+                  " decrypt_failed error=" + exc.what());
+        continue;
+      }
       if (token == 0) {
         for (int slot = 0; slot < std::min(8, d_model); ++slot) {
           token0_decrypted_sample.push_back(slots[static_cast<std::size_t>(slot)]);
           token0_expected_sample.push_back(test_output[static_cast<std::size_t>(slot)]);
+          token0_exact_sample.push_back(exact_test_output[static_cast<std::size_t>(slot)]);
         }
       }
       double token_error = 0.0;
+      double token_exact_error = 0.0;
       int non_finite_slots = 0;
       for (int stream = 0; stream < args.streams; ++stream) {
         const auto base = static_cast<std::size_t>(stream * stream_stride);
@@ -3950,7 +5147,10 @@ auto main(int argc, char* argv[]) -> int {
           const double decrypted = slots[base + static_cast<std::size_t>(slot)];
           const double reference =
               test_output[static_cast<std::size_t>(token) * d_model + slot];
+          const double exact_reference =
+              exact_test_output[static_cast<std::size_t>(token) * d_model + slot];
           const double diff = std::abs(decrypted - reference);
+          const double exact_diff = std::abs(decrypted - exact_reference);
           if (!std::isfinite(diff)) {
             // NaN/Inf must fail loudly: std::max(0.0, NaN) silently returns
             // 0.0 and would report a broken decrypt as a perfect one.
@@ -3958,6 +5158,7 @@ auto main(int argc, char* argv[]) -> int {
             continue;
           }
           token_error = std::max(token_error, diff);
+          token_exact_error = std::max(token_exact_error, exact_diff);
           if (stream > 0) {
             const double stream0_value = slots[static_cast<std::size_t>(slot)];
             const double deviation = std::abs(decrypted - stream0_value);
@@ -3970,18 +5171,26 @@ auto main(int argc, char* argv[]) -> int {
       if (non_finite_slots > 0) {
         // JSON-safe sentinel (prints as a finite double, always > tolerance).
         token_error = 1.0e308;
+        token_exact_error = 1.0e308;
       }
       per_token_errors.push_back(token_error);
+      per_token_exact_errors.push_back(token_exact_error);
       max_error = std::max(max_error, token_error);
+      max_exact_error = std::max(max_exact_error, token_exact_error);
       log_phase("token " + std::to_string(token) + " max_abs_error=" +
                 std::to_string(token_error) +
+                " max_abs_error_vs_exact=" + std::to_string(token_exact_error) +
                 " non_finite_slots=" + std::to_string(non_finite_slots) +
                 " slot0=" + std::to_string(slots[0]) +
                 " ref0=" + std::to_string(test_output[static_cast<std::size_t>(token) * d_model]));
     }
     const double decrypt_seconds = seconds_since(decrypt_start);
     log_phase("decrypt done");
-    const bool passed = max_error <= args.tolerance;
+    const bool autoregressive_tokens_match =
+        !args.autoregressive_client_loop ||
+        autoregressive_selected_ids ==
+            chain.autoregressive_expected_generated_ids;
+    const bool passed = max_error <= args.tolerance && autoregressive_tokens_match;
 
     std::ostringstream out;
     out << "{";
@@ -4011,13 +5220,30 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"baby_step_in\":" << kBabyStepIn << ",";
     out << "\"baby_step_out\":" << kBabyStepOut << ",";
     out << "\"chain_mode\":" << (chain_mode ? "true" : "false") << ",";
+    out << "\"process_role\":\"" << json_escape(args.process_role) << "\",";
+    out << "\"autoregressive_client_loop\":"
+        << (args.autoregressive_client_loop ? "true" : "false") << ",";
+    out << "\"autoregressive_prompt_tokens\":"
+        << (args.autoregressive_client_loop
+                ? chain.autoregressive_prompt_tokens
+                : 0)
+        << ",";
+    out << "\"autoregressive_generate_tokens\":"
+        << (args.autoregressive_client_loop
+                ? chain.autoregressive_generate_tokens
+                : 0)
+        << ",";
     out << "\"n_layers_total\":" << (chain_mode ? chain.n_layers : 1) << ",";
     out << "\"n_layers_loaded\":" << layers_loaded << ",";
     out << "\"max_layers\":" << args.max_layers << ",";
     out << "\"final_norm_applied\":" << (full_chain ? "true" : "false") << ",";
     out << "\"auto_bootstrap_headroom\":" << args.auto_bootstrap_headroom << ",";
+    out << "\"residual_bootstrap_headroom\":"
+        << args.residual_bootstrap_headroom << ",";
+    out << "\"carried_bootstrap_headroom\":" << args.carried_bootstrap_headroom << ",";
     out << "\"streams\":" << args.streams << ",";
     out << "\"stream_stride\":" << stream_stride << ",";
+    out << "\"level_align_mode\":\"" << json_escape(args.level_align_mode) << "\",";
     out << "\"bsgs_layout\":{";
     out << "\"mode\":\"" << json_escape(args.bsgs_replicas) << "\",";
     out << "\"in_replicas\":" << rep_in.replicas << ",";
@@ -4029,20 +5255,60 @@ auto main(int argc, char* argv[]) -> int {
     out << "},";
     out << "\"bootstrap_norm_margin\":" << args.bootstrap_norm_margin << ",";
     out << "\"state_bootstrap_margin\":" << args.state_bootstrap_margin << ",";
+    out << "\"final_norm_scale\":" << final_norm_scale << ",";
+    out << "\"carried_bounds_source\":\""
+        << (all_carried_bounds_calibrated ? "calibration-text" : "generic-fallback")
+        << "\",";
+    out << "\"carried_state_bounds_granularity\":\""
+        << (all_state_head_bounds_calibrated ? "head-group" : "layer") << "\",";
+    out << "\"transient_bounds_source\":\""
+        << (all_checkpoint_bounds_calibrated ? "calibration-text" : "generic-fallback")
+        << "\",";
+    out << "\"carried_state_abs_max\":" << dims_payload.state_abs_max << ",";
+    out << "\"carried_fifo_abs_max\":" << dims_payload.fifo_abs_max << ",";
     out << "\"bootstrap_before_token\":";
     write_int_set_json(out, args.bootstrap_before_token);
+    out << ",\"debug_client_reencrypt_before_token\":";
+    write_int_set_json(out, args.debug_client_reencrypt_before_token);
+    out << ",\"refresh_recurrent_state_post\":"
+        << (args.refresh_recurrent_state_post ? "true" : "false");
+    out << ",\"refresh_recurrent_state_post_layers\":";
+    write_int_set_json(out, args.refresh_recurrent_state_post_layers);
     out << "},";
     out << "\"measurements\":{";
     out.precision(12);  // show real CKKS noise digits in errors and samples
+    out << "\"correctness_reference\":\""
+        << (has_poly_reference ? "polynomial-circuit" : "exact-legacy") << "\",";
     out << "\"max_abs_error\":" << max_error << ",";
     out << "\"per_token_max_abs_error\":";
     write_double_vector_json(out, per_token_errors);
     out << ",";
+    out << "\"max_abs_error_vs_exact\":" << max_exact_error << ",";
+    out << "\"per_token_max_abs_error_vs_exact\":";
+    write_double_vector_json(out, per_token_exact_errors);
+    out << ",";
+    out << "\"per_token_decrypt_ok\":";
+    write_int_vector_json(out, per_token_decrypt_ok);
+    out << ",";
+    out << "\"autoregressive_selected_ids\":";
+    write_int_vector_json(out, autoregressive_selected_ids);
+    out << ",";
+    out << "\"autoregressive_expected_ids\":";
+    write_int_vector_json(
+        out, args.autoregressive_client_loop
+                 ? chain.autoregressive_expected_generated_ids
+                 : std::vector<int>{});
+    out << ",";
+    out << "\"autoregressive_tokens_match\":"
+        << (autoregressive_tokens_match ? "true" : "false") << ",";
     out << "\"token0_decrypted_sample\":";
     write_double_vector_json(out, token0_decrypted_sample);
     out << ",";
     out << "\"token0_expected_sample\":";
     write_double_vector_json(out, token0_expected_sample);
+    out << ",";
+    out << "\"token0_exact_sample\":";
+    write_double_vector_json(out, token0_exact_sample);
     out << ",";
     out << "\"max_interstream_deviation\":" << max_interstream_deviation << ",";
     out << "\"per_token_bootstrap_count\":";
@@ -4112,6 +5378,19 @@ auto main(int argc, char* argv[]) -> int {
     out << "},";
     out << "\"executed_bootstrap_count\":" << bootstraps << ",";
     out << "\"state_bootstrap_count\":" << state_bootstraps << ",";
+    out << "\"debug_client_reencrypt_ciphertext_count\":"
+        << debug_client_reencrypt_ciphertexts << ",";
+    out << "\"meta_bts\":{";
+    out << "\"enabled\":" << (args.meta_bts ? "true" : "false") << ",";
+    out << "\"alpha\":" << args.meta_bts_alpha << ",";
+    out << "\"state_alpha\":"
+        << (args.state_meta_bts_alpha >= 0 ? args.state_meta_bts_alpha
+                                          : args.meta_bts_alpha)
+        << ",";
+    out << "\"residual_align_mode\":\""
+        << json_escape(args.meta_bts_residual_align_mode) << "\",";
+    out << "\"applied_count\":" << meta_bts_applied;
+    out << "},";
     out << "\"peak_rss_gib\":" << peak_rss_gib() << ",";
     out << "\"rss_gib\":" << rss_gib();
     out << "},";
@@ -4143,6 +5422,10 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"rotate_keygen_seconds\":" << rotate_keygen_seconds << ",";
     out << "\"bootstrap_precompute_seconds\":" << bootstrap_precompute_seconds << ",";
     out << "\"bootstrap_eval_seconds\":" << bootstrap_eval_seconds << ",";
+    out << "\"debug_client_reencrypt_seconds\":"
+        << debug_client_reencrypt_seconds << ",";
+    out << "\"autoregressive_client_seconds\":"
+        << autoregressive_client_seconds << ",";
     out << "\"load_context_seconds\":" << load_context_seconds << ",";
     out << "\"eval_seconds\":" << eval_seconds << ",";
     out << "\"decrypt_seconds\":" << decrypt_seconds;
@@ -4161,6 +5444,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"ct_ct_mul\":" << ct_ct_muls << ",";
     out << "\"adds\":" << adds << ",";
     out << "\"unity_level_align_muls\":" << unity_multiplies << ",";
+    out << "\"direct_level_align_drops\":" << direct_level_drops << ",";
     out << "\"bootstraps\":" << bootstraps;
     out << "},";
     out << "\"measurement_scope\":{";
@@ -4173,7 +5457,26 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"multi_token_ciphertext_state_carry\":true,";
     out << "\"ciphertext_conv_fifo\":true,";
     out << "\"zero_intermediate_decrypts\":"
-        << ((args.debug_decrypt || args.debug_layer_errors) ? "false" : "true") << ",";
+        << ((args.debug_decrypt || args.debug_layer_errors ||
+             !args.debug_client_reencrypt_before_token.empty() ||
+             args.autoregressive_client_loop)
+                ? "false"
+                : "true")
+        << ",";
+    out << "\"autoregressive_client_loop_simulation\":"
+        << (args.autoregressive_client_loop ? "true" : "false") << ",";
+    out << "\"client_server_process_separated\":false,";
+    out << "\"debug_client_reencrypt_simulation\":"
+        << (args.debug_client_reencrypt_before_token.empty() ? "false" : "true") << ",";
+    out << "\"recurrent_state_post_refresh\":"
+        << ((args.refresh_recurrent_state_post ||
+             !args.refresh_recurrent_state_post_layers.empty())
+                ? "true"
+                : "false")
+        << ",";
+    out << "\"recurrent_state_post_refresh_layers\":";
+    write_int_set_json(out, args.refresh_recurrent_state_post_layers);
+    out << ",";
     out << "\"per_token_fresh_embedding_encryption\":true,";
     out << "\"multi_stream_slot_packing\":" << (args.streams > 1 ? "true" : "false") << ",";
     out << "\"streams\":" << args.streams << ",";
@@ -4186,16 +5489,23 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"bootstrap_before_token\":";
     write_int_set_json(out, args.bootstrap_before_token);
     out << ",";
+    out << "\"debug_client_reencrypt_before_token\":";
+    write_int_set_json(out, args.debug_client_reencrypt_before_token);
+    out << ",";
     out << "\"executed_bootstrap_count\":" << bootstraps << ",";
     out << "\"ckks_level_telemetry\":true,";
     out << "\"fideslib_encrypted_execution\":true,";
     out << "\"full_model_correctness_claimed\":false,";
     out << "\"claim\":\"Native FIDESlib encrypted full-width Mamba-2 decode over one or "
            "more checkpoint layers with ciphertext residual handoff, per-layer ciphertext "
-           "state and conv FIFO carry, and mid-circuit auto-bootstrap refresh; token "
-           "embeddings are encrypted fresh per token from payload test vectors. It does "
-           "not claim lm_head decoding or end-to-end model correctness beyond the loaded "
-           "layers.\"";
+           "state and conv FIFO carry, and mid-circuit auto-bootstrap refresh. In "
+        << (args.autoregressive_client_loop
+                ? "autoregressive mode, one-process client simulation decrypts final_norm, "
+                  "runs lm_head/greedy argmax, and freshly encrypts the selected next-token "
+                  "embedding; it does not claim client/server process separation."
+                : "fixed-vector mode, embeddings are encrypted fresh from payload test "
+                  "vectors; it does not claim lm_head decoding.")
+        << "\"";
     out << "},";
     out << "\"notes\":[";
     if (args.streams > 1) {
