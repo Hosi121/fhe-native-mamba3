@@ -157,9 +157,8 @@ struct Config {
   // carried refresh trigger fires one level earlier), bootstrapped again
   // (y2 = -e1*2^alpha + e2), scaled back and added: y1 + y2*2^-alpha =
   // x_n + e2*2^-alpha — refresh error drops eps -> ~eps*2^-alpha. Applied to
-  // carried values and the high-sensitivity gated polynomial path, including
-  // its normalized y checkpoint. Cost per refresh: +1 EvalBootstrap
-  // (~13 ms warm), +2 pt-mults, +1 add.
+  // carried values and the high-sensitivity gated polynomial input. Cost per
+  // refresh: +1 EvalBootstrap (~13 ms warm), +2 pt-mults, +1 add.
   bool meta_bts = false;
   // The local residual probe keeps 2^12 inside the bootstrap message range;
   // 2^16 exceeded it on every measured step.

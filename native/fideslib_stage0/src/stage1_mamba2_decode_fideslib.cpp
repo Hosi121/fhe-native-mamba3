@@ -1719,10 +1719,11 @@ auto main(int argc, char* argv[]) -> int {
       const int level = static_cast<int>(ciphertext->GetLevel());
       const bool carried = is_carried_checkpoint(what);
       const bool residual_checkpoint = what.find("residual") != std::string::npos;
+      const bool normalized_y_checkpoint =
+          what.find("y_scaled") != std::string::npos;
       const bool use_meta_bts =
           args.meta_bts &&
-          (carried || what.find("gated_poly_input") != std::string::npos ||
-           what.find("y_scaled") != std::string::npos);
+          (carried || what.find("gated_poly_input") != std::string::npos);
       // Meta-BTS residual amplification needs one live level after the
       // normalize/rescale, so eligible checkpoints trigger one level earlier.
       const int meta_headroom = use_meta_bts ? 1 : 0;
@@ -1732,6 +1733,11 @@ auto main(int argc, char* argv[]) -> int {
       }
       if (carried) {
         policy_headroom = args.carried_bootstrap_headroom;
+      }
+      if (normalized_y_checkpoint) {
+        // Let the normalized y path consume its exact four-level budget so
+        // the subsequent affine gated input receives the high-precision BTS.
+        policy_headroom = 0;
       }
       if (args.multiplicative_depth - level >=
           requirement + meta_headroom + policy_headroom) {
