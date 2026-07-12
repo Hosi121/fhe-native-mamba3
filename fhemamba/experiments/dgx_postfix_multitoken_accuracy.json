@@ -1,7 +1,7 @@
 {
-  "name": "postfix-24-layer-speed-candidates",
+  "name": "postfix-24-layer-multitoken-accuracy",
   "version": "0.4.4",
-  "timeout_seconds": 1200,
+  "timeout_seconds": 1800,
   "gpu_preflight": {
     "required": true,
     "poll_seconds": 30,
@@ -9,7 +9,7 @@
   },
   "defaults": {
     "LAYERS": "24",
-    "TOKENS": "1",
+    "TOKENS": "2",
     "ARTIFACT_VERSION": "0.4.4",
     "REPO_COMMIT": "8b270e4bfed3e27b534a77741e5ad6184e236bf8",
     "RING_DIM": "65536",
@@ -17,6 +17,7 @@
     "SCALING_MOD_SIZE": "59",
     "FIRST_MOD_SIZE": "60",
     "SECURITY": "not-set",
+    "PT_CACHE_GIB": "5",
     "AUTO_HEADROOM": "4",
     "RESIDUAL_HEADROOM": "0",
     "CARRIED_HEADROOM": "0",
@@ -26,26 +27,16 @@
     "META_BTS_RESIDUAL_ALIGN_MODE": "unity",
     "LEVEL_ALIGN_MODE": "drop",
     "BSGS_REPLICAS": "auto",
-    "ROTATION_KEY_GIB": "30",
     "ENCODE_THREADS": "8",
+    "DEBUG_LAYER_ERRORS": "0",
     "REFRESH_RECURRENT_STATE_POST": "1",
+    "ROTATION_KEYS": "balanced",
+    "ROTATION_KEY_GIB": "30",
     "TOLERANCE": "0.05"
   },
   "experiments": [
     {
-      "name": "postfix-balanced30-cache5-l24-t1",
-      "continue_on_infrastructure_failure": true,
-      "env": {
-        "ROTATION_KEYS": "balanced",
-        "PT_CACHE_GIB": "5"
-      }
-    },
-    {
-      "name": "postfix-compact-cache30-l24-t1",
-      "env": {
-        "ROTATION_KEYS": "compact",
-        "PT_CACHE_GIB": "30"
-      }
+      "name": "postfix-balanced30-cache5-l24-t2"
     }
   ]
 }
