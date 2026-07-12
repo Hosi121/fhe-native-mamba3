@@ -1721,7 +1721,8 @@ auto main(int argc, char* argv[]) -> int {
       const bool residual_checkpoint = what.find("residual") != std::string::npos;
       const bool use_meta_bts =
           args.meta_bts &&
-          (carried || what.find("gated_poly_input") != std::string::npos);
+          (carried || what.find("gated_poly_input") != std::string::npos ||
+           what.find("y_scaled") != std::string::npos);
       // Meta-BTS residual amplification needs one live level after the
       // normalize/rescale, so eligible checkpoints trigger one level earlier.
       const int meta_headroom = use_meta_bts ? 1 : 0;
