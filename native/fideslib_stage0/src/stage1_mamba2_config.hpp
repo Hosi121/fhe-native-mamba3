@@ -117,9 +117,9 @@ struct Config {
   // next input. This first implementation is one process and therefore does
   // not claim process or secret-key separation.
   bool autoregressive_client_loop = false;
-  // Refresh recurrent states after decay*state + update. The evaluator first
-  // produces this token's readout, then refreshes the persistent copies for
-  // the next token so carry maintenance is outside the output critical path.
+  // Refresh recurrent states after decay*state + update, immediately before
+  // readout. Refreshing only the carried input cannot remove the extra level
+  // consumed by the recurrent ct-ct multiply.
   bool refresh_recurrent_state_post = false;
   std::set<int> refresh_recurrent_state_post_layers;
   int bootstrap_level_budget_cts = 5;
