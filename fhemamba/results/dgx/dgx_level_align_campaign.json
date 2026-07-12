@@ -1,0 +1,167 @@
+{
+  "backend": "orchestration",
+  "campaign": "level-align-real-ckks-probe",
+  "config": {
+    "input_mode": "campaign-orchestration"
+  },
+  "encrypted": false,
+  "experiments": [
+    {
+      "all_tokens_decrypt": true,
+      "artifact_paths": [
+        "/home/kataiwa/fhemamba/results/m2_chain_levelalign-native-a6-h4-compact-cache20_l2_t2.json"
+      ],
+      "artifacts": [
+        {
+          "measurement_scope": {
+            "full_layer_chain": false,
+            "zero_intermediate_decrypts": true
+          },
+          "measurements": {
+            "executed_bootstrap_count": 38,
+            "max_abs_error": 0.00209979157817,
+            "peak_rss_gib": 33.2802467346,
+            "per_token_decrypt_ok": [
+              1,
+              1
+            ],
+            "per_token_max_abs_error": [
+              0.00102912056878,
+              0.00209979157817
+            ]
+          },
+          "passed": true,
+          "path": "/home/kataiwa/fhemamba/results/m2_chain_levelalign-native-a6-h4-compact-cache20_l2_t2.json",
+          "stage": "stage1-mamba2-decode-fideslib",
+          "status": "passed",
+          "timing": {
+            "eval_seconds": 54.935136864
+          },
+          "version": "0.4.4+m2_chain_levelalign-native-a6-h4-compact-cache20_l2_t2"
+        }
+      ],
+      "candidate_passed": true,
+      "environment": {
+        "ARTIFACT_VERSION": "0.4.4",
+        "AUTO_HEADROOM": "4",
+        "CARRIED_HEADROOM": "0",
+        "DEBUG_LAYER_ERRORS": "0",
+        "FIRST_MOD_SIZE": "60",
+        "LAYERS": "2",
+        "LEVEL_ALIGN_MODE": "native",
+        "META_BTS": "1",
+        "META_BTS_ALPHA": "6",
+        "MULTIPLICATIVE_DEPTH": "44",
+        "PT_CACHE_GIB": "20",
+        "REFRESH_RECURRENT_STATE_POST": "1",
+        "RESIDUAL_HEADROOM": "0",
+        "RING_DIM": "65536",
+        "ROTATION_KEYS": "compact",
+        "ROTATION_KEY_GIB": "45",
+        "RUN_TAG": "levelalign-native-a6-h4-compact-cache20",
+        "SCALING_MOD_SIZE": "59",
+        "SECURITY": "not-set",
+        "STATE_META_BTS_ALPHA": "-1",
+        "TOKENS": "2"
+      },
+      "infrastructure_ok": true,
+      "issues": [],
+      "max_abs_error": 0.00209979157817,
+      "name": "levelalign-native-a6-h4-compact-cache20",
+      "reason": "unconditional",
+      "returncode": 0,
+      "seconds": 73.72719837992918,
+      "state": "executed",
+      "timed_out": false
+    },
+    {
+      "all_tokens_decrypt": true,
+      "artifact_paths": [
+        "/home/kataiwa/fhemamba/results/m2_chain_levelalign-drop-a6-h4-compact-cache20_l2_t2.json"
+      ],
+      "artifacts": [
+        {
+          "measurement_scope": {
+            "full_layer_chain": false,
+            "zero_intermediate_decrypts": true
+          },
+          "measurements": {
+            "executed_bootstrap_count": 38,
+            "max_abs_error": 0.00117431001743,
+            "peak_rss_gib": 33.2082672119,
+            "per_token_decrypt_ok": [
+              1,
+              1
+            ],
+            "per_token_max_abs_error": [
+              0.000869048793375,
+              0.00117431001743
+            ]
+          },
+          "passed": true,
+          "path": "/home/kataiwa/fhemamba/results/m2_chain_levelalign-drop-a6-h4-compact-cache20_l2_t2.json",
+          "stage": "stage1-mamba2-decode-fideslib",
+          "status": "passed",
+          "timing": {
+            "eval_seconds": 54.76120223
+          },
+          "version": "0.4.4+m2_chain_levelalign-drop-a6-h4-compact-cache20_l2_t2"
+        }
+      ],
+      "candidate_passed": true,
+      "environment": {
+        "ARTIFACT_VERSION": "0.4.4",
+        "AUTO_HEADROOM": "4",
+        "CARRIED_HEADROOM": "0",
+        "DEBUG_LAYER_ERRORS": "0",
+        "FIRST_MOD_SIZE": "60",
+        "LAYERS": "2",
+        "LEVEL_ALIGN_MODE": "drop",
+        "META_BTS": "1",
+        "META_BTS_ALPHA": "6",
+        "MULTIPLICATIVE_DEPTH": "44",
+        "PT_CACHE_GIB": "20",
+        "REFRESH_RECURRENT_STATE_POST": "1",
+        "RESIDUAL_HEADROOM": "0",
+        "RING_DIM": "65536",
+        "ROTATION_KEYS": "compact",
+        "ROTATION_KEY_GIB": "45",
+        "RUN_TAG": "levelalign-drop-a6-h4-compact-cache20",
+        "SCALING_MOD_SIZE": "59",
+        "SECURITY": "not-set",
+        "STATE_META_BTS_ALPHA": "-1",
+        "TOKENS": "2"
+      },
+      "infrastructure_ok": true,
+      "issues": [],
+      "max_abs_error": 0.00117431001743,
+      "name": "levelalign-drop-a6-h4-compact-cache20",
+      "reason": "unconditional",
+      "returncode": 0,
+      "seconds": 73.43294510990381,
+      "state": "executed",
+      "timed_out": false
+    }
+  ],
+  "measurement_scope": {
+    "campaign_orchestration_only": true,
+    "candidate_failures_are_not_infrastructure_failures": true,
+    "claim": "Campaign execution and artifact collection only; candidate artifacts carry their own encrypted-correctness claims.",
+    "full_model_correctness_claimed": false
+  },
+  "measurements": {
+    "candidate_passes": 2,
+    "experiments_executed_or_resumed": 2,
+    "experiments_skipped": 0,
+    "experiments_total": 2,
+    "infrastructure_failures": 0
+  },
+  "passed": true,
+  "repo_commit": "working-tree",
+  "stage": "fhemamba-dgx-campaign-report",
+  "status": "passed",
+  "timing": {
+    "campaign_seconds": 147.21336421906017
+  },
+  "version": "0.4.4"
+}
