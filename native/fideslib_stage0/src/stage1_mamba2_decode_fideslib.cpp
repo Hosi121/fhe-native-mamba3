@@ -2888,8 +2888,20 @@ auto main(int argc, char* argv[]) -> int {
               runtime.state_cts[state_slot] = add_aligned(decayed, update);
             }
           });
-          // Checkpoint: the updated state feeds this token's readout and is
-          // the carried lineage for the next token.
+          // Read the freshly updated state before refreshing the persistent
+          // copy for the next token. Otherwise Meta-BTS error from a carry-only
+          // checkpoint is injected into the current token's output.
+          auto y_group = time_phase("readout", [&]() {
+            auto readout =
+                mul_aligned(runtime.state_cts[state_slot]->Clone(), c_expanded->Clone());
+            for (int k = 0; k < int_log2(state_size); ++k) {
+              readout = add_aligned(readout, rotate(readout, group_block << k));
+            }
+            auto masked = mul_mask(readout, "mask.group", group_mask);
+            return rotate(masked, -group_block * group);
+          });
+          // Checkpoint: keep the updated state ready as carried lineage for
+          // the next token without changing this token's readout.
           const int state_tail_requirement =
               runtime.has_state &&
                       (args.refresh_recurrent_state_post ||
@@ -2902,15 +2914,6 @@ auto main(int argc, char* argv[]) -> int {
           ckks_levels[tag + state_name] =
               static_cast<int>(runtime.state_cts[state_slot]->GetLevel());
           debug_value_stats(runtime.state_cts[state_slot], tag + state_name);
-          auto y_group = time_phase("readout", [&]() {
-            auto readout =
-                mul_aligned(runtime.state_cts[state_slot]->Clone(), c_expanded->Clone());
-            for (int k = 0; k < int_log2(state_size); ++k) {
-              readout = add_aligned(readout, rotate(readout, group_block << k));
-            }
-            auto masked = mul_mask(readout, "mask.group", group_mask);
-            return rotate(masked, -group_block * group);
-          });
           if (!has_y_stream) {
             y_stream = y_group;
             has_y_stream = true;
