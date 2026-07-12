@@ -46,6 +46,9 @@ SITE_NAMES = (
 class Exact:
     """Ground-truth nonlinearities. The site argument is ignored."""
 
+    def checkpoint(self, x: Tensor, site: Site) -> Tensor:
+        return x
+
     def silu(self, x: Tensor, site: Site) -> Tensor:
         return F.silu(x)
 
@@ -74,6 +77,10 @@ class RangeRecorder(Exact):
         else:
             self.ranges[site] = (lo, hi)
 
+    def checkpoint(self, x: Tensor, site: Site) -> Tensor:
+        self._record(x, site)
+        return x
+
     def silu(self, x: Tensor, site: Site) -> Tensor:
         self._record(x, site)
         return super().silu(x, site)
@@ -94,6 +101,8 @@ class RangeRecorder(Exact):
         """Union of ranges across layers, keyed by site name."""
         pooled: dict[str, tuple[float, float]] = {}
         for (_, name), (lo, hi) in self.ranges.items():
+            if name not in SITE_NAMES:
+                continue
             if name in pooled:
                 old_lo, old_hi = pooled[name]
                 pooled[name] = (min(lo, old_lo), max(hi, old_hi))

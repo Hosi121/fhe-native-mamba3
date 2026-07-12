@@ -233,7 +233,7 @@ def mixer2_forward(
     state_size = mixer.ssm_state_size
     groups = mixer.n_groups
 
-    projected = mixer.in_proj(input_states)
+    projected = ops.checkpoint(mixer.in_proj(input_states), (layer_idx, "proj"))
     d_mlp = (
         projected.shape[-1] - 2 * mixer.intermediate_size - 2 * groups * state_size - heads
     ) // 2
@@ -245,12 +245,14 @@ def mixer2_forward(
         _stateful_conv(mixer, hidden_bc.transpose(1, 2), state).transpose(1, 2),
         (layer_idx, "conv_silu"),
     )
+    hidden_bc = ops.checkpoint(hidden_bc, (layer_idx, "conv_silu_out"))
     hidden, b_sel, c_sel = torch.split(
         hidden_bc, [mixer.intermediate_size, groups * state_size, groups * state_size], dim=-1
     )
 
     dt = ops.softplus(dt + mixer.dt_bias, (layer_idx, "dt_softplus"))
     dt = torch.clamp(dt, mixer.time_step_limit[0], mixer.time_step_limit[1])
+    dt = ops.checkpoint(dt, (layer_idx, "dt_out"))
     a_cont = -torch.exp(mixer.A_log.float())  # (heads,)
     decay = ops.exp(dt * a_cont, (layer_idx, "decay_exp"))  # (batch, T, heads)
 
@@ -309,6 +311,7 @@ def mixer2_forward(
     y = y.reshape(batch, seq_len, -1)
 
     gated = y * ops.silu(gate, (layer_idx, "gate_silu"))
+    gated = ops.checkpoint(gated, (layer_idx, "y"))
     variance = gated.pow(2).mean(-1, keepdim=True)
     y = mixer.norm.weight * (
         gated
@@ -341,11 +344,12 @@ def model_forward(
     hidden = backbone.embeddings(input_ids)
     collected: list[Tensor] = []
     for idx, block in enumerate(backbone.layers):
-        residual = hidden
+        residual = ops.checkpoint(hidden, (idx, "residual"))
         normed = rms_norm_forward(block.norm, hidden, ops, (idx, "rms_invsqrt"))
         forward_fn = _mixer_dispatch(block.mixer)
         layer_state = states[idx] if states is not None else None
         hidden = residual + forward_fn(block.mixer, normed, ops, idx, scan=scan, state=layer_state)
+        hidden = ops.checkpoint(hidden, (idx, "layer_output"))
         if output_hidden_states:
             collected.append(hidden)
     n_layers = len(backbone.layers)

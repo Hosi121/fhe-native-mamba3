@@ -193,6 +193,236 @@
         "mean_step_delta": 8.37035213859091e-05
       },
       "projected_tokens_to_5e-2": 700.710114317021
+    },
+    "F16_meta_bts_amp16": {
+      "errors": [
+        8.106674886931842e-09,
+        1.2216097688977356e-08,
+        1.1030266255929178e-08,
+        1.7977342003927532e-08,
+        2.1758091273138547e-08,
+        1.9657938221673277e-08,
+        1.922577286261884e-08,
+        2.1954022932924033e-08
+      ],
+      "levels": [
+        23,
+        23,
+        23,
+        23,
+        23,
+        23,
+        23,
+        23
+      ],
+      "seconds": 1191.926,
+      "notes": [
+        {
+          "step": 1,
+          "max_abs_r_amp": 9.820096909616456,
+          "in_range": false
+        },
+        {
+          "step": 2,
+          "max_abs_r_amp": 14.802450614092942,
+          "in_range": false
+        },
+        {
+          "step": 3,
+          "max_abs_r_amp": 11.048255437047398,
+          "in_range": false
+        },
+        {
+          "step": 4,
+          "max_abs_r_amp": 10.103085557857359,
+          "in_range": false
+        },
+        {
+          "step": 5,
+          "max_abs_r_amp": 8.377984714957224,
+          "in_range": false
+        },
+        {
+          "step": 6,
+          "max_abs_r_amp": 16.667272806954234,
+          "in_range": false
+        },
+        {
+          "step": 7,
+          "max_abs_r_amp": 9.869472855094866,
+          "in_range": false
+        },
+        {
+          "step": 8,
+          "max_abs_r_amp": 10.037215330424075,
+          "in_range": false
+        }
+      ],
+      "amp_bits": 16,
+      "fit": {
+        "per_step_slope": 1.9243283018642397e-09,
+        "intercept": 7.831298407376e-09,
+        "linear_r2": 0.7947416215602674,
+        "mean_step_delta": 1.9781925779988843e-09
+      },
+      "projected_tokens_to_5e-2": 25983088.29125617
+    },
+    "F12_meta_bts_amp12": {
+      "errors": [
+        1.1474748723427908e-07,
+        1.5886227400230268e-07,
+        2.0303641634633607e-07,
+        1.9356008107429545e-07,
+        2.6309911760336036e-07,
+        2.4954955979428206e-07,
+        2.652884563136837e-07,
+        3.2428298224473906e-07
+      ],
+      "levels": [
+        23,
+        23,
+        23,
+        23,
+        23,
+        23,
+        23,
+        23
+      ],
+      "seconds": 794.465,
+      "notes": [
+        {
+          "step": 1,
+          "max_abs_r_amp": 0.6630206317644451,
+          "in_range": true
+        },
+        {
+          "step": 2,
+          "max_abs_r_amp": 0.7409163850880265,
+          "in_range": true
+        },
+        {
+          "step": 3,
+          "max_abs_r_amp": 0.6700650247295996,
+          "in_range": true
+        },
+        {
+          "step": 4,
+          "max_abs_r_amp": 0.6821615211772953,
+          "in_range": true
+        },
+        {
+          "step": 5,
+          "max_abs_r_amp": 0.6511091877847952,
+          "in_range": true
+        },
+        {
+          "step": 6,
+          "max_abs_r_amp": 0.6123093152925467,
+          "in_range": true
+        },
+        {
+          "step": 7,
+          "max_abs_r_amp": 0.5535629483351989,
+          "in_range": true
+        },
+        {
+          "step": 8,
+          "max_abs_r_amp": 0.7299853391091309,
+          "in_range": true
+        }
+      ],
+      "amp_bits": 12,
+      "fit": {
+        "per_step_slope": 2.6285212422655102e-08,
+        "intercept": 1.032698409247118e-07,
+        "linear_r2": 0.922970497791669,
+        "mean_step_delta": 2.993364214435143e-08
+      },
+      "projected_tokens_to_5e-2": 1902206.3023947412
+    },
+    "G_kahan_split": {
+      "errors": [
+        0.0004344040527944175,
+        0.0005028430323139599,
+        0.0005986139674081237,
+        0.0006413875137208369,
+        0.0007601832479045001,
+        0.0008724161664237784,
+        0.0008050856101271542,
+        0.000798873183476545
+      ],
+      "errors_hi_only": [
+        0.00046268375581859367,
+        0.0006685820257164021,
+        0.000839997361869349,
+        0.0007902809716913151,
+        0.0009049963619792711,
+        0.0009374163971671567,
+        0.0009567546337046207,
+        0.0012766158084981383
+      ],
+      "levels": [
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22,
+        22
+      ],
+      "seconds": 302.495,
+      "notes": [
+        {
+          "step": 1,
+          "max_abs_h_lo_pre_refresh": 4.28827140122325,
+          "lo_in_range": true
+        },
+        {
+          "step": 2,
+          "max_abs_h_lo_pre_refresh": 4.727787906786783,
+          "lo_in_range": true
+        },
+        {
+          "step": 3,
+          "max_abs_h_lo_pre_refresh": 5.439132049997287,
+          "lo_in_range": true
+        },
+        {
+          "step": 4,
+          "max_abs_h_lo_pre_refresh": 5.889408932905409,
+          "lo_in_range": true
+        },
+        {
+          "step": 5,
+          "max_abs_h_lo_pre_refresh": 7.000407126833096,
+          "lo_in_range": true
+        },
+        {
+          "step": 6,
+          "max_abs_h_lo_pre_refresh": 7.9651917245181245,
+          "lo_in_range": true
+        },
+        {
+          "step": 7,
+          "max_abs_h_lo_pre_refresh": 8.271137708570029,
+          "lo_in_range": true
+        },
+        {
+          "step": 8,
+          "max_abs_h_lo_pre_refresh": 8.587165366046857,
+          "lo_in_range": true
+        }
+      ],
+      "s_bits": 13,
+      "b_lo": 32.0,
+      "fit": {
+        "per_step_slope": 5.955594208418445e-05,
+        "intercept": 0.00040872410739233446,
+        "linear_r2": 0.861291826600155,
+        "mean_step_delta": 5.206701866887536e-05
+      },
+      "projected_tokens_to_5e-2": 832.6839297161756
     }
   },
   "component_per_step_slopes": {
@@ -203,14 +433,21 @@
   "dominant_component": "refresh_noise",
   "dominant_arm": "A_refresh_only",
   "verdict": "refresh_noise dominates the per-token growth (1.240e-04/step vs refresh 1.240e-04, ct-ct mult 9.514e-14, poly-eval delta -9.753e-05); projected token horizon at 0.05 for the dominant arm (A_refresh_only): 399.7039472749984 tokens; realistic arm E: 7.072e-05/step, horizon 700.710114317021 tokens",
-  "mean_bootstrap_eval_seconds": 17.241,
-  "n_bootstraps": 32,
-  "total_seconds": 588.809,
+  "refresh_strategy_verdict": "plain refresh A mean err 9.917e-04; Meta-BTS amp 2^16 mean err 1.649e-08 (60137.2x vs A); Meta-BTS amp 2^12 mean err 2.216e-07 (4476.2x vs A); Kahan split mean err 6.767e-04 (1.5x vs A); Meta-BTS quadratic-class reduction CONFIRMED (amp 2^12 fully in-spec: max|r_amp| <= 0.74; amp 2^16 rode OUT of the nominal |m|<=1 bootstrap range every step, max|r_amp| 8.4-16.7, yet the error still scaled down ~2^-16 -- OpenFHE's mod-raise sine approximation tolerated the excursion, an empirical grace NOT guaranteed to transfer to FIDESlib/GPU); Kahan split arm G is subsumed/pointless as predicted: same 2-bootstraps/step cost as Meta-BTS but only ~1.5x mean error reduction vs plain refresh -- the compensation ciphertext's own refresh re-injects errors of the same order it captured",
+  "mean_bootstrap_eval_seconds": 47.366,
+  "n_bootstraps": 48,
+  "arms_run_this_invocation": [
+    "F16",
+    "F12",
+    "G"
+  ],
+  "total_seconds": 2295.094,
   "notes": [
     "errors are max-abs over all 8192 slots vs a float64 replica of the identical circuit (fit error excluded; arm D reports its poly fit error separately)",
     "arm B never exhausts levels (8 ct-ct mults << depth 40), so the re-encrypt fallback was not needed",
     "poly_eval_noise component = slope(D) - slope(C): D differs from C only by sourcing the decay from an encrypted deg-24 squared-exp evaluation instead of a fresh encryption",
     "OpenFHE EvalBootstrap on a shallow ciphertext (more towers than a bootstrap restores) returns a level-preserving, near-noiseless result (~5e-13) -- useless as a refresh model. Every refresh here first descends noiselessly (Compress to 18 towers, level 23) to force the genuine depth-exhausted refresh (~1.5e-4), matching how the kernel bootstraps",
-    "scale 59 is the validated bootstrap geometry; the dgx kernel bootstraps at scale 40 on GPU (128-bit FIDESlib), so absolute refresh noise there may differ -- attribution ratios are the transferable result"
+    "scale 59 is the validated bootstrap geometry; the dgx kernel bootstraps at scale 40 on GPU (128-bit FIDESlib), so absolute refresh noise there may differ -- attribution ratios are the transferable result",
+    "arm F/G friction log: the r = x - boot(x) subtraction at mismatched levels (deep lazy-scaled x vs level-21 bootstrap output) worked via OpenFHE auto-adjustment with no API friction; the only spec violation was F16's residual amplitude (see refresh_strategy_verdict)"
   ]
 }

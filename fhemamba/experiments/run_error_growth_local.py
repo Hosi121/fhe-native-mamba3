@@ -149,20 +149,29 @@ class Ckks:
         pt.SetLength(BATCH)
         return np.asarray(pt.GetRealPackedValue(), dtype=np.float64)
 
-    def refresh(self, ct):
+    def boot(self, ct):
+        """Raw timed EvalBootstrap (caller manages magnitude and descent)."""
+        t0 = time.perf_counter()
+        out = self.cc.EvalBootstrap(ct)
+        self.bootstrap_seconds.append(time.perf_counter() - t0)
+        return out
+
+    def descend(self, ct):
+        """Noiseless Compress to BOOT_TOWERS so the bootstrap is genuine."""
+        if int(ct.GetLevel()) < DEPTH + 1 - BOOT_TOWERS:
+            ct = self.cc.Compress(ct, BOOT_TOWERS)
+        return ct
+
+    def refresh(self, ct, b_norm: float = B_NORM):
         """Magnitude-normalized bootstrap: descend, x(1/B), EvalBootstrap, xB.
 
         The Compress descent (noiseless tower drop) forces a genuine
         bootstrap; see the BOOT_TOWERS comment.
         """
         cc = self.cc
-        if int(ct.GetLevel()) < DEPTH + 1 - BOOT_TOWERS:
-            ct = cc.Compress(ct, BOOT_TOWERS)
-        ct = cc.EvalMult(ct, 1.0 / B_NORM)
-        t0 = time.perf_counter()
-        ct = cc.EvalBootstrap(ct)
-        self.bootstrap_seconds.append(time.perf_counter() - t0)
-        return cc.EvalMult(ct, B_NORM)
+        ct = self.descend(ct)
+        ct = cc.EvalMult(ct, 1.0 / b_norm)
+        return cc.EvalMult(self.boot(ct), b_norm)
 
     # Chebyshev Paterson-Stockmeyer (port of the kernel/primitives circuit).
     def eval_chebyshev(self, u, coeffs: list[float]):
@@ -321,6 +330,110 @@ def arm_e_additive(he: Ckks, state0: np.ndarray, decay: np.ndarray, updates: np.
     return run_steps(he, he.encrypt(state0), state0.copy(), step, "E")
 
 
+def arm_f_meta_bts(he: Ckks, state0: np.ndarray, amp_bits: int) -> dict:
+    """Meta-BTS refresh: residual-amplified double bootstrap.
+
+    y1 = boot(x/B); r = x/B - y1 (the refresh error, captured by subtraction
+    at the exhausted level -- OpenFHE auto-aligns y1 down to r's level);
+    y2 = boot(r * 2^amp); y = (y1 + y2 * 2^-amp) * B.
+
+    Validity condition: |r * 2^amp| must stay inside the bootstrap message
+    range (~1), else the second bootstrap's sine approximation is evaluated
+    out of range and Meta-BTS *adds* error. max|r_amp| is measured (this is a
+    secret-key-holding harness) and reported per step.
+    """
+    amp = 2.0**amp_bits
+    print(
+        f"[F{amp_bits}] Meta-BTS refresh (amp 2^{amp_bits}): y1=boot(x/B),"
+        f" r=x/B-y1, y2=boot(r*2^{amp_bits}), y=(y1+y2*2^-{amp_bits})*B;"
+        f" {N_STEPS} steps"
+    )
+
+    def step(k, ct, s64, notes):
+        cc = he.cc
+        x_n = cc.EvalMult(he.descend(ct), 1.0 / B_NORM)
+        y1 = he.boot(x_n)
+        r = cc.EvalSub(x_n, y1)  # ~ -(refresh error), auto level-align
+        r_amp = cc.EvalMult(r, amp)
+        r_amp_max = float(np.max(np.abs(he.decrypt(r_amp))))  # diagnostic
+        r_amp = he.descend(r_amp)  # force a genuine second bootstrap
+        y2 = he.boot(r_amp)
+        y = cc.EvalMult(cc.EvalAdd(y1, cc.EvalMult(y2, 1.0 / amp)), B_NORM)
+        notes.append({"step": k + 1, "max_abs_r_amp": r_amp_max, "in_range": r_amp_max <= 1.0})
+        # float64 replica: boot = identity => r = 0, y2 = 0, y = x.
+        return y, (s64 * (1.0 / B_NORM)) * B_NORM
+
+    out = run_steps(he, he.encrypt(state0), state0.copy(), step, f"F{amp_bits}")
+    out["amp_bits"] = amp_bits
+    return out
+
+
+def arm_g_kahan(he: Ckks, state0: np.ndarray, decay: np.ndarray, updates: np.ndarray) -> dict:
+    """Compensated (Kahan-style) split recurrence.
+
+    State kept as (h_hi, h_lo) with h = h_hi + 2^-13 * h_lo. Per step:
+      t      = decay * h_hi + update          (the recurrence on the hi part)
+      h_hi'  = plain refresh(t)               (B = 3)
+      r      = t - h_hi'                      (captured refresh residual)
+      h_lo'  = refresh_lo(decay * h_lo + 2^13 * r)   (B_lo = 32)
+    so the cross/compensation term is folded into h_lo and the reconstruction
+    h_hi' + 2^-13 h_lo' algebraically cancels the hi refresh error up to the
+    lo lineage's own noise. Error is measured on the reconstructed h against
+    the float64 replica (replica refresh = identity => replica lo stays 0).
+    The uncompensated hi-only error is reported alongside for comparison.
+    """
+    s_bits = 13
+    s = 2.0**-s_bits
+    b_lo = 32.0  # |h_lo| grows ~ 2^13 * B*refresh-err per step (~3.7): 8 steps < 32
+    print(
+        f"[G] Kahan-split recurrence: h = h_hi + 2^-{s_bits}*h_lo,"
+        f" hi refresh B={B_NORM:g}, lo refresh B={b_lo:g}; {N_STEPS} steps"
+    )
+    cc = he.cc
+    hi = he.encrypt(state0)
+    lo = he.encrypt(np.zeros(BATCH))
+    hi64 = state0.copy()
+    errors, errors_hi_only, levels, notes = [], [], [], []
+    started = time.perf_counter()
+    for k in range(N_STEPS):
+        t = cc.EvalAdd(cc.EvalMult(hi, he.encrypt(decay)), he.encrypt(updates[k]))
+        hi_new = he.refresh(t)
+        r = cc.EvalSub(t, hi_new)  # captured refresh residual
+        lo = cc.EvalAdd(cc.EvalMult(lo, he.encrypt(decay)), cc.EvalMult(r, 2.0**s_bits))
+        lo_max = float(np.max(np.abs(he.decrypt(lo))))  # diagnostic
+        lo = he.refresh(lo, b_norm=b_lo)
+        hi = hi_new
+        # float64 replica of the same circuit: refresh = identity => r64 = 0
+        # and lo64 stays 0; h64 is just the plain recurrence.
+        hi64 = (hi64 * decay + updates[k]) * (1.0 / B_NORM) * B_NORM
+        h_rec = he.decrypt(hi) + s * he.decrypt(lo)
+        err = float(np.max(np.abs(h_rec - hi64)))
+        err_hi = float(np.max(np.abs(he.decrypt(hi) - hi64)))
+        errors.append(err)
+        errors_hi_only.append(err_hi)
+        levels.append(int(hi.GetLevel()))
+        notes.append(
+            {"step": k + 1, "max_abs_h_lo_pre_refresh": lo_max, "lo_in_range": lo_max <= b_lo}
+        )
+        print(
+            f"  step {k + 1}: level {levels[-1]}"
+            f" | reconstructed max err = {err:.3e}"
+            f" | hi-only max err = {err_hi:.3e}",
+            flush=True,
+        )
+    seconds = time.perf_counter() - started
+    print(f"  arm G: {seconds:.1f}s")
+    return {
+        "errors": errors,
+        "errors_hi_only": errors_hi_only,
+        "levels": levels,
+        "seconds": round(seconds, 3),
+        "notes": notes,
+        "s_bits": s_bits,
+        "b_lo": b_lo,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Fit + verdict.
 # ---------------------------------------------------------------------------
@@ -345,6 +458,17 @@ def horizon(fit: dict, target: float = ERROR_TARGET):
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--arms",
+        default="A,B,C,D,E,F16,F12,G",
+        help="comma list from A,B,C,D,E,F16,F12,G; results of"
+        " arms not run are merged from the existing JSON",
+    )
+    selected = [a.strip().upper() for a in parser.parse_args().arms.split(",") if a.strip()]
+
     total_start = time.perf_counter()
     rng = np.random.default_rng(SEED)
 
@@ -406,13 +530,26 @@ def main() -> None:
         flush=True,
     )
 
-    arms = {
-        "A_refresh_only": arm_a_refresh_only(he, state0),
-        "B_decay_mult_only": arm_b_mult_only(he, state0, decay),
-        "C_decay_plus_refresh": arm_c_decay_refresh(he, state0, decay),
-        "D_poly_in_the_loop": arm_d_poly_loop(he, state0, dt_steps),
-        "E_additive_update": arm_e_additive(he, state0, decay, updates),
+    runners = {
+        "A": ("A_refresh_only", lambda: arm_a_refresh_only(he, state0)),
+        "B": ("B_decay_mult_only", lambda: arm_b_mult_only(he, state0, decay)),
+        "C": ("C_decay_plus_refresh", lambda: arm_c_decay_refresh(he, state0, decay)),
+        "D": ("D_poly_in_the_loop", lambda: arm_d_poly_loop(he, state0, dt_steps)),
+        "E": ("E_additive_update", lambda: arm_e_additive(he, state0, decay, updates)),
+        "F16": ("F16_meta_bts_amp16", lambda: arm_f_meta_bts(he, state0, 16)),
+        "F12": ("F12_meta_bts_amp12", lambda: arm_f_meta_bts(he, state0, 12)),
+        "G": ("G_kahan_split", lambda: arm_g_kahan(he, state0, decay, updates)),
     }
+    # Merge previously measured arms (same SEED => identical inputs).
+    arms: dict = {}
+    if RESULTS_PATH.exists():
+        arms = json.loads(RESULTS_PATH.read_text()).get("arms", {})
+    for key in selected:
+        name, runner = runners[key]
+        arms[name] = runner()
+    arms = {
+        runners[k][0]: arms[runners[k][0]] for k in runners if runners[k][0] in arms
+    }  # canonical order
     for arm in arms.values():
         arm["fit"] = fit_growth(arm["errors"])
         arm["projected_tokens_to_5e-2"] = horizon(arm["fit"])
@@ -442,6 +579,22 @@ def main() -> None:
         f" realistic arm E: {realistic['fit']['per_step_slope']:.3e}/step,"
         f" horizon {realistic['projected_tokens_to_5e-2']} tokens"
     )
+
+    # Refresh-strategy comparison (Meta-BTS / Kahan arms, if measured).
+    refresh_verdict = None
+    if any(n in arms for n in ("F16_meta_bts_amp16", "F12_meta_bts_amp12", "G_kahan_split")):
+        a_err = float(np.mean(arms["A_refresh_only"]["errors"]))
+        parts = [f"plain refresh A mean err {a_err:.3e}"]
+        for name, tag in (
+            ("F16_meta_bts_amp16", "Meta-BTS amp 2^16"),
+            ("F12_meta_bts_amp12", "Meta-BTS amp 2^12"),
+            ("G_kahan_split", "Kahan split"),
+        ):
+            if name not in arms:
+                continue
+            m = float(np.mean(arms[name]["errors"]))
+            parts.append(f"{tag} mean err {m:.3e} ({a_err / max(m, 1e-300):.1f}x vs A)")
+        refresh_verdict = "; ".join(parts)
 
     total_seconds = time.perf_counter() - total_start
     payload = {
@@ -474,10 +627,12 @@ def main() -> None:
         "dominant_component": dominant,
         "dominant_arm": dominant_arm,
         "verdict": verdict,
+        "refresh_strategy_verdict": refresh_verdict,
         "mean_bootstrap_eval_seconds": round(float(np.mean(he.bootstrap_seconds)), 3)
         if he.bootstrap_seconds
         else None,
         "n_bootstraps": len(he.bootstrap_seconds),
+        "arms_run_this_invocation": selected,
         "total_seconds": round(total_seconds, 3),
         "notes": [
             "errors are max-abs over all 8192 slots vs a float64 replica of the"
@@ -518,6 +673,8 @@ def main() -> None:
             f"  horizon@5e-2 {'n/a' if h is None else format(h, '.0f')} tokens"
         )
     print(f"\nVERDICT: {verdict}")
+    if refresh_verdict:
+        print(f"REFRESH-STRATEGY: {refresh_verdict}")
     print(f"total wall time {total_seconds:.1f}s")
 
 

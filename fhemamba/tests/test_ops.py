@@ -54,6 +54,24 @@ def test_inv_sqrt_fit_on_positive_range() -> None:
     assert float(err) < 1e-2
 
 
+def test_rmsnorm_is_preserved_in_static_normalized_coordinates() -> None:
+    torch.manual_seed(23)
+    hidden = 300.0 * torch.randn(4, 768, dtype=torch.float64)
+    weight = torch.randn(768, dtype=torch.float64)
+    eps = 1e-5
+    scale = 2048.0
+
+    expected = hidden * torch.rsqrt(hidden.square().mean(dim=-1, keepdim=True) + eps) * weight
+    normalized = hidden / scale
+    got = (
+        normalized
+        * torch.rsqrt(normalized.square().mean(dim=-1, keepdim=True) + eps / scale**2)
+        * weight
+    )
+
+    assert torch.allclose(got, expected, rtol=1e-12, atol=1e-12)
+
+
 def test_polyops_counts_out_of_range_without_clamping() -> None:
     ops = PolyOps.fit(
         ranges_by_name={"gate_silu": (-4.0, 4.0)},
