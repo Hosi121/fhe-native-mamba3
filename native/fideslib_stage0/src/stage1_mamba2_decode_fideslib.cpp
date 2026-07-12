@@ -1271,6 +1271,14 @@ auto main(int argc, char* argv[]) -> int {
       plain->SetLength(static_cast<size_t>(batch_size));
       return plain;
     };
+    auto make_plain_at_level = [&](const std::vector<double>& values,
+                                   uint32_t level) {
+      if (level == 0) {
+        return make_plain(values);
+      }
+      return cc->MakeCKKSPackedPlaintext(
+          values, 1, level, nullptr, static_cast<uint32_t>(batch_size));
+    };
     auto encrypt_values = [&](const std::vector<double>& values) {
       auto plain = make_plain(values);
       return cc->Encrypt(public_key, plain);
@@ -1376,56 +1384,107 @@ auto main(int argc, char* argv[]) -> int {
     // 1-arg MakeCKKSPackedPlaintext encodes at full level: (depth+1) towers of
     // ring_dim 8-byte words per entry. --pt-cache-level shrinks entries via
     // the 5-arg overload when the caller guarantees the consumption level.
-    const double pt_plain_bytes =
-        static_cast<double>(args.ring_dim) *
-        static_cast<double>(args.multiplicative_depth + 1 - args.pt_cache_level) * 8.0;
-    const auto pt_cache_capacity = static_cast<std::size_t>(
+    const auto plain_bytes_at_level = [&](int level) {
+      return static_cast<double>(args.ring_dim) *
+             static_cast<double>(args.multiplicative_depth + 1 - level) * 8.0;
+    };
+    const double pt_plain_bytes = plain_bytes_at_level(args.pt_cache_level);
+    const double pt_weight_plain_bytes =
+        plain_bytes_at_level(args.pt_cache_weight_level);
+    const double pt_cache_budget_bytes =
         pt_cache_mode == "off"
             ? 0.0
-            : args.pt_cache_gib * 1024.0 * 1024.0 * 1024.0 / std::max(1.0, pt_plain_bytes));
+            : args.pt_cache_gib * 1024.0 * 1024.0 * 1024.0;
     struct PlainCacheEntry {
       int uses_per_token = 0;
       int order = 0;
+      int encode_level = 0;
+      double estimated_bytes = 0.0;
       std::function<std::vector<double>()> build;
       Plaintext plain;  // non-null once selected and encoded
     };
     std::map<std::string, PlainCacheEntry> plain_cache;
     long long pt_cache_hits = 0;
     long long pt_cache_misses = 0;
+    long long pt_consumption_count = 0;
+    long long pt_consumption_level_sum = 0;
+    int pt_consumption_level_min = args.multiplicative_depth;
+    int pt_consumption_level_max = 0;
+    int pt_cache_hit_consumption_level_min = args.multiplicative_depth;
+    long long pt_cache_level_bypasses = 0;
+    long long pt_miss_consumption_level_encodes = 0;
+    long long pt_miss_consumption_level_sum = 0;
+    int pt_miss_consumption_level_min = args.multiplicative_depth;
+    int pt_miss_consumption_level_max = 0;
     int pt_cache_order = 0;
     auto register_plain = [&](const std::string& key, int uses_per_token,
-                              std::function<std::vector<double>()> build) {
+                              std::function<std::vector<double>()> build,
+                              int encode_level = -1) {
       if (pt_cache_mode == "off") {
         return;
+      }
+      if (encode_level < 0) {
+        encode_level = args.pt_cache_level;
       }
       auto [entry, inserted] = plain_cache.try_emplace(key);
       if (inserted) {
         entry->second.order = pt_cache_order++;
+        entry->second.encode_level = encode_level;
+        entry->second.estimated_bytes = plain_bytes_at_level(encode_level);
         entry->second.build = std::move(build);
+      } else if (encode_level < entry->second.encode_level) {
+        // A shared key must be valid at its earliest consumption site.
+        entry->second.encode_level = encode_level;
+        entry->second.estimated_bytes = plain_bytes_at_level(encode_level);
       }
       entry->second.uses_per_token += uses_per_token;
     };
-    auto encode_cache_plain = [&](const std::vector<double>& values) {
-      if (args.pt_cache_level == 0) {
+    auto encode_cache_plain = [&](const std::vector<double>& values, int level) {
+      if (level == 0) {
         return make_plain(values);
       }
       // Proven overload (used by the forensic path): scaleDeg 1 at a target
       // level; slots passed explicitly instead of SetLength.
       return cc->MakeCKKSPackedPlaintext(values, 1,
-                                         static_cast<uint32_t>(args.pt_cache_level), nullptr,
+                                         static_cast<uint32_t>(level), nullptr,
                                          static_cast<uint32_t>(batch_size));
     };
     // Lookup for the small keyed vectors; values are only built/encoded on a
     // miss, so caching cannot change the math, only where encoding happens.
     auto cached_plain = [&](const std::string& key,
-                            const std::vector<double>& values) -> Plaintext {
+                            const std::vector<double>& values,
+                            uint32_t consumption_level) -> Plaintext {
+      ++pt_consumption_count;
+      pt_consumption_level_sum += consumption_level;
+      pt_consumption_level_min =
+          std::min(pt_consumption_level_min, static_cast<int>(consumption_level));
+      pt_consumption_level_max =
+          std::max(pt_consumption_level_max, static_cast<int>(consumption_level));
       auto entry = plain_cache.find(key);
-      if (entry != plain_cache.end() && entry->second.plain) {
+      if (entry != plain_cache.end() && entry->second.plain &&
+          entry->second.encode_level <= static_cast<int>(consumption_level)) {
         ++pt_cache_hits;
+        pt_cache_hit_consumption_level_min =
+            std::min(pt_cache_hit_consumption_level_min,
+                     static_cast<int>(consumption_level));
         return entry->second.plain;
       }
+      if (entry != plain_cache.end() && entry->second.plain) {
+        ++pt_cache_level_bypasses;
+      }
       ++pt_cache_misses;
-      return make_plain(values);
+      if (!args.pt_miss_consumption_level || consumption_level == 0) {
+        return make_plain(values);
+      }
+      ++pt_miss_consumption_level_encodes;
+      pt_miss_consumption_level_sum += consumption_level;
+      pt_miss_consumption_level_min =
+          std::min(pt_miss_consumption_level_min,
+                   static_cast<int>(consumption_level));
+      pt_miss_consumption_level_max =
+          std::max(pt_miss_consumption_level_max,
+                   static_cast<int>(consumption_level));
+      return make_plain_at_level(values, consumption_level);
     };
 
     // ct * scalar via Clone + EvalMultInPlace (only API forms proven in the
@@ -1460,7 +1519,8 @@ auto main(int argc, char* argv[]) -> int {
     };
     auto add_const_vector = [&](const Ciphertext<DCRTPoly>& ciphertext,
                                 const std::string& key, const std::vector<double>& values) {
-      auto plain = cached_plain(key, values);
+      auto plain = cached_plain(
+          key, values, static_cast<uint32_t>(ciphertext->GetLevel()));
       return add_aligned(ciphertext, cc->Encrypt(public_key, plain));
     };
     auto mul_mask = [&](const Ciphertext<DCRTPoly>& ciphertext, const std::string& key,
@@ -1469,7 +1529,8 @@ auto main(int argc, char* argv[]) -> int {
       // FIDESlib EvalMult takes Plaintext by non-const reference; a
       // MakeCKKSPackedPlaintext temporary cannot bind to it (the cache stores
       // mutable Plaintexts for the same reason).
-      auto plain = cached_plain(key, mask);
+      auto plain = cached_plain(
+          key, mask, static_cast<uint32_t>(ciphertext->GetLevel()));
       return cc->EvalMult(ciphertext, plain);
     };
     // Rotation choke point: EVERY EvalRotate goes through here. "rotations"
@@ -2298,6 +2359,7 @@ auto main(int argc, char* argv[]) -> int {
     std::vector<std::tuple<std::string, std::size_t, int, std::size_t>> bsgs_links;
     double pt_cache_encode_seconds = 0.0;
     std::size_t pt_cache_entries_cached = 0;
+    double pt_cache_bytes_cached = 0.0;
     if (pt_cache_mode != "off") {
       const int layers_count = static_cast<int>(layer_plans.size());
       // Shared select/broadcast masks (layer-independent slot patterns).
@@ -2348,7 +2410,8 @@ auto main(int argc, char* argv[]) -> int {
       }
       // Replicated-BSGS combined masks (few, high value: register in every
       // caching mode; they replace the legacy diagonal tables).
-      for (const auto& plan : layer_plans) {
+      for (std::size_t layer = 0; layer < layer_plans.size(); ++layer) {
+        const auto& plan = layer_plans[layer];
         if (rep_in.replicas > 1) {
           for (int k = 0; k < rep_in.per_replica; ++k) {
             register_plain(plan.cache_prefix + "bsgsrep_in." + std::to_string(k), 1,
@@ -2356,7 +2419,9 @@ auto main(int argc, char* argv[]) -> int {
                              return replicated_bsgs_pre_mask(
                                  plan.in_w_folded, proj_dim, d_model, k, rep_in,
                                  batch_size);
-                           });
+                           },
+                           layer == 0 ? args.pt_cache_level
+                                      : args.pt_cache_weight_level);
           }
         }
         if (rep_out.replicas > 1) {
@@ -2366,7 +2431,8 @@ auto main(int argc, char* argv[]) -> int {
                              return replicated_bsgs_pre_mask(
                                  plan.out_w_folded, d_model, d_inner, k, rep_out,
                                  batch_size);
-                           });
+                           },
+                           args.pt_cache_weight_level);
           }
         }
       }
@@ -2402,12 +2468,14 @@ auto main(int argc, char* argv[]) -> int {
                 const std::string key = plan.cache_prefix +
                                         (which == 0 ? "bsgs_in." : "bsgs_out.") +
                                         std::to_string(table_index);
-                register_plain(key, 1, [&weights, input_dim, output_dim, giant, offset,
-                                        this_batch = batch_size,
-                                        this_stride = stream_stride]() {
-                  return slot_bsgs_pre_mask(weights, input_dim, output_dim, this_batch,
-                                            this_stride, giant, offset);
-                });
+                register_plain(
+                    key, 1,
+                    [&weights, input_dim, output_dim, giant, offset,
+                     this_batch = batch_size, this_stride = stream_stride]() {
+                      return slot_bsgs_pre_mask(weights, input_dim, output_dim,
+                                                this_batch, this_stride, giant,
+                                                offset);
+                    });
                 bsgs_links.emplace_back(key, layer, which, table_index);
               }
             }
@@ -2434,12 +2502,23 @@ auto main(int argc, char* argv[]) -> int {
         }
         return lhs->second.order < rhs->second.order;
       });
+      std::vector<std::map<std::string, PlainCacheEntry>::iterator> selected;
+      selected.reserve(selection.size());
+      double selected_bytes = 0.0;
+      for (const auto& entry : selection) {
+        if (selected_bytes + entry->second.estimated_bytes > pt_cache_budget_bytes) {
+          continue;
+        }
+        selected.push_back(entry);
+        selected_bytes += entry->second.estimated_bytes;
+      }
       const auto encode_start = now();
-      const auto to_encode = std::min(pt_cache_capacity, selection.size());
+      const auto to_encode = selected.size();
       log_phase("pt cache encode begin mode=" + pt_cache_mode +
                 " registered=" + std::to_string(plain_cache.size()) +
-                " capacity=" + std::to_string(pt_cache_capacity) +
-                " entry_mib=" + std::to_string(pt_plain_bytes / (1024.0 * 1024.0)) +
+                " selected=" + std::to_string(to_encode) +
+                " selected_gib=" +
+                std::to_string(selected_bytes / (1024.0 * 1024.0 * 1024.0)) +
                 " threads=" + std::to_string(effective_encode_threads));
       if (effective_encode_threads > 1 && to_encode > 1) {
         // One-time build through the (self-tested) worker pool: entries are
@@ -2453,8 +2532,8 @@ auto main(int argc, char* argv[]) -> int {
           workers.emplace_back([&, worker]() {
             try {
               for (std::size_t job = worker; job < to_encode; job += worker_count) {
-                selection[job]->second.plain =
-                    encode_cache_plain(selection[job]->second.build());
+                selected[job]->second.plain = encode_cache_plain(
+                    selected[job]->second.build(), selected[job]->second.encode_level);
               }
             } catch (...) {
               worker_errors[worker] = std::current_exception();
@@ -2470,13 +2549,13 @@ auto main(int argc, char* argv[]) -> int {
           }
         }
         pt_cache_entries_cached = to_encode;
+        pt_cache_bytes_cached = selected_bytes;
       } else {
-        for (const auto& entry : selection) {
-          if (pt_cache_entries_cached >= pt_cache_capacity) {
-            break;
-          }
-          entry->second.plain = encode_cache_plain(entry->second.build());
+        for (const auto& entry : selected) {
+          entry->second.plain = encode_cache_plain(entry->second.build(),
+                                                   entry->second.encode_level);
           ++pt_cache_entries_cached;
+          pt_cache_bytes_cached += entry->second.estimated_bytes;
           if (pt_cache_entries_cached % 1000 == 0) {
             log_phase("pt cache encode progress " +
                       std::to_string(pt_cache_entries_cached) + "/" +
@@ -2496,7 +2575,7 @@ auto main(int argc, char* argv[]) -> int {
       pt_cache_encode_seconds = seconds_since(encode_start);
       log_phase("pt cache encode done cached=" + std::to_string(pt_cache_entries_cached) +
                 "/" + std::to_string(plain_cache.size()) + " bytes_gib=" +
-                std::to_string(pt_cache_entries_cached * pt_plain_bytes /
+                std::to_string(pt_cache_bytes_cached /
                                (1024.0 * 1024.0 * 1024.0)));
     }
     // Wire tables in every mode except "off": empty tables route the BSGS
@@ -2523,7 +2602,7 @@ auto main(int argc, char* argv[]) -> int {
       try {
         Plaintext probe_plain;
         for (auto& [key, entry] : plain_cache) {
-          if (entry.plain) {
+          if (entry.plain && entry.encode_level == 0) {
             probe_plain = entry.plain;
             break;
           }
@@ -2569,6 +2648,7 @@ auto main(int argc, char* argv[]) -> int {
               std::fill(table.begin(), table.end(), Plaintext());
             }
             pt_cache_entries_cached = 0;
+            pt_cache_bytes_cached = 0.0;
           }
         }
       } catch (const std::exception& exc) {
@@ -3716,11 +3796,47 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"mode\":\"" << json_escape(pt_cache_mode) << "\",";
     out << "\"budget_gib\":" << args.pt_cache_gib << ",";
     out << "\"encode_level\":" << args.pt_cache_level << ",";
+    out << "\"weight_encode_level\":" << args.pt_cache_weight_level << ",";
+    out << "\"miss_consumption_level\":"
+        << (args.pt_miss_consumption_level ? "true" : "false") << ",";
+    out << "\"miss_consumption_level_encodes\":"
+        << pt_miss_consumption_level_encodes << ",";
+    out << "\"miss_consumption_level_min\":"
+        << (pt_miss_consumption_level_encodes > 0
+                ? pt_miss_consumption_level_min
+                : 0)
+        << ",";
+    out << "\"miss_consumption_level_max\":"
+        << (pt_miss_consumption_level_encodes > 0
+                ? pt_miss_consumption_level_max
+                : 0)
+        << ",";
+    out << "\"miss_consumption_level_mean\":"
+        << (pt_miss_consumption_level_encodes > 0
+                ? static_cast<double>(pt_miss_consumption_level_sum) /
+                      static_cast<double>(pt_miss_consumption_level_encodes)
+                : 0.0)
+        << ",";
+    out << "\"consumption_count\":" << pt_consumption_count << ",";
+    out << "\"consumption_level_min\":"
+        << (pt_consumption_count > 0 ? pt_consumption_level_min : 0) << ",";
+    out << "\"consumption_level_max\":"
+        << (pt_consumption_count > 0 ? pt_consumption_level_max : 0) << ",";
+    out << "\"consumption_level_mean\":"
+        << (pt_consumption_count > 0
+                ? static_cast<double>(pt_consumption_level_sum) /
+                      static_cast<double>(pt_consumption_count)
+                : 0.0)
+        << ",";
+    out << "\"cache_hit_consumption_level_min\":"
+        << (pt_cache_hits > 0 ? pt_cache_hit_consumption_level_min : 0) << ",";
+    out << "\"cache_level_bypasses\":" << pt_cache_level_bypasses << ",";
     out << "\"bytes_per_plaintext\":" << pt_plain_bytes << ",";
+    out << "\"weight_bytes_per_plaintext\":" << pt_weight_plain_bytes << ",";
     out << "\"entries_registered\":" << plain_cache.size() << ",";
     out << "\"entries_cached\":" << pt_cache_entries_cached << ",";
     out << "\"bytes_cached_gib\":"
-        << (pt_cache_entries_cached * pt_plain_bytes / (1024.0 * 1024.0 * 1024.0)) << ",";
+        << (pt_cache_bytes_cached / (1024.0 * 1024.0 * 1024.0)) << ",";
     out << "\"hits\":" << pt_cache_hits << ",";
     out << "\"misses\":" << pt_cache_misses << ",";
     out << "\"encode_seconds\":" << pt_cache_encode_seconds << ",";

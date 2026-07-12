@@ -54,6 +54,15 @@ struct Config {
   // minimum ciphertext level at every consumption site of every cached entry
   // (the kernel does not derive this); 0 = full-level encode, always safe.
   int pt_cache_level = 0;
+  // Optional lower-tower encoding level for projection-weight plaintexts.
+  // A cache hit is accepted only when this level is no deeper than the
+  // consuming ciphertext; otherwise evaluation falls back to an exact-level
+  // miss encode, so an aggressive value cannot silently spend circuit depth.
+  int pt_cache_weight_level = 0;
+  // Encode uncached plaintexts at the consuming ciphertext's exact level.
+  // This is opt-in until native parity is measured; unlike a fixed cache
+  // level, the per-use level cannot underflow a consumption site.
+  bool pt_miss_consumption_level = false;
   // Worker threads for the BSGS cache-miss encode path. Per-diagonal
   // MakeCKKSPackedPlaintext calls are independent host NTT work, but
   // FIDESlib/OpenFHE encode thread-safety on a shared (read-only)

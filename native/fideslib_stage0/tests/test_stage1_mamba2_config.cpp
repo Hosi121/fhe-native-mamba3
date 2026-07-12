@@ -65,6 +65,13 @@ auto main() -> int {
   const auto true_bsgs = parse({"stage1", "--input", "payload", "--bsgs-replicas",
                                 "auto", "--replicated-true-bsgs", "true"});
   require(true_bsgs.replicated_true_bsgs, "true replicated BSGS was not parsed");
+  const auto consumption_plain =
+      parse({"stage1", "--input", "payload", "--pt-cache-weight-level", "20",
+             "--pt-miss-consumption-level", "1"});
+  require(consumption_plain.pt_cache_weight_level == 20,
+          "weight plaintext cache level was not parsed");
+  require(consumption_plain.pt_miss_consumption_level,
+          "consumption-level plaintext mode was not parsed");
 
   require_invalid([] { parse({"stage1"}); });
   require_invalid([] {
@@ -102,6 +109,9 @@ auto main() -> int {
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--bsgs-replicas", "2junk"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--pt-cache-weight-level", "44"});
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--replicated-true-bsgs", "1"});

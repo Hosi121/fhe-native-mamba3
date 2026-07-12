@@ -110,6 +110,10 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.pt_cache_gib = parse_double_arg(arg, value);
     } else if (arg == "--pt-cache-level") {
       config.pt_cache_level = parse_int(arg, value);
+    } else if (arg == "--pt-cache-weight-level") {
+      config.pt_cache_weight_level = parse_int(arg, value);
+    } else if (arg == "--pt-miss-consumption-level") {
+      config.pt_miss_consumption_level = parse_bool_arg(arg, value);
     } else if (arg == "--encode-threads") {
       config.encode_threads = parse_int(arg, value);
     } else if (arg == "--streams") {
@@ -259,6 +263,11 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.pt_cache_level < 0 || config.pt_cache_level >= config.multiplicative_depth) {
     throw std::invalid_argument("pt-cache-level must be in [0, multiplicative-depth)");
+  }
+  if (config.pt_cache_weight_level < 0 ||
+      config.pt_cache_weight_level >= config.multiplicative_depth) {
+    throw std::invalid_argument(
+        "pt-cache-weight-level must be in [0, multiplicative-depth)");
   }
   if (config.encode_threads < 1 || config.encode_threads > 64) {
     throw std::invalid_argument("encode-threads must be in [1, 64]");
