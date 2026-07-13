@@ -172,6 +172,8 @@ class _AutoregressiveTrace:
     evaluated_ids: list[int]
     generated_ids: list[int]
     embeddings: torch.Tensor
+    layer_outputs: list[torch.Tensor]
+    layer_states: list[torch.Tensor]
     expected_final: torch.Tensor
 
 
@@ -235,8 +237,18 @@ def _collect_autoregressive_trace(
     evaluated_ids = list(prompt_ids)
     generated_ids: list[int] = []
     expected_final: list[torch.Tensor] = []
+    layer_outputs: list[list[torch.Tensor]] = [[] for _ in model.backbone.layers]
+    layer_states: list[list[torch.Tensor]] = [[] for _ in model.backbone.layers]
     states = init_states(model)
     logits = None
+
+    def record_step(output) -> None:
+        hidden_states = output["hidden_states"]
+        for layer in range(len(model.backbone.layers)):
+            layer_outputs[layer].append(hidden_states[layer][0, 0])
+            layer_states[layer].append(states[layer].ssm[0].clone())
+        expected_final.append(hidden_states[-1][0, 0])
+
     for token_id in prompt_ids:
         step = torch.tensor([[token_id]], device=device)
         output = model_forward(
@@ -246,7 +258,7 @@ def _collect_autoregressive_trace(
             states=states,
             output_hidden_states=True,
         )
-        expected_final.append(output["hidden_states"][-1][0, 0])
+        record_step(output)
         logits = output["logits"][0, -1]
     for generated_index in range(generate_tokens):
         if logits is None or not torch.isfinite(logits).all():
@@ -264,7 +276,7 @@ def _collect_autoregressive_trace(
             states=states,
             output_hidden_states=True,
         )
-        expected_final.append(output["hidden_states"][-1][0, 0])
+        record_step(output)
         logits = output["logits"][0, -1]
     evaluated = torch.tensor([evaluated_ids], device=device)
     embeddings = model.backbone.embeddings(evaluated)[0]
@@ -276,6 +288,8 @@ def _collect_autoregressive_trace(
         evaluated_ids=evaluated_ids,
         generated_ids=generated_ids,
         embeddings=embeddings,
+        layer_outputs=[torch.stack(values) for values in layer_outputs],
+        layer_states=[torch.stack(values) for values in layer_states],
         expected_final=final_tensor,
     )
 
@@ -419,6 +433,7 @@ def _export_autoregressive_assets(
     prompt_tokens: int,
     generate_tokens: int,
     n_layers: int,
+    layer_dirs: list[str],
 ) -> dict:
     if prompt_tokens < 1 or generate_tokens < 1:
         raise ValueError("autoregressive prompt/generate token counts must be positive")
@@ -459,6 +474,28 @@ def _export_autoregressive_assets(
         exact_trace.expected_final,
         manifest,
     )
+    if len(layer_dirs) != n_layers:
+        raise ValueError("chain layer_dirs does not match n_layers")
+    note = "autoregressive polynomial layer/state references support debug attribution"
+    for layer, directory in enumerate(layer_dirs):
+        layer_dir = out / directory
+        meta_path = layer_dir / "meta.json"
+        meta = json.loads(meta_path.read_text())
+        _save(
+            layer_dir,
+            "autoregressive_poly_layer_output",
+            poly_trace.layer_outputs[layer],
+            meta["tensors"],
+        )
+        _save(
+            layer_dir,
+            "autoregressive_poly_state_output",
+            poly_trace.layer_states[layer],
+            meta["tensors"],
+        )
+        if note not in meta["notes"]:
+            meta["notes"].append(note)
+        meta_path.write_text(json.dumps(meta, indent=2))
     return {
         "protocol": "client-in-loop-greedy-v1",
         "prompt_tokens": prompt_tokens,
@@ -506,6 +543,7 @@ def export_autoregressive_client_payload(
         prompt_tokens,
         generate_tokens,
         n_layers,
+        chain["layer_dirs"],
     )
     chain["tensors"] = manifest
     note = "autoregressive assets support client decrypt/lm_head/argmax/re-encrypt"
@@ -784,6 +822,7 @@ def export_chain_payload(
             autoregressive_prompt_tokens,
             autoregressive_generate_tokens,
             n_layers,
+            [f"layer_{layer:02d}" for layer in range(n_layers)],
         )
 
     chain = {

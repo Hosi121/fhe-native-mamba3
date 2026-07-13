@@ -233,7 +233,8 @@ auto read_m1_payload(const std::string& dir) -> M1Payload {
     payload.tensors[name] = read_bin_tensor(dir, name, shape);
   }
   for (const auto* name : {"test_layer_output_poly", "test_state_output",
-                           "test_state_output_poly"}) {
+                           "test_state_output_poly", "autoregressive_poly_layer_output",
+                           "autoregressive_poly_state_output"}) {
     if (find_key_value_pos(tensors, name) == std::string::npos) {
       continue;
     }
@@ -247,17 +248,30 @@ auto read_m1_payload(const std::string& dir) -> M1Payload {
     payload.shapes[name] = shape;
     payload.tensors[name] = read_bin_tensor(dir, name, shape);
   }
-  for (const auto* name : {"test_state_output", "test_state_output_poly"}) {
+  for (const auto* name : {"test_state_output", "test_state_output_poly",
+                           "autoregressive_poly_state_output"}) {
     const auto found = payload.shapes.find(name);
     if (found == payload.shapes.end()) {
       continue;
     }
     const auto& shape = found->second;
-    if (shape.size() != 4 || shape[0] < 1 || shape[0] > payload.n_test_tokens ||
+    const bool autoregressive =
+        std::string_view(name) == "autoregressive_poly_state_output";
+    if (shape.size() != 4 || shape[0] < 1 ||
+        (!autoregressive && shape[0] > payload.n_test_tokens) ||
         shape[1] != payload.num_heads || shape[2] != payload.head_dim ||
         shape[3] != payload.state_size) {
       throw std::runtime_error(std::string(name) +
-                               " shape must be (prefix_tokens, heads, head_dim, state_size)");
+                               " shape must be (tokens, heads, head_dim, state_size)");
+    }
+  }
+  const auto autoregressive_boundary =
+      payload.shapes.find("autoregressive_poly_layer_output");
+  if (autoregressive_boundary != payload.shapes.end()) {
+    const auto& shape = autoregressive_boundary->second;
+    if (shape.size() != 2 || shape[0] < 1 || shape[1] != payload.d_model) {
+      throw std::runtime_error(
+          "autoregressive_poly_layer_output shape must be (tokens, d_model)");
     }
   }
   payload.proj_dim = payload.shapes.at("in_proj_w").at(0);

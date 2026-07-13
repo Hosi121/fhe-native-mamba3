@@ -51,6 +51,7 @@
 #include "stage1_mamba2_process.hpp"
 
 #include <algorithm>
+#include <array>
 #include <any>
 #include <chrono>
 #include <cmath>
@@ -757,10 +758,6 @@ auto main(int argc, char* argv[]) -> int {
               chain.autoregressive_generate_tokens - 1) {
         throw std::runtime_error("invalid autoregressive evaluation count");
       }
-      if (args.debug_layer_errors) {
-        throw std::runtime_error(
-            "debug-layer-errors has no per-layer autoregressive references");
-      }
     }
     for (std::size_t index = 0; index < layer_payloads.size(); ++index) {
       require_same_layer_dims(dims_payload, layer_payloads[index], index);
@@ -770,8 +767,13 @@ auto main(int argc, char* argv[]) -> int {
                                  std::to_string(index));
       }
       if (args.debug_layer_errors) {
-        for (const auto* name : {"test_layer_output_poly",
-                                 "test_state_output_poly"}) {
+        const std::array<const char*, 2> reference_names =
+            args.autoregressive_client_loop
+                ? std::array<const char*, 2>{"autoregressive_poly_layer_output",
+                                             "autoregressive_poly_state_output"}
+                : std::array<const char*, 2>{"test_layer_output_poly",
+                                             "test_state_output_poly"};
+        for (const auto* name : reference_names) {
           const auto shape = layer_payloads[index].shapes.find(name);
           if (shape == layer_payloads[index].shapes.end() ||
               shape->second.empty() || shape->second[0] < args.tokens) {
@@ -3537,13 +3539,17 @@ auto main(int argc, char* argv[]) -> int {
         token_bootstraps_total += layer_bootstraps;
         if (args.debug_layer_errors) {
           const auto& layer_payload = layer_payloads[static_cast<std::size_t>(layer)];
-          const auto poly_state = layer_payload.tensors.find("test_state_output_poly");
+          const auto* poly_state_name =
+              args.autoregressive_client_loop
+                  ? "autoregressive_poly_state_output"
+                  : "test_state_output_poly";
+          const auto poly_state = layer_payload.tensors.find(poly_state_name);
           const auto exact_state = layer_payload.tensors.find("test_state_output");
           const std::vector<double>* state_reference = nullptr;
           int state_reference_tokens = 0;
           if (poly_state != layer_payload.tensors.end()) {
             state_reference = &poly_state->second;
-            state_reference_tokens = layer_payload.shapes.at("test_state_output_poly")[0];
+            state_reference_tokens = layer_payload.shapes.at(poly_state_name)[0];
           } else if (exact_state != layer_payload.tensors.end()) {
             state_reference = &exact_state->second;
             state_reference_tokens = layer_payload.shapes.at("test_state_output")[0];
@@ -3582,7 +3588,10 @@ auto main(int argc, char* argv[]) -> int {
             write_double_vector_json(errors, group_errors);
             log_phase("DEBUG state " + key + " group_errors=" + errors.str());
           }
-          const auto& boundary = layer_payload.tensors.at("test_layer_output_poly");
+          const auto& boundary = layer_payload.tensors.at(
+              args.autoregressive_client_loop
+                  ? "autoregressive_poly_layer_output"
+                  : "test_layer_output_poly");
           double boundary_error = 0.0;
           int non_finite = 0;
           try {

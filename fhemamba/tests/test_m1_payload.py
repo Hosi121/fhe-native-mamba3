@@ -118,6 +118,8 @@ def test_chain_export(tmp_path, monkeypatch) -> None:
         assert "test_layer_output_poly" in meta["tensors"]
         assert meta["tensors"]["test_state_output"] == [2, 4, 16, 8]
         assert meta["tensors"]["test_state_output_poly"] == [2, 4, 16, 8]
+        assert meta["tensors"]["autoregressive_poly_layer_output"] == [5, 32]
+        assert meta["tensors"]["autoregressive_poly_state_output"] == [5, 4, 16, 8]
         assert meta["test_token_ids"] == chain["test_token_ids"]
         assert meta["polys"]["gated_rms_invsqrt"]["iterations"] == 3
         assert len(meta["polys"]["gated_rms_invsqrt"]["coeffs"]) == 16
@@ -237,6 +239,10 @@ def test_add_autoregressive_assets_to_existing_chain(tmp_path, monkeypatch) -> N
         "autoregressive_exact_expected_final",
     ):
         assert (out / f"{name}.bin").stat().st_size > 0
+    for directory in after["layer_dirs"]:
+        meta = json.loads((out / directory / "meta.json").read_text())
+        assert meta["tensors"]["autoregressive_poly_layer_output"] == [5, 32]
+        assert meta["tensors"]["autoregressive_poly_state_output"] == [5, 4, 16, 8]
 
 
 def test_legacy_const_newton_payload_spec() -> None:
