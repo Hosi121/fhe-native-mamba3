@@ -15,6 +15,40 @@ class StateBlockExpansionCost:
     levels: int
 
 
+def recurrent_state_group_scales(
+    state_head_abs_max: list[float] | np.ndarray,
+    group_heads: int,
+    *,
+    minimum_scale: float = 1e-6,
+) -> np.ndarray:
+    """Return public per-group scales for persistent normalized SSM state."""
+    maxima = np.asarray(state_head_abs_max, dtype=np.float64)
+    if maxima.ndim != 1 or maxima.size == 0:
+        raise ValueError("state_head_abs_max must be a non-empty vector")
+    if group_heads <= 0 or maxima.size % group_heads:
+        raise ValueError("group_heads must be positive and divide the head count")
+    if minimum_scale <= 0.0 or not np.isfinite(minimum_scale):
+        raise ValueError("minimum_scale must be finite and positive")
+    if not np.isfinite(maxima).all() or (maxima < 0.0).any():
+        raise ValueError("state_head_abs_max must be finite and non-negative")
+    return np.maximum(maxima.reshape(-1, group_heads).max(axis=1), minimum_scale)
+
+
+def normalized_recurrence_step(
+    normalized_state: np.ndarray,
+    decay: np.ndarray,
+    update: np.ndarray,
+    readout: np.ndarray,
+    scale: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reference one step for ``u = state / scale`` persistent storage."""
+    if scale <= 0.0 or not np.isfinite(scale):
+        raise ValueError("scale must be finite and positive")
+    next_normalized = decay * normalized_state + update / scale
+    output = readout * (scale * next_normalized)
+    return next_normalized, output
+
+
 def _require_geometry(state_size: int, group_block: int, batch: int) -> None:
     if state_size <= 0 or group_block <= 0 or batch <= 0:
         raise ValueError("state_size, group_block, and batch must be positive")

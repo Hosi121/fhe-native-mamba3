@@ -33,6 +33,34 @@ auto resolve_replicated_shape(int output_dim, int input_dim, int batch, int forc
   return shape;
 }
 
+auto resolve_interleaved_replicated_shape(int output_dim, int input_dim,
+                                          int batch, int force_r)
+    -> ReplicatedShape {
+  if (output_dim <= 0 || input_dim <= 0 || batch <= 0 || force_r < 0) {
+    throw std::invalid_argument(
+        "interleaved replicated BSGS dimensions must be positive");
+  }
+  const int maximum = force_r > 0
+                          ? std::min(batch / input_dim - 1, force_r)
+                          : batch / input_dim - 1;
+  for (int replicas = maximum; replicas > 1; --replicas) {
+    const int required = output_dim + replicas - 1;
+    const int window =
+        input_dim * ((required + input_dim - 1) / input_dim);
+    if ((replicas + 1) * window > batch) {
+      continue;
+    }
+    ReplicatedShape shape;
+    shape.replicas = replicas;
+    shape.window = window;
+    shape.reps = window / input_dim;
+    shape.per_replica = (input_dim + replicas - 1) / replicas;
+    shape.guard_windows = 1;
+    return shape;
+  }
+  return resolve_replicated_shape(output_dim, input_dim, batch, force_r);
+}
+
 // Combined per-k mask (one encoded plaintext serves all replicas).
 auto replicated_bsgs_mask(const std::vector<double>& weights, int output_dim, int input_dim,
                           int k, const ReplicatedShape& shape, int batch_size)
@@ -40,7 +68,8 @@ auto replicated_bsgs_mask(const std::vector<double>& weights, int output_dim, in
   if (output_dim <= 0 || input_dim <= 0 || k < 0 || batch_size <= 0 ||
       weights.size() != static_cast<std::size_t>(output_dim) * input_dim ||
       shape.replicas <= 1 || shape.window <= 0 || shape.per_replica <= 0 ||
-      shape.replicas * shape.window > batch_size || k >= shape.per_replica) {
+      (shape.replicas + shape.guard_windows) * shape.window > batch_size ||
+      k >= shape.per_replica) {
     throw std::invalid_argument("invalid replicated BSGS mask geometry");
   }
   std::vector<double> mask(static_cast<std::size_t>(batch_size), 0.0);
@@ -88,7 +117,7 @@ void insert_replicated_rotations(std::set<int32_t>& rotations, int input_dim,
   for (int t = 1; t < shape.reps; ++t) {
     rotations.insert(static_cast<int32_t>(-t * input_dim));
   }
-  for (int j = 1; j < shape.replicas; ++j) {
+  for (int j = 1; j < shape.replicas + shape.guard_windows; ++j) {
     rotations.insert(static_cast<int32_t>(-j * shape.window));
   }
   if (shape.baby_step > 1) {
@@ -348,7 +377,7 @@ auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int
     for (int t = 1; t < shape.reps; ++t) {
       add(-t * input_dim, L);
     }
-    for (int j = 1; j < shape.replicas; ++j) {
+    for (int j = 1; j < shape.replicas + shape.guard_windows; ++j) {
       add(-j * shape.window, L);
     }
     if (shape.baby_step > 1) {

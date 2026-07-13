@@ -128,6 +128,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.bsgs_replicas = value;
     } else if (arg == "--replicated-true-bsgs") {
       config.replicated_true_bsgs = parse_bool_arg(arg, value);
+    } else if (arg == "--interleaved-replicated-projection") {
+      config.interleaved_replicated_projection = parse_bool_arg(arg, value);
     } else if (arg == "--replicated-state-blocks") {
       config.replicated_state_blocks = parse_bool_arg(arg, value);
     } else if (arg == "--projection-late-level") {
@@ -168,6 +170,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.refresh_recurrent_state_post_layers = parse_int_set(arg, value);
     } else if (arg == "--state-refresh-interval") {
       config.state_refresh_interval = parse_int(arg, value);
+    } else if (arg == "--normalized-recurrent-state") {
+      config.normalized_recurrent_state = parse_bool_arg(arg, value);
     } else if (arg == "--bootstrap-level-budget-cts") {
       config.bootstrap_level_budget_cts = parse_int(arg, value);
     } else if (arg == "--bootstrap-level-budget-stc") {
@@ -318,6 +322,11 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.replicated_true_bsgs && config.bsgs_replicas == "1") {
     throw std::invalid_argument("replicated-true-bsgs requires replicated layout");
+  }
+  if (config.interleaved_replicated_projection &&
+      config.bsgs_replicas == "1") {
+    throw std::invalid_argument(
+        "interleaved-replicated-projection requires replicated layout");
   }
   if (config.security != "not-set" && config.security != "128-classic") {
     throw std::invalid_argument("security must be not-set or 128-classic");

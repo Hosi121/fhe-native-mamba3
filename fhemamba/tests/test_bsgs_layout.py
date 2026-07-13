@@ -2,6 +2,7 @@
 
 import numpy as np
 from fhemamba.bsgs_layout import (
+    choose_interleaved_window,
     choose_window,
     replicated_bsgs_cost,
     replicated_bsgs_matmul,
@@ -79,3 +80,28 @@ def test_true_bsgs_reduces_native_projection_rotations() -> None:
     assert (in_cost.ct_pt_mul, in_cost.rotations) == (110, 36)
     assert (out_cost.ct_pt_mul, out_cost.rotations) == (154, 42)
     assert in_cost.rotations + out_cost.rotations == 78
+
+
+def test_interleaved_windows_are_slot_exact_on_real_projection_shapes() -> None:
+    rng = np.random.default_rng(29)
+    expected = [(3352, 768, 3840, 7), (768, 1536, 1536, 20)]
+    for m, n, window_expected, replicas_expected in expected:
+        window, replicas = choose_interleaved_window(m, n, 32768)
+        assert (window, replicas) == (window_expected, replicas_expected)
+        assert window >= m + replicas - 1
+        weights = rng.standard_normal((m, n))
+        values = rng.standard_normal(n)
+        direct = replicated_matmul(weights, values, replicas, window, 32768, guard_windows=1)[:m]
+        bsgs = replicated_bsgs_matmul(weights, values, replicas, window, 32768, guard_windows=1)[:m]
+        np.testing.assert_allclose(direct, weights @ values, atol=1e-9)
+        np.testing.assert_allclose(bsgs, weights @ values, atol=1e-9)
+
+
+def test_interleaved_windows_reduce_projection_plaintext_products() -> None:
+    in_window, in_replicas = choose_interleaved_window(3352, 768, 32768)
+    out_window, out_replicas = choose_interleaved_window(768, 1536, 32768)
+    in_cost = replicated_bsgs_cost(768, in_replicas, 32768, window=in_window, guard_windows=1)
+    out_cost = replicated_bsgs_cost(1536, out_replicas, 32768, window=out_window, guard_windows=1)
+
+    assert (in_cost.ct_pt_mul, out_cost.ct_pt_mul) == (110, 77)
+    assert in_cost.ct_pt_mul + out_cost.ct_pt_mul == 187

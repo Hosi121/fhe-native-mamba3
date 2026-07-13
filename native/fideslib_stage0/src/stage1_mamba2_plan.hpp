@@ -19,6 +19,7 @@ struct ReplicatedShape {
   int reps = 0;         // window / n input tiles per window
   int per_replica = 0;  // ceil(n / r) diagonals (= masks = encodes)
   int baby_step = 1;    // 1 = direct group rotations; >1 = true BSGS
+  int guard_windows = 0;  // filled input windows excluded from masks/folding
 };
 
 
@@ -36,6 +37,9 @@ struct PackingDims {
 
 auto resolve_replicated_shape(int output_dim, int input_dim, int batch,
                               int force_r) -> ReplicatedShape;
+auto resolve_interleaved_replicated_shape(int output_dim, int input_dim,
+                                          int batch, int force_r)
+    -> ReplicatedShape;
 auto replicated_bsgs_mask(const std::vector<double>& weights, int output_dim,
                           int input_dim, int k,
                           const ReplicatedShape& shape, int batch_size)

@@ -57,6 +57,20 @@ auto main() -> int {
           "unexpected in-projection replicated shape");
   require(rep_out.replicas == 10 && rep_out.window == 3072,
           "unexpected out-projection replicated shape");
+  const auto interleaved_in =
+      resolve_interleaved_replicated_shape(payload.proj_dim, payload.d_model,
+                                           32768, 0);
+  const auto interleaved_out =
+      resolve_interleaved_replicated_shape(payload.d_model, payload.d_inner,
+                                           32768, 0);
+  require(interleaved_in.replicas == 7 && interleaved_in.window == 3840 &&
+              interleaved_in.per_replica == 110 &&
+              interleaved_in.guard_windows == 1,
+          "unexpected interleaved in-projection shape");
+  require(interleaved_out.replicas == 20 && interleaved_out.window == 1536 &&
+              interleaved_out.per_replica == 77 &&
+              interleaved_out.guard_windows == 1,
+          "unexpected interleaved out-projection shape");
 
   const auto rotations = required_rotations(payload, packing, rep_in, rep_out);
   require(!rotations.empty(), "rotation plan is empty");

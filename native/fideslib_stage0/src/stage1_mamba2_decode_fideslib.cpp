@@ -120,6 +120,7 @@ using fhemamba::stage1::replicated_bsgs_mask;
 using fhemamba::stage1::replicated_bsgs_pre_mask;
 using fhemamba::stage1::ReplicatedShape;
 using fhemamba::stage1::required_rotations;
+using fhemamba::stage1::resolve_interleaved_replicated_shape;
 using fhemamba::stage1::resolve_replicated_shape;
 using fhemamba::stage1::rotation_frequencies;
 using fhemamba::stage1::rotation_key_gib_estimate;
@@ -327,6 +328,9 @@ struct LayerPlan {
   // Per-layer measured carried-lineage bounds (< 0 -> generic fallback).
   double state_abs_max = -1.0;
   std::vector<double> state_group_abs_max;
+  std::vector<double> state_group_scales;
+  std::vector<std::vector<double>> normalized_state_x_masks;
+  std::vector<std::vector<double>> normalized_state_readout_masks;
   double fifo_abs_max = -1.0;
   double y_scale = 1.0;
   std::map<std::string, double> checkpoint_abs_max;
@@ -908,6 +912,10 @@ auto main(int argc, char* argv[]) -> int {
         std::all_of(layer_payloads.begin(), layer_payloads.end(), [](const auto& payload) {
           return payload.checkpoint_abs_max.size() == 8;
         });
+    if (args.normalized_recurrent_state && !all_state_head_bounds_calibrated) {
+      throw std::runtime_error(
+          "normalized recurrent state requires calibration-text head-wise state bounds");
+    }
     const int batch_size = args.ring_dim / 2;
     const auto packing = derive_packing(dims_payload, batch_size);
     // Multi-stream packing geometry: S streams at stride batch/S. Every
@@ -924,16 +932,20 @@ auto main(int argc, char* argv[]) -> int {
         args.bsgs_replicas == "auto" ? 0
         : args.bsgs_replicas == "1"  ? -1
                                      : std::stoi(args.bsgs_replicas);
+    const auto resolve_projection_shape = [&](int output_dim, int input_dim) {
+      if (forced_replicas < 0) {
+        return ReplicatedShape{};
+      }
+      return args.interleaved_replicated_projection
+                 ? resolve_interleaved_replicated_shape(
+                       output_dim, input_dim, batch_size, forced_replicas)
+                 : resolve_replicated_shape(output_dim, input_dim, batch_size,
+                                            forced_replicas);
+    };
     auto rep_in =
-        forced_replicas < 0
-            ? ReplicatedShape{}
-            : resolve_replicated_shape(dims_payload.proj_dim, dims_payload.d_model,
-                                       batch_size, forced_replicas);
+        resolve_projection_shape(dims_payload.proj_dim, dims_payload.d_model);
     auto rep_out =
-        forced_replicas < 0
-            ? ReplicatedShape{}
-            : resolve_replicated_shape(dims_payload.d_model, dims_payload.d_inner,
-                                       batch_size, forced_replicas);
+        resolve_projection_shape(dims_payload.d_model, dims_payload.d_inner);
     if (args.replicated_true_bsgs) {
       if (rep_in.replicas > 1) {
         rep_in.baby_step = std::max(
@@ -1812,8 +1824,15 @@ auto main(int argc, char* argv[]) -> int {
       const int level = static_cast<int>(ciphertext->GetLevel());
       const bool carried = is_carried_checkpoint(what);
       const bool residual_checkpoint = what.find("residual") != std::string::npos;
+      // Persistent normalized state is already stored at calibration scale,
+      // so undoing a standard bootstrap only amplifies its error by ~1.  The
+      // second Meta-BTS pass was needed for large carried-state bounds; on
+      // normalized state it doubles refresh cost without that justification.
+      const bool normalized_state =
+          carried && what.find("state") != std::string::npos &&
+          args.normalized_recurrent_state;
       const bool use_meta_bts =
-          args.meta_bts &&
+          args.meta_bts && !normalized_state &&
           (carried || what.find("gated_poly_input") != std::string::npos);
       // Meta-BTS residual amplification needs one live level after the
       // normalize/rescale, so eligible checkpoints trigger one level earlier.
@@ -2047,6 +2066,44 @@ auto main(int argc, char* argv[]) -> int {
           plan.state_group_abs_max.push_back(
               *std::max_element(begin, begin + group_heads));
         }
+      }
+      if (args.normalized_recurrent_state) {
+        if (plan.state_group_abs_max.size() != static_cast<std::size_t>(group_count)) {
+          throw std::runtime_error(
+              "normalized recurrent state requires one calibrated bound per head group");
+        }
+        plan.state_group_scales.reserve(static_cast<std::size_t>(group_count));
+        plan.normalized_state_x_masks.reserve(static_cast<std::size_t>(group_count));
+        plan.normalized_state_readout_masks.reserve(
+            static_cast<std::size_t>(group_count));
+        for (int group = 0; group < group_count; ++group) {
+          const double measured =
+              plan.state_group_abs_max[static_cast<std::size_t>(group)];
+          if (!std::isfinite(measured) || measured < 0.0) {
+            throw std::runtime_error(
+                "normalized recurrent state received an invalid calibrated bound");
+          }
+          const double scale = std::max(measured, 1.0e-6);
+          plan.state_group_scales.push_back(scale);
+          std::vector<double> x_mask(batch, 0.0);
+          for (int slot = 0; slot < group_block; ++slot) {
+            x_mask[static_cast<std::size_t>(group * group_block + slot)] =
+                1.0 / scale;
+          }
+          plan.normalized_state_x_masks.push_back(std::move(x_mask));
+          std::vector<double> readout_mask(batch, 0.0);
+          for (int slot = 0; slot < group_block; ++slot) {
+            readout_mask[static_cast<std::size_t>(slot)] = scale;
+          }
+          plan.normalized_state_readout_masks.push_back(
+              std::move(readout_mask));
+        }
+        // maybe_bootstrap observes the stored coordinate system. Each state
+        // ciphertext is now bounded by one; its original scale is folded
+        // into the update/readout masks above.
+        plan.state_abs_max = 1.0;
+        std::fill(plan.state_group_abs_max.begin(),
+                  plan.state_group_abs_max.end(), 1.0);
       }
       plan.fifo_abs_max = payload.fifo_abs_max;
       plan.checkpoint_abs_max = payload.checkpoint_abs_max;
@@ -2420,14 +2477,39 @@ auto main(int argc, char* argv[]) -> int {
                        2 * group_count * layers_count,
                        [unit_mask, h_local]() { return unit_mask(h_local); });
       }
-      for (int group = 0; group < group_count; ++group) {
-        register_plain("mask.xblock." + std::to_string(group), layers_count,
-                       [block_mask, group_block, group]() {
-                         return block_mask(group_block * group, group_block);
-                       });
+      if (args.normalized_recurrent_state) {
+        for (const auto& plan : layer_plans) {
+          for (int group = 0; group < group_count; ++group) {
+            register_plain(
+                plan.cache_prefix + "normalized_state_x." +
+                    std::to_string(group),
+                1,
+                [&plan, group]() {
+                  return plan.normalized_state_x_masks[
+                      static_cast<std::size_t>(group)];
+                },
+                args.pt_cache_weight_level);
+            register_plain(
+                plan.cache_prefix + "normalized_state_readout." +
+                    std::to_string(group),
+                1,
+                [&plan, group]() {
+                  return plan.normalized_state_readout_masks[
+                      static_cast<std::size_t>(group)];
+                },
+                args.pt_cache_weight_level);
+          }
+        }
+      } else {
+        for (int group = 0; group < group_count; ++group) {
+          register_plain("mask.xblock." + std::to_string(group), layers_count,
+                         [block_mask, group_block, group]() {
+                           return block_mask(group_block * group, group_block);
+                         });
+        }
+        register_plain("mask.group", group_count * layers_count,
+                       [&group_mask]() { return group_mask; });
       }
-      register_plain("mask.group", group_count * layers_count,
-                     [&group_mask]() { return group_mask; });
       if (args.streams > 1) {
         register_plain("mask.streambase", 2 * layers_count,
                        [&stream_base_mask]() { return stream_base_mask; });
@@ -2785,9 +2867,22 @@ auto main(int argc, char* argv[]) -> int {
       return doubling_fill(accumulator, group_block, int_log2(state_size));
     };
 
-    auto expand_x = [&](const Ciphertext<DCRTPoly>& conv_packed, int group) {
-      auto masked = mul_mask(conv_packed, "mask.xblock." + std::to_string(group),
-                             block_mask(group_block * group, group_block));
+    auto expand_x = [&](const Ciphertext<DCRTPoly>& conv_packed, int group,
+                        const LayerPlan& plan) {
+      std::vector<double> legacy_mask;
+      const std::vector<double>* mask = nullptr;
+      if (args.normalized_recurrent_state) {
+        mask = &plan.normalized_state_x_masks[static_cast<std::size_t>(group)];
+      } else {
+        legacy_mask = block_mask(group_block * group, group_block);
+        mask = &legacy_mask;
+      }
+      const std::string key =
+          args.normalized_recurrent_state
+              ? plan.cache_prefix + "normalized_state_x." +
+                    std::to_string(group)
+              : "mask.xblock." + std::to_string(group);
+      auto masked = mul_mask(conv_packed, key, *mask);
       masked = rotate(masked, group_block * group);
       return doubling_fill(masked, group_block, int_log2(state_size));
     };
@@ -2810,7 +2905,7 @@ auto main(int argc, char* argv[]) -> int {
       }
       // Identical replica fill at window stride.
       auto replicated = extended;
-      for (int j = 1; j < shape.replicas; ++j) {
+      for (int j = 1; j < shape.replicas + shape.guard_windows; ++j) {
         replicated = add_aligned(replicated, rotate(extended, -j * shape.window));
       }
       // The measured path uses one roll per diagonal group. The opt-in true
@@ -3104,7 +3199,9 @@ auto main(int argc, char* argv[]) -> int {
               static_cast<std::size_t>(stream * group_count + group);
           const std::string state_name =
               "state" + std::to_string(stream * group_count + group);
-          auto x_group = time_phase("x_expand", [&]() { return expand_x(conv_stream, group); });
+          auto x_group = time_phase("x_expand", [&]() {
+            return expand_x(conv_stream, group, plan);
+          });
           auto dt_group =
               time_phase("dt_expand", [&]() { return place_heads(dt_stream, group); });
           auto decay_group =
@@ -3148,7 +3245,17 @@ auto main(int argc, char* argv[]) -> int {
             for (int k = 0; k < int_log2(state_size); ++k) {
               readout = add_aligned(readout, rotate(readout, group_block << k));
             }
-            auto masked = mul_mask(readout, "mask.group", group_mask);
+            const auto& readout_mask =
+                args.normalized_recurrent_state
+                    ? plan.normalized_state_readout_masks[
+                          static_cast<std::size_t>(group)]
+                    : group_mask;
+            const std::string readout_key =
+                args.normalized_recurrent_state
+                    ? plan.cache_prefix + "normalized_state_readout." +
+                          std::to_string(group)
+                    : "mask.group";
+            auto masked = mul_mask(readout, readout_key, readout_mask);
             return rotate(masked, -group_block * group);
           });
           if (!has_y_stream) {
@@ -3774,14 +3881,18 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"bsgs_layout\":{";
     out << "\"mode\":\"" << json_escape(args.bsgs_replicas) << "\",";
     out << "\"true_bsgs\":" << (args.replicated_true_bsgs ? "true" : "false") << ",";
+    out << "\"interleaved_window\":"
+        << (args.interleaved_replicated_projection ? "true" : "false") << ",";
     out << "\"in_replicas\":" << rep_in.replicas << ",";
     out << "\"in_window\":" << rep_in.window << ",";
     out << "\"in_diagonals\":" << (rep_in.replicas > 1 ? rep_in.per_replica : 0) << ",";
     out << "\"in_baby_step\":" << rep_in.baby_step << ",";
+    out << "\"in_guard_windows\":" << rep_in.guard_windows << ",";
     out << "\"out_replicas\":" << rep_out.replicas << ",";
     out << "\"out_window\":" << rep_out.window << ",";
     out << "\"out_diagonals\":" << (rep_out.replicas > 1 ? rep_out.per_replica : 0) << ",";
-    out << "\"out_baby_step\":" << rep_out.baby_step;
+    out << "\"out_baby_step\":" << rep_out.baby_step << ",";
+    out << "\"out_guard_windows\":" << rep_out.guard_windows;
     out << "},";
     out << "\"bootstrap_norm_margin\":" << args.bootstrap_norm_margin << ",";
     out << "\"state_bootstrap_margin\":" << args.state_bootstrap_margin << ",";
@@ -3824,6 +3935,16 @@ auto main(int argc, char* argv[]) -> int {
     out << ",\"refresh_recurrent_state_post_layers\":";
     write_int_set_json(out, args.refresh_recurrent_state_post_layers);
     out << ",\"state_refresh_interval\":" << args.state_refresh_interval;
+    out << ",\"normalized_recurrent_state\":"
+        << (args.normalized_recurrent_state ? "true" : "false");
+    out << ",\"normalized_state_group_scales\":[";
+    for (std::size_t layer = 0; layer < layer_plans.size(); ++layer) {
+      if (layer > 0) {
+        out << ",";
+      }
+      write_double_vector_json(out, layer_plans[layer].state_group_scales);
+    }
+    out << "]";
     out << ",\"replicated_state_blocks\":"
         << (args.replicated_state_blocks ? "true" : "false");
     out << "},";
@@ -4090,6 +4211,8 @@ auto main(int argc, char* argv[]) -> int {
     out << ",";
     out << "\"recurrent_state_refresh_interval\":"
         << args.state_refresh_interval << ",";
+    out << "\"persistent_normalized_recurrent_state\":"
+        << (args.normalized_recurrent_state ? "true" : "false") << ",";
     out << "\"per_token_fresh_embedding_encryption\":true,";
     out << "\"multi_stream_slot_packing\":" << (args.streams > 1 ? "true" : "false") << ",";
     out << "\"streams\":" << args.streams << ",";

@@ -82,8 +82,31 @@ def choose_window(m: int, n: int, batch: int) -> tuple[int, int]:
     return window, r
 
 
+def choose_interleaved_window(m: int, n: int, batch: int) -> tuple[int, int]:
+    """Choose the tightest safe window for replica-interleaved diagonals.
+
+    Replica ``j`` stores an output contribution at offset ``i + j``. The
+    largest live offset is therefore ``m + r - 2``, not ``m + n - 2``. A
+    period-``n`` window of length at least ``m + r - 1`` is sufficient while
+    preserving the existing combined-mask and ``window + 1`` fold schedule.
+    """
+    if m <= 0 or n <= 0 or batch <= 0:
+        raise ValueError("m, n, and batch must be positive")
+    for replicas in range(batch // n - 1, 1, -1):
+        required = m + replicas - 1
+        window = n * math.ceil(required / n)
+        if (replicas + 1) * window <= batch:
+            return window, replicas
+    return choose_window(m, n, batch)
+
+
 def replicated_cost(
-    n: int, r: int, batch: int, *, window: int | None = None
+    n: int,
+    r: int,
+    batch: int,
+    *,
+    window: int | None = None,
+    guard_windows: int = 0,
 ) -> ReplicatedDiagonalCost:
     """Cost of the native replicated-diagonal schedule.
 
@@ -92,10 +115,12 @@ def replicated_cost(
     rotation and one combined plaintext mask per diagonal group, then folded.
     """
     window = _resolve_window(n, r, batch, window)
+    if guard_windows < 0 or (r + guard_windows) * window > batch:
+        raise ValueError("replicas plus guard windows must fit the batch")
     per_replica = math.ceil(n / r)
     reps = window // n
     extend = reps - 1
-    fill = r - 1
+    fill = r + guard_windows - 1
     diagonal_rolls = per_replica - 1
     fold = _fold_rotation_count(r)
     return ReplicatedDiagonalCost(
@@ -115,30 +140,43 @@ def replicated_bsgs_cost(
     *,
     window: int | None = None,
     baby_step: int | None = None,
+    guard_windows: int = 0,
 ) -> ReplicatedDiagonalCost:
     """Cost of true BSGS over the native replicated diagonal groups."""
     window = _resolve_window(n, r, batch, window)
+    if guard_windows < 0 or (r + guard_windows) * window > batch:
+        raise ValueError("replicas plus guard windows must fit the batch")
     per_replica = math.ceil(n / r)
     baby, giant = _bsgs_split(per_replica, baby_step)
     reps = window // n
     return ReplicatedDiagonalCost(
         diagonals=per_replica * r if per_replica * r < n + r else n,
         ct_pt_mul=per_replica,
-        rotations=(reps - 1) + (r - 1) + (baby - 1) + (giant - 1) + _fold_rotation_count(r),
+        rotations=(
+            (reps - 1)
+            + (r + guard_windows - 1)
+            + (baby - 1)
+            + (giant - 1)
+            + _fold_rotation_count(r)
+        ),
         adds=per_replica + (r - 1) + _fold_rotation_count(r),
         replicas=r,
         window=window,
     )
 
 
-def replicate_input(x: np.ndarray, r: int, window: int, batch: int) -> np.ndarray:
+def replicate_input(
+    x: np.ndarray, r: int, window: int, batch: int, *, guard_windows: int = 0
+) -> np.ndarray:
     """Slot vector with x cyclically extended (period n) inside window 0 then
     copied to all r windows. window must be a multiple of n."""
     n = x.shape[0]
     slots = np.zeros(batch)
     reps = window // n
     tile = np.tile(x, reps)
-    for j in range(r):
+    if guard_windows < 0 or (r + guard_windows) * window > batch:
+        raise ValueError("replicas plus guard windows must fit the batch")
+    for j in range(r + guard_windows):
         slots[j * window : (j + 1) * window] = tile
     return slots
 
@@ -178,12 +216,18 @@ def _fold_replicas(acc: np.ndarray, r: int, window: int) -> np.ndarray:
 
 
 def replicated_matmul(
-    w_mat: np.ndarray, x: np.ndarray, r: int, window: int, batch: int
+    w_mat: np.ndarray,
+    x: np.ndarray,
+    r: int,
+    window: int,
+    batch: int,
+    *,
+    guard_windows: int = 0,
 ) -> np.ndarray:
     """Slot-exact simulation (mask -> roll -> add only). Returns window 0
     slots [0, m) == W @ x."""
     n = w_mat.shape[1]
-    slots = replicate_input(x, r, window, batch)
+    slots = replicate_input(x, r, window, batch, guard_windows=guard_windows)
     acc = np.zeros(batch)
     per_replica = math.ceil(n / r)
     for k in range(per_replica):
@@ -202,6 +246,7 @@ def replicated_bsgs_matmul(
     batch: int,
     *,
     baby_step: int | None = None,
+    guard_windows: int = 0,
 ) -> np.ndarray:
     """True BSGS over replicated diagonal groups using CKKS-legal slot ops.
 
@@ -210,7 +255,7 @@ def replicated_bsgs_matmul(
     restores the mask and advances the baby-rotated ciphertext to ``k*r``.
     """
     n = w_mat.shape[1]
-    slots = replicate_input(x, r, window, batch)
+    slots = replicate_input(x, r, window, batch, guard_windows=guard_windows)
     group_count = math.ceil(n / r)
     baby, giant_count = _bsgs_split(group_count, baby_step)
     baby_rotations = [np.roll(slots, -i * r) for i in range(baby)]

@@ -55,6 +55,7 @@ common_args=(
   --first-mod-size "$FIRST_MOD_SIZE"
   --security "$SECURITY"
   --bsgs-replicas "${BSGS_REPLICAS:-auto}"
+  --interleaved-replicated-projection "${INTERLEAVED_REPLICATED_PROJECTION:-0}"
   --rotation-keys "${ROTATION_KEYS:-compact}"
   --rotation-key-gib "${ROTATION_KEY_GIB:-45}"
   --pt-cache full
@@ -67,6 +68,7 @@ common_args=(
   --meta-bts-alpha "${META_BTS_ALPHA:-5}"
   --state-meta-bts-alpha "${STATE_META_BTS_ALPHA:--1}"
   --refresh-recurrent-state-post "${REFRESH_RECURRENT_STATE_POST:-1}"
+  --normalized-recurrent-state "${NORMALIZED_RECURRENT_STATE:-0}"
   --tolerance "${TOLERANCE:-0.05}"
   --artifact-version "$ARTIFACT_VERSION+$RUN_TAG"
   --repo-commit "$REPO_COMMIT"

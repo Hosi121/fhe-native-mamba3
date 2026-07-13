@@ -114,6 +114,12 @@ struct Config {
   // Apply a real baby-step/giant-step decomposition to the replicated
   // diagonal groups. Off preserves the measured replicated schedule.
   bool replicated_true_bsgs = false;
+  // Tighten each replicated projection window from m+n to m+r-1. The
+  // existing masks interleave replica j at output offset i+j, so only r-1
+  // guard slots are required. One extra filled input window prevents the last
+  // active replica from reading an uninitialized tail during rotation. The
+  // 130M out-projection grows from 10 to 20 active replicas.
+  bool interleaved_replicated_projection = false;
   // Expand the contiguous Mamba B/C vectors into recurrent-state blocks by
   // logarithmic rotate-add replication instead of one mask per state slot.
   bool replicated_state_blocks = false;
@@ -145,6 +151,11 @@ struct Config {
   // initializes the state; interval N refreshes after recurrent updates at
   // token indices N, 2N, ... . 0 leaves refresh entirely level-driven.
   int state_refresh_interval = 0;
+  // Store each recurrent head group permanently as u = state / S, where S is
+  // its public calibration maximum. The update 1/S and readout S factors are
+  // folded into existing plaintext masks, so this changes neither the Mamba
+  // formula nor multiplicative depth. It is opt-in until encrypted parity.
+  bool normalized_recurrent_state = false;
   int bootstrap_level_budget_cts = 5;
   int bootstrap_level_budget_stc = 5;
   int bootstrap_bsgs_dim_cts = 0;
