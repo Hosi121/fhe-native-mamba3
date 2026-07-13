@@ -169,6 +169,15 @@ this the default from one randomized-key run, so both scopes remain explicit
 runtime options. Per-token phase and operation telemetry is emitted with the
 artifacts to keep cold first-token cost separate from warm decode cost.
 
+Combining complex-paired state refresh with both fused projections now passes
+the three-token gate at 0.04068 maximum error, but it does not improve this
+short session: evaluation is 156.31 s versus 145.75 s for paired state with
+only `out_proj` fused. The fully fused path reduces the two warm projection
+phases from about 2.66 to 2.02 s per token, but pays a larger first-token GPU
+plaintext-load cost and the measured total warm step remains effectively tied.
+The B300 runner therefore promotes `out-proj` fusion plus state pairing, while
+the all-scope path remains an explicit long-session candidate.
+
 Sources: [Cachemir](https://arxiv.org/abs/2602.11470), [improved double-hoisting
 BSGS](https://eprint.iacr.org/2025/429.pdf).
 
@@ -196,15 +205,35 @@ Sources: [LCR+AKS overview](https://ckks.org/blog/2026/less-mod-ckks/),
 [Cerium](https://arxiv.org/abs/2512.11269),
 [FIDESlib](https://arxiv.org/abs/2507.04775).
 
+The B300 synchronization workaround cannot be removed wholesale. A separate
+`bootstrap-lifetime` build, which retained bootstrap-stage and ciphertext-
+lifetime synchronization but removed the key-switch stage barriers, passed 20
+consecutive complex bootstrap probes at 63.80 ms mean latency. The full
+24-layer, three-token circuit then completed without a CUDA exception but
+silently produced finite values around `2e91` and failed every token. The
+fully synchronized build therefore remains the only promoted backend; a
+micro-probe is not a sufficient correctness gate for asynchronous CKKS
+changes.
+
 ### Multi-token state packing
 
 One-token execution initializes state and therefore does not pay recurrent
 state refresh. For 24-layer multi-token inference, the six full-slot state
-ciphertexts per layer and their refreshes become dominant. Packing two real
-state ciphertexts into CKKS real/imaginary channels could halve this count,
-but correct extraction requires conjugation/automorphism evaluation that the
-current FIDESlib wrapper does not expose. This is a high-impact backend API
-task after the corrected six-token reference gate.
+ciphertexts per layer and their refreshes become dominant. The FIDESlib
+wrapper now exposes conjugation and opts into complex CKKS data, allowing two
+normalized real state ciphertexts to share one real/imaginary bootstrap before
+conjugate-based extraction. A 20-iteration B300 probe passes with maximum error
+`9.19e-6` and no decrypt failures.
+
+The full 24-layer, three-token autoregressive gate also passes with per-token
+polynomial-circuit errors `0.01295`, `0.01173`, and `0.03475`. It performs 144
+paired state refreshes and reduces physical bootstraps from the previous 588
+run to 469; evaluation is 145.75 s and the two carried-state steps average
+26.38 s. The previous artifact was produced by an earlier binary and has a
+different token-0 bootstrap schedule, so the 17.9% end-to-end reduction is not
+a strict isolated A/B claim. The directly attributable result is that each
+pair replaces two physical state bootstraps with one while retaining the
+24-layer accuracy gate.
 
 Persistent calibration-normalized state is now available as an orthogonal
 improvement: each group stores `u = state / S`, with `1/S` folded into the
@@ -313,16 +342,16 @@ Source: [Mamba-3 paper and released kernels](https://arxiv.org/abs/2603.15569),
 
 ## Recommended order
 
-1. Port the current runner to the B300 on one GPU and establish one reproducible
-   end-to-end baseline before spending more DGX time.
-2. Change the state-update/upstream circuit as a whole, then compare candidates
-   at 24 layers and multiple tokens; do not continue per-layer bootstrap probes.
-3. Promote interleaved projections for amortized multi-token runs and assess
-   backend hoisting.
-4. Investigate a faster or more accurate bootstrap backend. Single-BTS carried
-   state is faster, but neither it nor Meta-BTS currently passes the full-depth
-   multi-token gate; gated RMSNorm still requires Meta-BTS.
-5. Build a global bootstrap-placement optimizer for residual/projection
+1. Extend the reference/payload horizon beyond three tokens and benchmark the
+   promoted B300 `out-proj` fusion plus complex-state pairing path.
+2. Replace B300 key-switch device barriers with explicit stream dependencies,
+   using the full 24-layer multi-token gate rather than bootstrap micro-probes
+   as the promotion criterion.
+3. Re-evaluate all-scope fused projections on the longer session where their
+   lower warm projection time can amortize first-token loading.
+4. Build a global bootstrap-placement optimizer for residual/projection
    coordination, not for the now-refuted gated checkpoint removal.
-6. Add a slot simulator for shared dt/decay head expansion.
+5. Add a slot simulator for shared dt/decay head expansion.
+6. Investigate a faster or more accurate bootstrap backend; gated RMSNorm still
+   requires Meta-BTS even though paired normalized state now passes.
 7. Keep Mamba-3-lite as a separately trained architecture experiment.

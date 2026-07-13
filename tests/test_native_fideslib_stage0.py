@@ -42,6 +42,12 @@ def test_b300_sync_profiles_keep_experimental_builds_isolated() -> None:
     assert 'FIDESLIB_VARIANT="${FIDESLIB_VARIANT:-sm${FIDESLIB_SM}}"' in runner
     assert 'inferred_sync_profile="${FIDESLIB_VARIANT#sm${FIDESLIB_SM}-}"' in runner
     assert "fideslib-stage0-${FIDESLIB_VARIANT}" in runner
+    assert 'FUSED_REPLICATED_LINEAR_TRANSFORM="${FUSED_REPLICATED_LINEAR_TRANSFORM:-1}"' in runner
+    assert (
+        'FUSED_REPLICATED_LINEAR_TRANSFORM_SCOPE="${FUSED_REPLICATED_LINEAR_TRANSFORM_SCOPE:-out-proj}"'
+        in runner
+    )
+    assert 'COMPLEX_STATE_PAIRING="${COMPLEX_STATE_PAIRING:-1}"' in runner
 
 
 def test_mamba2_decode_wires_complex_state_pairing() -> None:
