@@ -240,6 +240,64 @@ def measure_group_amplification(
     }
 
 
+def rank_observed_state_impact(
+    group_amplification: dict,
+    layer_token_summary: dict,
+    *,
+    token: int,
+) -> dict:
+    """Join plaintext group sensitivity with encrypted state-error telemetry.
+
+    ``impact_proxy`` is observed state L-infinity error times the empirical
+    random-direction final gain. It is a prioritization signal, not a bound or
+    an attribution identity: CKKS error need not align with the probe direction.
+    """
+    if token < 0:
+        raise ValueError("token must be non-negative")
+    sensitivity = {
+        (int(record["layer"]), int(record["group"])): record
+        for record in group_amplification.get("records", [])
+    }
+    records = []
+    covered_layers = []
+    suffix = f"t{token}.L"
+    for key, summary in sorted(layer_token_summary.items()):
+        if not key.startswith(suffix) or "debug_state_group_errors" not in summary:
+            continue
+        layer = int(key.removeprefix(suffix))
+        errors = summary["debug_state_group_errors"]
+        covered_layers.append(layer)
+        for group, observed_error in enumerate(errors):
+            probe = sensitivity.get((layer, group))
+            if probe is None:
+                raise ValueError(f"missing sensitivity for layer {layer}, group {group}")
+            observed_error = float(observed_error)
+            final_gain = float(probe["final_gain"])
+            records.append(
+                {
+                    "layer": layer,
+                    "group": group,
+                    "observed_state_max_abs_error": observed_error,
+                    "final_gain": final_gain,
+                    "impact_proxy": observed_error * final_gain,
+                    "boundary_error": summary.get("debug_boundary_error"),
+                    "state_scale": probe.get("state_scale"),
+                    "normalized_state_output_gain": probe.get("normalized_state_output_gain"),
+                }
+            )
+
+    ranked = sorted(records, key=lambda record: record["impact_proxy"], reverse=True)
+    return {
+        "token": token,
+        "covered_layers": covered_layers,
+        "records": ranked,
+        "sum_impact_proxy": sum(record["impact_proxy"] for record in records),
+        "max_observed_state_error": max(
+            (record["observed_state_max_abs_error"] for record in records), default=0.0
+        ),
+    }
+
+
 def horizon(
     eps_refresh: float,
     lambda_out: list[float],

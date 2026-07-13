@@ -6,6 +6,7 @@ from fhemamba.noise_flow import (
     horizon,
     measure_amplification,
     measure_group_amplification,
+    rank_observed_state_impact,
     reanchor_cadence,
 )
 
@@ -84,6 +85,46 @@ def test_group_amplification_matches_packed_groups_and_scales() -> None:
 def test_group_amplification_rejects_incompatible_geometry(kwargs, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         measure_group_amplification(_tiny(), torch.arange(8).unsqueeze(0), **kwargs)
+
+
+def test_observed_state_impact_joins_group_telemetry() -> None:
+    group_amplification = {
+        "records": [
+            {
+                "layer": 0,
+                "group": 0,
+                "final_gain": 2.0,
+                "state_scale": 3.0,
+                "normalized_state_output_gain": 6.0,
+            },
+            {
+                "layer": 0,
+                "group": 1,
+                "final_gain": 10.0,
+                "state_scale": 1.0,
+                "normalized_state_output_gain": 10.0,
+            },
+        ]
+    }
+    summary = {
+        "t0.L00": {"debug_state_group_errors": [9.0, 9.0]},
+        "t1.L00": {
+            "debug_boundary_error": 0.25,
+            "debug_state_group_errors": [0.2, 0.1],
+        },
+    }
+    ranked = rank_observed_state_impact(group_amplification, summary, token=1)
+    assert ranked["covered_layers"] == [0]
+    assert ranked["records"][0]["group"] == 1
+    assert ranked["records"][0]["impact_proxy"] == pytest.approx(1.0)
+    assert ranked["records"][1]["impact_proxy"] == pytest.approx(0.4)
+    assert ranked["records"][0]["boundary_error"] == 0.25
+
+
+def test_observed_state_impact_requires_matching_sensitivity() -> None:
+    summary = {"t1.L00": {"debug_state_group_errors": [0.1]}}
+    with pytest.raises(ValueError, match="missing sensitivity"):
+        rank_observed_state_impact({"records": []}, summary, token=1)
 
 
 def test_horizon_monotone_in_epsilon() -> None:
