@@ -2522,6 +2522,7 @@ auto main(int argc, char* argv[]) -> int {
     double pt_cache_encode_seconds = 0.0;
     std::size_t pt_cache_entries_cached = 0;
     double pt_cache_bytes_cached = 0.0;
+    double pt_cache_bytes_registered = 0.0;
     if (pt_cache_mode != "off") {
       const int layers_count = static_cast<int>(layer_plans.size());
       // Shared select/broadcast masks (layer-independent slot patterns).
@@ -2689,6 +2690,7 @@ auto main(int argc, char* argv[]) -> int {
       selection.reserve(plain_cache.size());
       for (auto entry = plain_cache.begin(); entry != plain_cache.end(); ++entry) {
         selection.push_back(entry);
+        pt_cache_bytes_registered += entry->second.estimated_bytes;
       }
       std::stable_sort(selection.begin(), selection.end(), [](const auto& lhs, const auto& rhs) {
         if (lhs->second.uses_per_token != rhs->second.uses_per_token) {
@@ -2710,6 +2712,9 @@ auto main(int argc, char* argv[]) -> int {
       const auto to_encode = selected.size();
       log_phase("pt cache encode begin mode=" + pt_cache_mode +
                 " registered=" + std::to_string(plain_cache.size()) +
+                " registered_gib=" +
+                std::to_string(pt_cache_bytes_registered /
+                               (1024.0 * 1024.0 * 1024.0)) +
                 " selected=" + std::to_string(to_encode) +
                 " selected_gib=" +
                 std::to_string(selected_bytes / (1024.0 * 1024.0 * 1024.0)) +
@@ -4363,6 +4368,8 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"bytes_per_plaintext\":" << pt_plain_bytes << ",";
     out << "\"weight_bytes_per_plaintext\":" << pt_weight_plain_bytes << ",";
     out << "\"entries_registered\":" << plain_cache.size() << ",";
+    out << "\"bytes_registered_gib\":"
+        << (pt_cache_bytes_registered / (1024.0 * 1024.0 * 1024.0)) << ",";
     out << "\"entries_cached\":" << pt_cache_entries_cached << ",";
     out << "\"bytes_cached_gib\":"
         << (pt_cache_bytes_cached / (1024.0 * 1024.0 * 1024.0)) << ",";
