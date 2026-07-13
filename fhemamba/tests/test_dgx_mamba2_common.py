@@ -39,6 +39,8 @@ def test_dgx_mamba2_common_defaults_to_promoted_structural_path() -> None:
     assert args["--max-layers"] == "24"
     assert args["--tokens"] == "2"
     assert args["--replicated-true-bsgs"] == "1"
+    assert args["--fused-replicated-linear-transform"] == "0"
+    assert args["--fused-replicated-linear-transform-scope"] == "all"
     assert args["--interleaved-replicated-projection"] == "1"
     assert args["--replicated-state-blocks"] == "1"
     assert args["--normalized-recurrent-state"] == "1"
@@ -56,9 +58,13 @@ def test_dgx_mamba2_common_preserves_environment_overrides() -> None:
         NORMALIZED_RECURRENT_STATE="0",
         META_BTS_RESIDUAL_LAYERS="21,22,23",
         DEBUG_NORMALIZED_STATE_BOOTSTRAP_RANGE="1",
+        FUSED_REPLICATED_LINEAR_TRANSFORM="1",
+        FUSED_REPLICATED_LINEAR_TRANSFORM_SCOPE="out-proj",
     )
 
     assert args["--pt-cache-gib"] == "9"
     assert args["--normalized-recurrent-state"] == "0"
     assert args["--meta-bts-residual-layers"] == "21,22,23"
     assert args["--debug-normalized-state-bootstrap-range"] == "1"
+    assert args["--fused-replicated-linear-transform"] == "1"
+    assert args["--fused-replicated-linear-transform-scope"] == "out-proj"

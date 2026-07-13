@@ -151,6 +151,10 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.bsgs_replicas = value;
     } else if (arg == "--replicated-true-bsgs") {
       config.replicated_true_bsgs = parse_bool_arg(arg, value);
+    } else if (arg == "--fused-replicated-linear-transform") {
+      config.fused_replicated_linear_transform = parse_bool_arg(arg, value);
+    } else if (arg == "--fused-replicated-linear-transform-scope") {
+      config.fused_replicated_linear_transform_scope = value;
     } else if (arg == "--interleaved-replicated-projection") {
       config.interleaved_replicated_projection = parse_bool_arg(arg, value);
     } else if (arg == "--replicated-state-blocks") {
@@ -369,6 +373,16 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.replicated_true_bsgs && config.bsgs_replicas == "1") {
     throw std::invalid_argument("replicated-true-bsgs requires replicated layout");
+  }
+  if (config.fused_replicated_linear_transform &&
+      !config.replicated_true_bsgs) {
+    throw std::invalid_argument(
+        "fused-replicated-linear-transform requires replicated-true-bsgs");
+  }
+  if (config.fused_replicated_linear_transform_scope != "all" &&
+      config.fused_replicated_linear_transform_scope != "out-proj") {
+    throw std::invalid_argument(
+        "fused-replicated-linear-transform-scope must be all or out-proj");
   }
   if (config.interleaved_replicated_projection &&
       config.bsgs_replicas == "1") {

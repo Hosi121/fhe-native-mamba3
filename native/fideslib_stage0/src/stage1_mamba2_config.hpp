@@ -115,6 +115,14 @@ struct Config {
   // Apply a real baby-step/giant-step decomposition to the replicated
   // diagonal groups. Off preserves the measured replicated schedule.
   bool replicated_true_bsgs = false;
+  // Use FIDESlib's fused LinearTransform for the true-BSGS core. This hoists
+  // baby rotations and fuses diagonal products/sums on the GPU. It requires
+  // direct keys for every baby and giant rotation; otherwise evaluation
+  // falls back to the scalar true-BSGS schedule.
+  bool fused_replicated_linear_transform = false;
+  // "all" fuses both input and output projections; "out-proj" retains the
+  // scalar accumulation order on the recurrence-sensitive input projection.
+  std::string fused_replicated_linear_transform_scope = "all";
   // Tighten each replicated projection window from m+n to m+r-1. The
   // existing masks interleave replica j at output offset i+j, so only r-1
   // guard slots are required. One extra filled input window prevents the last

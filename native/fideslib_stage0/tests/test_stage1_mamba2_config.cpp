@@ -78,10 +78,16 @@ auto main() -> int {
           "recurrence debug layer was not parsed");
   const auto true_bsgs = parse({"stage1", "--input", "payload", "--bsgs-replicas",
                                 "auto", "--replicated-true-bsgs", "true",
+                                "--fused-replicated-linear-transform", "true",
+                                "--fused-replicated-linear-transform-scope", "out-proj",
                                 "--interleaved-replicated-projection", "true",
                                 "--replicated-state-blocks", "true",
                                 "--projection-late-level", "true"});
   require(true_bsgs.replicated_true_bsgs, "true replicated BSGS was not parsed");
+  require(true_bsgs.fused_replicated_linear_transform,
+          "fused replicated linear transform was not parsed");
+  require(true_bsgs.fused_replicated_linear_transform_scope == "out-proj",
+          "fused replicated linear transform scope was not parsed");
   require(true_bsgs.interleaved_replicated_projection,
           "interleaved replicated projection was not parsed");
   require(true_bsgs.replicated_state_blocks,
@@ -195,6 +201,14 @@ auto main() -> int {
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--replicated-true-bsgs", "1"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload",
+           "--fused-replicated-linear-transform", "1"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload",
+           "--fused-replicated-linear-transform-scope", "input"});
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--binary-sha256", "abc123"});

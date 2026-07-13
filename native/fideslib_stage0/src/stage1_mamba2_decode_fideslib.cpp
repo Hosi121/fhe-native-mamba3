@@ -127,6 +127,7 @@ using fhemamba::stage1::require_server_has_no_secret_files;
 using fhemamba::stage1::should_use_meta_bts;
 using fhemamba::stage1::write_artifact_prefix;
 using fhemamba::stage1::write_double_map_json;
+using fhemamba::stage1::write_double_map_vector_json;
 using fhemamba::stage1::write_double_vector_json;
 using fhemamba::stage1::write_int_map_json;
 using fhemamba::stage1::write_int_set_json;
@@ -718,6 +719,20 @@ void write_phase_operation_counts_json(
   out << "}";
 }
 
+void write_operation_counts_vector_json(
+    std::ostringstream& out, const std::vector<OperationCounts>& values) {
+  out << "[";
+  bool first = true;
+  for (const auto& counts : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    write_operation_counts_json(out, counts);
+  }
+  out << "]";
+}
+
 
 // Per-token depth estimate from the poly degrees (mirrors the ciphertext
 // program's level arithmetic; validated against a slot-level simulation).
@@ -1281,6 +1296,8 @@ auto main(int argc, char* argv[]) -> int {
     int unity_multiplies = 0;
     int direct_level_drops = 0;
     int projection_late_level_drops = 0;
+    int fused_projection_calls = 0;
+    int fused_projection_fallbacks = 0;
     int bootstraps = 0;
     int state_bootstraps = 0;  // refreshes of carried-forward (state/FIFO) cts
     int meta_bts_applied = 0;  // refreshes that ran the double-BTS path
@@ -1302,6 +1319,9 @@ auto main(int argc, char* argv[]) -> int {
     std::vector<BootstrapEvent> bootstrap_events;
     std::map<std::string, double> phase_timings;
     std::map<std::string, OperationCounts> phase_operation_counts;
+    std::vector<std::map<std::string, double>> phase_timings_by_token(
+        static_cast<std::size_t>(args.tokens));
+    int active_timing_token = -1;
     std::map<std::string, int> ckks_levels;
 
     auto current_operation_counts = [&]() {
@@ -1321,7 +1341,12 @@ auto main(int argc, char* argv[]) -> int {
                             const std::string& name,
                             std::chrono::steady_clock::time_point phase_start,
                             const OperationCounts& before) {
-      phase_timings[name] += seconds_since(phase_start);
+      const double elapsed = seconds_since(phase_start);
+      phase_timings[name] += elapsed;
+      if (active_timing_token >= 0) {
+        phase_timings_by_token[static_cast<std::size_t>(active_timing_token)]
+                              [name] += elapsed;
+      }
       phase_operation_counts[name] = add_counts(
           phase_operation_counts[name],
           subtract_counts(current_operation_counts(), before));
@@ -1615,6 +1640,13 @@ auto main(int argc, char* argv[]) -> int {
     // bit-identical); direct/composite applications are tracked separately.
     // EvalRotate is keyswitch-only (no rescale, never level-aligned in the
     // proven kernels), so NAF composition consumes zero levels.
+    auto count_direct_rotation = [&](int amount) {
+      if (amount == 0) {
+        return;
+      }
+      ++rotations;
+      ++rotations_direct;
+    };
     auto rotate = [&](const Ciphertext<DCRTPoly>& ciphertext, int amount)
         -> Ciphertext<DCRTPoly> {
       if (amount == 0) {
@@ -2980,7 +3012,8 @@ auto main(int argc, char* argv[]) -> int {
     auto replicated_bsgs = [&](const Ciphertext<DCRTPoly>& input_ct,
                                const std::vector<double>& weights, int output_dim,
                                int input_dim, const ReplicatedShape& shape,
-                               const std::string& key_prefix) -> Ciphertext<DCRTPoly> {
+                               const std::string& key_prefix,
+                               bool fusion_allowed) -> Ciphertext<DCRTPoly> {
       // In-window cyclic self-extension of the period-n input tile.
       auto extended = input_ct;
       for (int t = 1; t < shape.reps; ++t) {
@@ -3014,48 +3047,92 @@ auto main(int argc, char* argv[]) -> int {
           }
         }
       } else {
-        std::vector<Ciphertext<DCRTPoly>> babies;
-        babies.reserve(static_cast<std::size_t>(shape.baby_step));
-        babies.push_back(replicated);
-        for (int baby = 1; baby < shape.baby_step; ++baby) {
-          babies.push_back(rotate(replicated, baby * shape.replicas));
-        }
         const int giant_count =
             (shape.per_replica + shape.baby_step - 1) / shape.baby_step;
-        for (int giant = 0; giant < giant_count; ++giant) {
-          Ciphertext<DCRTPoly> inner;
-          bool has_inner = false;
-          for (int baby = 0; baby < shape.baby_step; ++baby) {
-            const int k = giant * shape.baby_step + baby;
-            if (k >= shape.per_replica) {
-              break;
-            }
+        bool fused_rotations_are_direct = true;
+        for (int baby = 1; baby < shape.baby_step; ++baby) {
+          fused_rotations_are_direct =
+              fused_rotations_are_direct &&
+              rotation_key_set.count(baby * shape.replicas) > 0;
+        }
+        if (giant_count > 1) {
+          fused_rotations_are_direct =
+              fused_rotations_are_direct &&
+              rotation_key_set.count(shape.baby_step * shape.replicas) > 0;
+        }
+        const bool use_fused_transform =
+            args.fused_replicated_linear_transform &&
+            fusion_allowed &&
+            fused_rotations_are_direct;
+        if (use_fused_transform) {
+          std::vector<Plaintext> diagonals;
+          diagonals.reserve(static_cast<std::size_t>(shape.per_replica));
+          for (int k = 0; k < shape.per_replica; ++k) {
             auto mask = replicated_bsgs_pre_mask(
                 weights, output_dim, input_dim, k, shape, batch_size);
-            if (std::all_of(mask.begin(), mask.end(),
-                            [](double value) { return value == 0.0; })) {
+            diagonals.push_back(cached_plain(
+                key_prefix + std::to_string(k), mask,
+                static_cast<uint32_t>(replicated->GetLevel())));
+          }
+          accumulator = replicated->Clone();
+          cc->LinearTransformInPlace(accumulator, shape.per_replica,
+                                     shape.baby_step, diagonals,
+                                     shape.replicas, 0);
+          has_accumulator = true;
+          ct_pt_muls += shape.per_replica;
+          adds += shape.per_replica - 1;
+          for (int baby = 1; baby < shape.baby_step; ++baby) {
+            count_direct_rotation(baby * shape.replicas);
+          }
+          for (int giant = 1; giant < giant_count; ++giant) {
+            count_direct_rotation(shape.baby_step * shape.replicas);
+          }
+          ++fused_projection_calls;
+        } else {
+          if (args.fused_replicated_linear_transform && fusion_allowed) {
+            ++fused_projection_fallbacks;
+          }
+          std::vector<Ciphertext<DCRTPoly>> babies;
+          babies.reserve(static_cast<std::size_t>(shape.baby_step));
+          babies.push_back(replicated);
+          for (int baby = 1; baby < shape.baby_step; ++baby) {
+            babies.push_back(rotate(replicated, baby * shape.replicas));
+          }
+          for (int giant = 0; giant < giant_count; ++giant) {
+            Ciphertext<DCRTPoly> inner;
+            bool has_inner = false;
+            for (int baby = 0; baby < shape.baby_step; ++baby) {
+              const int k = giant * shape.baby_step + baby;
+              if (k >= shape.per_replica) {
+                break;
+              }
+              auto mask = replicated_bsgs_pre_mask(
+                  weights, output_dim, input_dim, k, shape, batch_size);
+              if (std::all_of(mask.begin(), mask.end(),
+                              [](double value) { return value == 0.0; })) {
+                continue;
+              }
+              auto term = mul_mask(babies[static_cast<std::size_t>(baby)],
+                                   key_prefix + std::to_string(k), mask);
+              if (!has_inner) {
+                inner = term;
+                has_inner = true;
+              } else {
+                inner = add_aligned(inner, term);
+              }
+            }
+            if (!has_inner) {
               continue;
             }
-            auto term = mul_mask(babies[static_cast<std::size_t>(baby)],
-                                 key_prefix + std::to_string(k), mask);
-            if (!has_inner) {
-              inner = term;
-              has_inner = true;
-            } else {
-              inner = add_aligned(inner, term);
+            if (giant != 0) {
+              inner = rotate(inner, giant * shape.baby_step * shape.replicas);
             }
-          }
-          if (!has_inner) {
-            continue;
-          }
-          if (giant != 0) {
-            inner = rotate(inner, giant * shape.baby_step * shape.replicas);
-          }
-          if (!has_accumulator) {
-            accumulator = inner;
-            has_accumulator = true;
-          } else {
-            accumulator = add_aligned(accumulator, inner);
+            if (!has_accumulator) {
+              accumulator = inner;
+              has_accumulator = true;
+            } else {
+              accumulator = add_aligned(accumulator, inner);
+            }
           }
         }
       }
@@ -3181,7 +3258,8 @@ auto main(int argc, char* argv[]) -> int {
         Ciphertext<DCRTPoly> linear;
         if (rep_in.replicas > 1) {
           linear = replicated_bsgs(linear_input, plan.in_w_folded, proj_dim, d_model, rep_in,
-                                   plan.cache_prefix + "bsgsrep_in.");
+                                   plan.cache_prefix + "bsgsrep_in.",
+                                   args.fused_replicated_linear_transform_scope == "all");
         } else {
           auto babies = slot_bsgs_precompute_baby_rotations(
               rotate, linear_input, kBabyStepIn);
@@ -3552,7 +3630,7 @@ auto main(int argc, char* argv[]) -> int {
         Ciphertext<DCRTPoly> linear;
         if (rep_out.replicas > 1) {
           linear = replicated_bsgs(linear_input, plan.out_w_folded, d_model, d_inner, rep_out,
-                                   plan.cache_prefix + "bsgsrep_out.");
+                                   plan.cache_prefix + "bsgsrep_out.", true);
           linear = mul_mask(linear, "mask.out_clean", out_clean_mask);
         } else {
           auto babies = slot_bsgs_precompute_baby_rotations(
@@ -3585,6 +3663,10 @@ auto main(int argc, char* argv[]) -> int {
     }
     std::vector<Ciphertext<DCRTPoly>> token_outputs;
     std::vector<int> token_bootstrap_counts;
+    std::vector<double> token_step_seconds;
+    std::vector<OperationCounts> token_operation_counts;
+    token_step_seconds.reserve(static_cast<std::size_t>(args.tokens));
+    token_operation_counts.reserve(static_cast<std::size_t>(args.tokens));
     std::map<std::string, int> summary_level_in;
     std::map<std::string, int> summary_level_out;
     std::map<std::string, double> debug_boundary_errors;
@@ -3616,6 +3698,9 @@ auto main(int argc, char* argv[]) -> int {
                    : layer_payloads.front().tensors.at("test_layer_input");
 
     for (int token = 0; token < args.tokens; ++token) {
+      const auto token_start = now();
+      const auto token_counts_before = current_operation_counts();
+      active_timing_token = token;
       int token_bootstraps_total = 0;
       if (args.debug_client_reencrypt_before_token.count(token) > 0) {
         const auto reencrypt_start = now();
@@ -3930,8 +4015,22 @@ auto main(int argc, char* argv[]) -> int {
       log_phase("token " + std::to_string(token) + " done output_level=" +
                 std::to_string(hidden_ct->GetLevel()) +
                 " bootstraps=" + std::to_string(token_bootstraps_total));
+      token_step_seconds.push_back(seconds_since(token_start));
+      token_operation_counts.push_back(subtract_counts(
+          current_operation_counts(), token_counts_before));
+      active_timing_token = -1;
     }
     const double eval_seconds = seconds_since(eval_start);
+    const std::size_t carried_state_step_count =
+        token_step_seconds.empty() ? 0 : token_step_seconds.size() - 1;
+    double carried_state_step_mean_seconds = 0.0;
+    for (std::size_t token = 1; token < token_step_seconds.size(); ++token) {
+      carried_state_step_mean_seconds += token_step_seconds[token];
+    }
+    if (token_step_seconds.size() > 1) {
+      carried_state_step_mean_seconds /=
+          static_cast<double>(token_step_seconds.size() - 1);
+    }
     log_phase("token loop done rotations=" + std::to_string(rotations) +
               " ct_pt=" + std::to_string(ct_pt_muls) + " ct_ct=" + std::to_string(ct_ct_muls) +
               " bootstraps=" + std::to_string(bootstraps));
@@ -3957,7 +4056,23 @@ auto main(int argc, char* argv[]) -> int {
       result << "\"measurements\":{\"encrypted_outputs_written\":"
              << args.tokens << ",\"server_secret_key_files\":"
              << server_secret_key_files << ",\"eval_seconds\":"
-             << eval_seconds << "},";
+             << eval_seconds << ",\"token_step_seconds\":";
+      write_double_vector_json(result, token_step_seconds);
+      result << ",\"initial_state_step_seconds\":"
+             << token_step_seconds.front()
+             << ",\"carried_state_step_count\":"
+             << carried_state_step_count
+             << ",\"carried_state_step_mean_seconds\":";
+      if (token_step_seconds.size() > 1) {
+        result << carried_state_step_mean_seconds;
+      } else {
+        result << "null";
+      }
+      result << ",\"phase_timings_by_token\":";
+      write_double_map_vector_json(result, phase_timings_by_token);
+      result << ",\"operation_counts_by_token\":";
+      write_operation_counts_vector_json(result, token_operation_counts);
+      result << "},";
       result << "\"operation_counts\":{\"rotations\":" << rotations
              << ",\"ct_pt_mul\":" << ct_pt_muls
              << ",\"ct_ct_mul\":" << ct_ct_muls << ",\"adds\":"
@@ -4156,6 +4271,13 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"bsgs_layout\":{";
     out << "\"mode\":\"" << json_escape(args.bsgs_replicas) << "\",";
     out << "\"true_bsgs\":" << (args.replicated_true_bsgs ? "true" : "false") << ",";
+    out << "\"fused_linear_transform_configured\":"
+        << (args.fused_replicated_linear_transform ? "true" : "false") << ",";
+    out << "\"fused_linear_transform_scope\":\""
+        << json_escape(args.fused_replicated_linear_transform_scope) << "\",";
+    out << "\"fused_linear_transform_calls\":" << fused_projection_calls << ",";
+    out << "\"fused_linear_transform_fallbacks\":"
+        << fused_projection_fallbacks << ",";
     out << "\"interleaved_window\":"
         << (args.interleaved_replicated_projection ? "true" : "false") << ",";
     out << "\"in_replicas\":" << rep_in.replicas << ",";
@@ -4490,13 +4612,32 @@ auto main(int argc, char* argv[]) -> int {
         << autoregressive_client_seconds << ",";
     out << "\"load_context_seconds\":" << load_context_seconds << ",";
     out << "\"eval_seconds\":" << eval_seconds << ",";
+    out << "\"token_step_seconds\":";
+    write_double_vector_json(out, token_step_seconds);
+    out << ",\"initial_state_step_seconds\":" << token_step_seconds.front()
+        << ",";
+    out << "\"carried_state_step_count\":"
+        << carried_state_step_count << ",";
+    out << "\"carried_state_step_mean_seconds\":";
+    if (token_step_seconds.size() > 1) {
+      out << carried_state_step_mean_seconds;
+    } else {
+      out << "null";
+    }
+    out << ",";
     out << "\"decrypt_seconds\":" << decrypt_seconds;
     out << "},";
     out << "\"phase_timings\":";
     write_double_map_json(out, phase_timings);
     out << ",";
+    out << "\"phase_timings_by_token\":";
+    write_double_map_vector_json(out, phase_timings_by_token);
+    out << ",";
     out << "\"phase_operation_counts\":";
     write_phase_operation_counts_json(out, phase_operation_counts);
+    out << ",";
+    out << "\"operation_counts_by_token\":";
+    write_operation_counts_vector_json(out, token_operation_counts);
     out << ",";
     out << "\"operation_counts\":{";
     out << "\"rotations\":" << rotations << ",";
@@ -4507,6 +4648,9 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"adds\":" << adds << ",";
     out << "\"unity_level_align_muls\":" << unity_multiplies << ",";
     out << "\"direct_level_align_drops\":" << direct_level_drops << ",";
+    out << "\"fused_projection_calls\":" << fused_projection_calls << ",";
+    out << "\"fused_projection_fallbacks\":"
+        << fused_projection_fallbacks << ",";
     out << "\"projection_late_level_drops\":"
         << projection_late_level_drops << ",";
     out << "\"bootstraps\":" << bootstraps;

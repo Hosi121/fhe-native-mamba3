@@ -48,6 +48,13 @@ auto main() -> int {
   require(map.str() == "{\"bad\\nkey\":\"NaN\"}",
           "non-finite map values produced invalid JSON");
 
+  std::ostringstream map_vector;
+  write_double_map_vector_json(map_vector,
+                               {{{"phase", 1.25}}, {{"phase", 2.5}}});
+  require(map_vector.str() ==
+              "[{\"phase\":1.25},{\"phase\":2.5}]",
+          "map vector produced invalid JSON");
+
   const auto root = fs::temp_directory_path() / "fhemamba-stage1-artifact-test";
   fs::remove_all(root);
   fs::create_directories(root);

@@ -161,6 +161,21 @@ void write_double_map_json(std::ostringstream& out,
   out << "}";
 }
 
+void write_double_map_vector_json(
+    std::ostringstream& out,
+    const std::vector<std::map<std::string, double>>& values) {
+  out << "[";
+  bool first = true;
+  for (const auto& value : values) {
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    write_double_map_json(out, value);
+  }
+  out << "]";
+}
+
 void write_int_map_json(std::ostringstream& out,
                         const std::map<std::string, int>& values) {
   out << "{";

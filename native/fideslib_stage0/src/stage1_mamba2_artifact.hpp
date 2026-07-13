@@ -21,6 +21,9 @@ void write_int_vector_json(std::ostringstream& out,
                            const std::vector<int>& values);
 void write_double_map_json(std::ostringstream& out,
                            const std::map<std::string, double>& values);
+void write_double_map_vector_json(
+    std::ostringstream& out,
+    const std::vector<std::map<std::string, double>>& values);
 void write_int_map_json(std::ostringstream& out,
                         const std::map<std::string, int>& values);
 void write_artifact_prefix(std::ostringstream& out, const Config& args);
