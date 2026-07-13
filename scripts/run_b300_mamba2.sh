@@ -5,12 +5,14 @@ ROOT_DIR="${ROOT_DIR:-/home/kataiwa/fhemamba-b300}"
 IMAGE="${IMAGE:-fhemamba-b300:cuda12.8-fideslib}"
 GPU_DEVICE="${GPU_DEVICE:-3}"
 FIDESLIB_SM="${FIDESLIB_SM:-100}"
+BINARY_PATH="${BINARY_PATH:-${ROOT_DIR}/build/fideslib-stage0-sm${FIDESLIB_SM}/stage1_mamba2_decode_fideslib}"
 LAYERS="${LAYERS:-24}"
 TOKENS="${TOKENS:-1}"
 AUTOREGRESSIVE_CLIENT_LOOP="${AUTOREGRESSIVE_CLIENT_LOOP:-0}"
 NORMALIZED_STATE_META_BTS="${NORMALIZED_STATE_META_BTS:-0}"
 STATE_REFRESH_INTERVAL="${STATE_REFRESH_INTERVAL:-1}"
 DEBUG_LAYER_ERRORS="${DEBUG_LAYER_ERRORS:-0}"
+DEBUG_NORMALIZED_STATE_BOOTSTRAP_RANGE="${DEBUG_NORMALIZED_STATE_BOOTSTRAP_RANGE:-0}"
 INPUT_CHAIN="${INPUT_CHAIN:-${ROOT_DIR}/payloads/m2_chain_payload_sqnewton_wiki512_t2}"
 RESULTS_DIR="${RESULTS_DIR:-${ROOT_DIR}/results}"
 META_BTS_RESIDUAL_LAYERS="${META_BTS_RESIDUAL_LAYERS:-21,22,23}"
@@ -21,7 +23,7 @@ if [[ "${GPU_DEVICE}" != "2" && "${GPU_DEVICE}" != "3" ]]; then
   echo "GPU_DEVICE must be 2 or 3" >&2
   exit 2
 fi
-if [[ ! -x "${ROOT_DIR}/build/fideslib-stage0-sm${FIDESLIB_SM}/stage1_mamba2_decode_fideslib" ]]; then
+if [[ ! -x "${BINARY_PATH}" ]]; then
   echo "missing sm${FIDESLIB_SM} stage binary; run launch_b300_fideslib_build.sh first" >&2
   exit 2
 fi
@@ -31,7 +33,7 @@ repo_commit="$(git -C "${ROOT_DIR}/cipher" rev-parse --short HEAD 2>/dev/null ||
 if ! git -C "${ROOT_DIR}/cipher" diff --quiet --ignore-submodules=dirty 2>/dev/null; then
   repo_commit="${repo_commit}-dirty"
 fi
-binary_sha256="$(sha256sum "${ROOT_DIR}/build/fideslib-stage0-sm${FIDESLIB_SM}/stage1_mamba2_decode_fideslib" | cut -d' ' -f1)"
+binary_sha256="$(sha256sum "${BINARY_PATH}" | cut -d' ' -f1)"
 container_name="fhemamba-b300-${RUN_ID}"
 
 docker run --rm \
@@ -42,7 +44,7 @@ docker run --rm \
   --volume "${ROOT_DIR}:/workspace" \
   --workdir /workspace \
   --env FHEMAMBA_REMOTE_ROOT=/workspace \
-  --env BINARY="/workspace/build/fideslib-stage0-sm${FIDESLIB_SM}/stage1_mamba2_decode_fideslib" \
+  --env BINARY="${BINARY_PATH/#${ROOT_DIR}/\/workspace}" \
   --env INPUT_CHAIN="${INPUT_CHAIN/#${ROOT_DIR}/\/workspace}" \
   --env RESULTS_DIR=/workspace/results \
   --env META_BTS_RESIDUAL_LAYERS="${META_BTS_RESIDUAL_LAYERS}" \
@@ -54,6 +56,7 @@ docker run --rm \
   --env NORMALIZED_STATE_META_BTS="${NORMALIZED_STATE_META_BTS}" \
   --env STATE_REFRESH_INTERVAL="${STATE_REFRESH_INTERVAL}" \
   --env DEBUG_LAYER_ERRORS="${DEBUG_LAYER_ERRORS}" \
+  --env DEBUG_NORMALIZED_STATE_BOOTSTRAP_RANGE="${DEBUG_NORMALIZED_STATE_BOOTSTRAP_RANGE}" \
   --env BINARY_SHA256="${binary_sha256}" \
   --env LD_LIBRARY_PATH="/workspace/install/fideslib-sm${FIDESLIB_SM}/lib:/workspace/install/fideslib/lib:/workspace/install/openfhe-fides/lib:/workspace/install/openfhe-fides/lib64" \
   "${IMAGE}" \

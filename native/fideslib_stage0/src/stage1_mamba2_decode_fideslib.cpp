@@ -748,9 +748,9 @@ auto main(int argc, char* argv[]) -> int {
       if (!full_chain) {
         throw std::runtime_error("autoregressive-client-loop requires the full layer chain");
       }
-      if (args.tokens != chain.autoregressive_server_evaluations) {
+      if (args.tokens > chain.autoregressive_server_evaluations) {
         throw std::runtime_error(
-            "--tokens must equal autoregressive server_evaluations (" +
+            "--tokens exceeds autoregressive server_evaluations (" +
             std::to_string(chain.autoregressive_server_evaluations) + ")");
       }
       if (chain.autoregressive_server_evaluations !=
@@ -3414,6 +3414,14 @@ auto main(int argc, char* argv[]) -> int {
     std::map<std::string, std::vector<double>> debug_state_group_errors;
     std::map<std::string, int> summary_bootstraps;
     std::vector<int> autoregressive_selected_ids;
+    std::vector<int> autoregressive_expected_ids;
+    if (args.autoregressive_client_loop) {
+      const int expected_count = std::max(
+          0, args.tokens - chain.autoregressive_prompt_tokens + 1);
+      autoregressive_expected_ids.assign(
+          chain.autoregressive_expected_generated_ids.begin(),
+          chain.autoregressive_expected_generated_ids.begin() + expected_count);
+    }
     std::vector<double> autoregressive_next_embedding;
     std::vector<std::vector<double>> autoregressive_decrypted_outputs(
         static_cast<std::size_t>(args.tokens));
@@ -3911,8 +3919,7 @@ auto main(int argc, char* argv[]) -> int {
     log_phase("decrypt done");
     const bool autoregressive_tokens_match =
         !args.autoregressive_client_loop ||
-        autoregressive_selected_ids ==
-            chain.autoregressive_expected_generated_ids;
+        autoregressive_selected_ids == autoregressive_expected_ids;
     const bool passed = max_error <= args.tolerance && autoregressive_tokens_match;
 
     std::ostringstream out;
@@ -4068,7 +4075,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"autoregressive_expected_ids\":";
     write_int_vector_json(
         out, args.autoregressive_client_loop
-                 ? chain.autoregressive_expected_generated_ids
+                 ? autoregressive_expected_ids
                  : std::vector<int>{});
     out << ",";
     out << "\"autoregressive_tokens_match\":"
