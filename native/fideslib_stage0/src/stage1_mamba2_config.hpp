@@ -181,6 +181,11 @@ struct Config {
   // curve). 2 decrypts per layer per token; no refresh probes. Also voids the
   // zero-intermediate-decrypt claim.
   bool debug_layer_errors = false;
+  // Narrow recurrence attribution: decrypt only one token/layer's incoming
+  // state, decay, update, decayed state, and combined state. Both selectors
+  // must be set together; -1 disables the diagnostic.
+  int debug_recurrence_token = -1;
+  int debug_recurrence_layer = -1;
   // Global multiplier on the per-checkpoint magnitude bounds used for the
   // pre-bootstrap normalization (see checkpoint_bound). Applies to TRANSIENT
   // per-layer activation checkpoints.

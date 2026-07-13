@@ -214,6 +214,8 @@ void write_runtime_failure_payload(const Config& args,
   out << ",";
   out << "\"debug_normalized_state_bootstrap_range\":"
       << (args.debug_normalized_state_bootstrap_range ? "true" : "false") << ",";
+  out << "\"debug_recurrence_token\":" << args.debug_recurrence_token << ",";
+  out << "\"debug_recurrence_layer\":" << args.debug_recurrence_layer << ",";
   out << "\"bootstrap_before_token\":";
   write_int_set_json(out, args.bootstrap_before_token);
   out << ",\"debug_client_reencrypt_before_token\":";

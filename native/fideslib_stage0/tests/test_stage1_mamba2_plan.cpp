@@ -135,6 +135,32 @@ auto main() -> int {
                                kGroupHeads, kHeadDim, kState, kScale);
   });
 
+  std::vector<double> head_reference(kTokens * kHeads);
+  std::iota(head_reference.begin(), head_reference.end(), 1.0);
+  for (int state = 0; state < kState; ++state) {
+    for (int local_head = 0; local_head < kGroupHeads; ++local_head) {
+      const int head = kGroup * kGroupHeads + local_head;
+      for (int position = 0; position < kHeadDim; ++position) {
+        const auto packed_index = static_cast<std::size_t>(
+            state * kGroupHeads * kHeadDim + local_head * kHeadDim + position);
+        packed[packed_index] = head_reference[kToken * kHeads + head];
+      }
+    }
+  }
+  require(packed_head_max_abs_error(
+              packed, head_reference, kToken, kGroup, kHeads, kGroupHeads,
+              kHeadDim, kState) == 0.0,
+          "packed-head comparison has the wrong axis map");
+  packed[5] += 0.25;
+  require(packed_head_max_abs_error(
+              packed, head_reference, kToken, kGroup, kHeads, kGroupHeads,
+              kHeadDim, kState) == 0.25,
+          "packed-head comparison missed an expanded slot");
+  require_invalid([&] {
+    packed_head_max_abs_error({}, head_reference, kToken, kGroup, kHeads,
+                              kGroupHeads, kHeadDim, kState);
+  });
+
   const auto rotations = required_rotations(payload, packing, rep_in, rep_out);
   require(!rotations.empty(), "rotation plan is empty");
   require(std::is_sorted(rotations.begin(), rotations.end()),

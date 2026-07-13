@@ -97,6 +97,10 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.debug_refresh_probes = parse_bool_arg(arg, value);
     } else if (arg == "--debug-layer-errors") {
       config.debug_layer_errors = parse_bool_arg(arg, value);
+    } else if (arg == "--debug-recurrence-token") {
+      config.debug_recurrence_token = parse_int(arg, value);
+    } else if (arg == "--debug-recurrence-layer") {
+      config.debug_recurrence_layer = parse_int(arg, value);
     } else if (arg == "--bootstrap-norm-margin") {
       config.bootstrap_norm_margin = parse_double_arg(arg, value);
     } else if (arg == "--state-bootstrap-margin") {
@@ -231,6 +235,7 @@ auto parse_args(int argc, char* argv[]) -> Config {
   if (config.process_role == "server-eval" &&
       (config.debug_decrypt || config.debug_refresh_probes ||
        config.debug_layer_errors ||
+       config.debug_recurrence_token >= 0 || config.debug_recurrence_layer >= 0 ||
        config.debug_normalized_state_bootstrap_range ||
        !config.debug_client_reencrypt_before_token.empty())) {
     throw std::invalid_argument(
@@ -238,6 +243,21 @@ auto parse_args(int argc, char* argv[]) -> Config {
   }
   if (config.ring_dim <= 0 || (config.ring_dim & (config.ring_dim - 1)) != 0) {
     throw std::invalid_argument("ring-dim must be a positive power of two");
+  }
+  if ((config.debug_recurrence_token < 0) !=
+      (config.debug_recurrence_layer < 0)) {
+    throw std::invalid_argument(
+        "debug-recurrence-token and debug-recurrence-layer must be set together");
+  }
+  if (config.debug_recurrence_token >= 0) {
+    if (!config.autoregressive_client_loop) {
+      throw std::invalid_argument(
+          "recurrence debug requires autoregressive-client-loop");
+    }
+    if (config.debug_recurrence_token < 1 ||
+        config.debug_recurrence_token >= config.tokens) {
+      throw std::invalid_argument("debug-recurrence-token must be in [1, tokens-1]");
+    }
   }
   if (config.multiplicative_depth <= 0 || config.scaling_mod_size <= 0 ||
       config.first_mod_size <= 0 || config.tokens <= 0 || config.tolerance <= 0.0 ||

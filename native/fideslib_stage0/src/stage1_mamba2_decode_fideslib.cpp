@@ -108,6 +108,7 @@ using fhemamba::stage1::kNewtonSegmentEstimate;
 using fhemamba::stage1::kPlaintextCoefficientFloor;
 using fhemamba::stage1::naf_steps;
 using fhemamba::stage1::packed_state_max_abs_error;
+using fhemamba::stage1::packed_head_max_abs_error;
 using fhemamba::stage1::PackingDims;
 using fhemamba::stage1::payload_file_exists;
 using fhemamba::stage1::prepare_client_handoff;
@@ -343,6 +344,17 @@ struct LayerRuntime {
   std::vector<Ciphertext<DCRTPoly>> state_cts;
   bool has_state = false;
   std::vector<Ciphertext<DCRTPoly>> conv_fifo;
+};
+
+struct RecurrenceDebugMetrics {
+  bool recorded = false;
+  std::vector<double> incoming;
+  std::vector<double> previous;
+  std::vector<double> decay;
+  std::vector<double> update;
+  std::vector<double> decayed;
+  std::vector<double> combined;
+  std::vector<double> post_refresh;
 };
 
 // ---------------------------------------------------------------------------
@@ -787,6 +799,26 @@ auto main(int argc, char* argv[]) -> int {
       for (const auto& [name, spec] : layer_payloads[index].polys) {
         if (!spec.coeffs.empty()) {
           verify_cheb_ps_host(name, spec.coeffs);
+        }
+      }
+    }
+    if (args.debug_recurrence_layer >= layers_loaded) {
+      throw std::runtime_error(
+          "debug-recurrence-layer exceeds the loaded layer count");
+    }
+    if (args.debug_recurrence_layer >= 0) {
+      const auto& payload = layer_payloads.at(
+          static_cast<std::size_t>(args.debug_recurrence_layer));
+      for (const auto* name : {"autoregressive_poly_state_output",
+                               "autoregressive_poly_decay_output",
+                               "autoregressive_poly_state_update",
+                               "autoregressive_poly_state_decayed"}) {
+        const auto shape = payload.shapes.find(name);
+        if (shape == payload.shapes.end() || shape->second.empty() ||
+            shape->second[0] <= args.debug_recurrence_token) {
+          throw std::runtime_error(
+              std::string("recurrence debug requires ") + name +
+              " through the selected token");
         }
       }
     }
@@ -1817,6 +1849,7 @@ auto main(int argc, char* argv[]) -> int {
     std::map<std::string, double> active_checkpoint_bounds;
     std::map<std::string, double> debug_normalized_state_bootstrap_max;
     std::map<std::string, double> debug_normalized_state_bootstrap_delta_max;
+    RecurrenceDebugMetrics debug_recurrence;
     int active_layer_index = -1;
     bool carried_bound_fallback_warned = false;
     auto eval_bootstrap_synced = [&](const Ciphertext<DCRTPoly>& input) {
@@ -2094,6 +2127,14 @@ auto main(int argc, char* argv[]) -> int {
     const int xbc0 = packing.xbc0;
     const int dt0 = packing.dt0;
     const std::size_t batch = static_cast<std::size_t>(batch_size);
+    if (args.debug_recurrence_layer >= 0) {
+      for (auto* values : {&debug_recurrence.incoming, &debug_recurrence.previous,
+                           &debug_recurrence.decay, &debug_recurrence.update,
+                           &debug_recurrence.decayed, &debug_recurrence.combined,
+                           &debug_recurrence.post_refresh}) {
+        values->assign(static_cast<std::size_t>(group_count), 0.0);
+      }
+    }
 
     auto affine = [](double lo, double hi) {
       return std::pair<double, double>{2.0 / (hi - lo), -(lo + hi) / (hi - lo)};
@@ -3055,6 +3096,46 @@ auto main(int argc, char* argv[]) -> int {
       active_fifo_bound = plan.fifo_abs_max;
       active_checkpoint_bounds = plan.checkpoint_abs_max;
       active_layer_index = layer_index;
+      const bool debug_recurrence_target =
+          token_index == args.debug_recurrence_token &&
+          layer_index == args.debug_recurrence_layer;
+      const M1Payload* recurrence_payload =
+          debug_recurrence_target
+              ? &layer_payloads.at(static_cast<std::size_t>(layer_index))
+              : nullptr;
+      auto recurrence_state_error =
+          [&](const Ciphertext<DCRTPoly>& ciphertext,
+              const std::vector<double>& reference, int reference_token,
+              int group, double scale, std::string_view checkpoint) {
+            try {
+              const auto slots = decrypt_slots(
+                  cc, secret_key, ciphertext,
+                  static_cast<std::size_t>(group_block * state_size));
+              return packed_state_max_abs_error(
+                  slots, reference, reference_token, group, heads, group_heads,
+                  head_dim, state_size, scale);
+            } catch (const std::exception& exc) {
+              log_phase("DEBUG recurrence " + tag + std::string(checkpoint) +
+                        " decrypt_failed error=" + exc.what());
+              return 1.0e308;
+            }
+          };
+      auto recurrence_decay_error =
+          [&](const Ciphertext<DCRTPoly>& ciphertext,
+              const std::vector<double>& reference, int group) {
+            try {
+              const auto slots = decrypt_slots(
+                  cc, secret_key, ciphertext,
+                  static_cast<std::size_t>(group_block * state_size));
+              return packed_head_max_abs_error(
+                  slots, reference, token_index, group, heads, group_heads,
+                  head_dim, state_size);
+            } catch (const std::exception& exc) {
+              log_phase("DEBUG recurrence " + tag +
+                        "decay decrypt_failed error=" + exc.what());
+              return 1.0e308;
+            }
+          };
       // Block RMSNorm inverse sqrt on V = sum(x^2) + d_model*eps; the sqrt(w)
       // and norm weights are folded into the in_proj plaintexts, so proj =
       // BSGS(h) * inv (inv is a uniform broadcast and commutes with matmul).
@@ -3227,18 +3308,69 @@ auto main(int argc, char* argv[]) -> int {
               time_phase("dt_expand", [&]() { return place_heads(dt_stream, group); });
           auto decay_group =
               time_phase("decay_expand", [&]() { return place_heads(decay_stream, group); });
+          const double recurrence_scale =
+              args.normalized_recurrent_state
+                  ? plan.normalized_state.group_scales[
+                        static_cast<std::size_t>(group)]
+                  : 1.0;
+          if (debug_recurrence_target && stream == 0 && runtime.has_state) {
+            const auto& state_reference = recurrence_payload->tensors.at(
+                "autoregressive_poly_state_output");
+            debug_recurrence.incoming[static_cast<std::size_t>(group)] =
+                recurrence_state_error(
+                    runtime.state_cts[state_slot], state_reference,
+                    token_index - 1, group, recurrence_scale, "incoming");
+          }
           if (runtime.has_state) {
             maybe_bootstrap(runtime.state_cts[state_slot], plan.req_state_pre,
                             tag + state_name, layer_bootstraps);
           }
+          if (debug_recurrence_target && stream == 0) {
+            const auto& state_reference = recurrence_payload->tensors.at(
+                "autoregressive_poly_state_output");
+            debug_recurrence.previous[static_cast<std::size_t>(group)] =
+                recurrence_state_error(
+                    runtime.state_cts[state_slot], state_reference,
+                    token_index - 1, group, recurrence_scale, "previous");
+            debug_recurrence.decay[static_cast<std::size_t>(group)] =
+                recurrence_decay_error(
+                    decay_group,
+                    recurrence_payload->tensors.at(
+                        "autoregressive_poly_decay_output"),
+                    group);
+          }
           time_phase("state_update", [&]() {
             auto dtx = mul_aligned(x_group, dt_group);
             auto update = mul_aligned(dtx, b_expanded->Clone());
+            if (debug_recurrence_target && stream == 0) {
+              debug_recurrence.update[static_cast<std::size_t>(group)] =
+                  recurrence_state_error(
+                      update,
+                      recurrence_payload->tensors.at(
+                          "autoregressive_poly_state_update"),
+                      token_index, group, recurrence_scale, "update");
+            }
             if (!runtime.has_state) {
               runtime.state_cts[state_slot] = update;
             } else {
               auto decayed = mul_aligned(decay_group, runtime.state_cts[state_slot]);
+              if (debug_recurrence_target && stream == 0) {
+                debug_recurrence.decayed[static_cast<std::size_t>(group)] =
+                    recurrence_state_error(
+                        decayed,
+                        recurrence_payload->tensors.at(
+                            "autoregressive_poly_state_decayed"),
+                        token_index, group, recurrence_scale, "decayed");
+              }
               runtime.state_cts[state_slot] = add_aligned(decayed, update);
+            }
+            if (debug_recurrence_target && stream == 0) {
+              debug_recurrence.combined[static_cast<std::size_t>(group)] =
+                  recurrence_state_error(
+                      runtime.state_cts[state_slot],
+                      recurrence_payload->tensors.at(
+                          "autoregressive_poly_state_output"),
+                      token_index, group, recurrence_scale, "combined");
             }
           });
           // The updated state feeds this token's readout and is the carried
@@ -3257,6 +3389,15 @@ auto main(int argc, char* argv[]) -> int {
           maybe_bootstrap(runtime.state_cts[state_slot], state_tail_requirement,
                           tag + "state_post" + std::to_string(stream * group_count + group),
                           layer_bootstraps);
+          if (debug_recurrence_target && stream == 0) {
+            debug_recurrence.post_refresh[static_cast<std::size_t>(group)] =
+                recurrence_state_error(
+                    runtime.state_cts[state_slot],
+                    recurrence_payload->tensors.at(
+                        "autoregressive_poly_state_output"),
+                    token_index, group, recurrence_scale, "post_refresh");
+            debug_recurrence.recorded = true;
+          }
           ckks_levels[tag + state_name] =
               static_cast<int>(runtime.state_cts[state_slot]->GetLevel());
           debug_value_stats(runtime.state_cts[state_slot], tag + state_name);
@@ -4004,6 +4145,8 @@ auto main(int argc, char* argv[]) -> int {
     out << ",";
     out << "\"debug_normalized_state_bootstrap_range\":"
         << (args.debug_normalized_state_bootstrap_range ? "true" : "false") << ",";
+    out << "\"debug_recurrence_token\":" << args.debug_recurrence_token << ",";
+    out << "\"debug_recurrence_layer\":" << args.debug_recurrence_layer << ",";
     std::vector<int> gated_init_degrees;
     std::vector<int> gated_newton_iterations;
     gated_init_degrees.reserve(layer_plans.size());
@@ -4215,6 +4358,28 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"debug_normalized_state_bootstrap_delta_max\":";
     write_double_map_json(out, debug_normalized_state_bootstrap_delta_max);
     out << ",";
+    out << "\"debug_recurrence\":{";
+    out << "\"enabled\":"
+        << (args.debug_recurrence_layer >= 0 ? "true" : "false") << ",";
+    out << "\"recorded\":" << (debug_recurrence.recorded ? "true" : "false")
+        << ",";
+    out << "\"token\":" << args.debug_recurrence_token << ",";
+    out << "\"layer\":" << args.debug_recurrence_layer << ",";
+    out << "\"incoming_group_errors\":";
+    write_double_vector_json(out, debug_recurrence.incoming);
+    out << ",\"previous_group_errors\":";
+    write_double_vector_json(out, debug_recurrence.previous);
+    out << ",\"decay_group_errors\":";
+    write_double_vector_json(out, debug_recurrence.decay);
+    out << ",\"update_group_errors\":";
+    write_double_vector_json(out, debug_recurrence.update);
+    out << ",\"decayed_group_errors\":";
+    write_double_vector_json(out, debug_recurrence.decayed);
+    out << ",\"combined_group_errors\":";
+    write_double_vector_json(out, debug_recurrence.combined);
+    out << ",\"post_refresh_group_errors\":";
+    write_double_vector_json(out, debug_recurrence.post_refresh);
+    out << "},";
     out << "\"bootstrap_events\":[";
     for (std::size_t index = 0; index < bootstrap_events.size(); ++index) {
       if (index != 0) {
@@ -4309,6 +4474,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"zero_intermediate_decrypts\":"
         << ((args.debug_decrypt || args.debug_refresh_probes ||
              args.debug_layer_errors ||
+             args.debug_recurrence_layer >= 0 ||
              args.debug_normalized_state_bootstrap_range ||
              !args.debug_client_reencrypt_before_token.empty() ||
              args.autoregressive_client_loop)

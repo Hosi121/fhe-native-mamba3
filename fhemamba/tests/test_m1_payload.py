@@ -120,6 +120,24 @@ def test_chain_export(tmp_path, monkeypatch) -> None:
         assert meta["tensors"]["test_state_output_poly"] == [2, 4, 16, 8]
         assert meta["tensors"]["autoregressive_poly_layer_output"] == [5, 32]
         assert meta["tensors"]["autoregressive_poly_state_output"] == [5, 4, 16, 8]
+        assert meta["tensors"]["autoregressive_poly_decay_output"] == [5, 4]
+        assert meta["tensors"]["autoregressive_poly_state_update"] == [5, 4, 16, 8]
+        assert meta["tensors"]["autoregressive_poly_state_decayed"] == [5, 4, 16, 8]
+        recurrence_state = np.fromfile(
+            out / d / "autoregressive_poly_state_output.bin", dtype="<f4"
+        ).reshape(meta["tensors"]["autoregressive_poly_state_output"])
+        recurrence_update = np.fromfile(
+            out / d / "autoregressive_poly_state_update.bin", dtype="<f4"
+        ).reshape(meta["tensors"]["autoregressive_poly_state_update"])
+        recurrence_decayed = np.fromfile(
+            out / d / "autoregressive_poly_state_decayed.bin", dtype="<f4"
+        ).reshape(meta["tensors"]["autoregressive_poly_state_decayed"])
+        assert np.allclose(
+            recurrence_state,
+            recurrence_decayed + recurrence_update,
+            rtol=1e-6,
+            atol=1e-6,
+        )
         assert meta["test_token_ids"] == chain["test_token_ids"]
         assert meta["polys"]["gated_rms_invsqrt"]["iterations"] == 3
         assert len(meta["polys"]["gated_rms_invsqrt"]["coeffs"]) == 16
@@ -243,6 +261,9 @@ def test_add_autoregressive_assets_to_existing_chain(tmp_path, monkeypatch) -> N
         meta = json.loads((out / directory / "meta.json").read_text())
         assert meta["tensors"]["autoregressive_poly_layer_output"] == [5, 32]
         assert meta["tensors"]["autoregressive_poly_state_output"] == [5, 4, 16, 8]
+        assert meta["tensors"]["autoregressive_poly_decay_output"] == [5, 4]
+        assert meta["tensors"]["autoregressive_poly_state_update"] == [5, 4, 16, 8]
+        assert meta["tensors"]["autoregressive_poly_state_decayed"] == [5, 4, 16, 8]
 
 
 def test_legacy_const_newton_payload_spec() -> None:

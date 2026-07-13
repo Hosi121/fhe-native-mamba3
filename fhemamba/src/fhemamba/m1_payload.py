@@ -23,6 +23,7 @@ import torch
 from fhemamba.ops import (
     SITE_NAMES,
     ChebPoly,
+    Exact,
     NewtonInvSqrt,
     PolyInitNewton,
     PolyOps,
@@ -174,7 +175,39 @@ class _AutoregressiveTrace:
     embeddings: torch.Tensor
     layer_outputs: list[torch.Tensor]
     layer_states: list[torch.Tensor]
+    layer_decays: list[torch.Tensor]
+    layer_state_updates: list[torch.Tensor]
+    layer_state_decayed: list[torch.Tensor]
     expected_final: torch.Tensor
+
+
+class _RecurrenceRecordingOps:
+    """Delegate nonlinearities while retaining polynomial recurrence terms."""
+
+    _RECURRENCE_NAMES = frozenset({"decay_output", "state_update", "state_decayed"})
+
+    def __init__(self, base) -> None:
+        self.base = base if base is not None else Exact()
+        self.records: dict[tuple[int, str], list[torch.Tensor]] = {}
+
+    def checkpoint(self, x: torch.Tensor, site: tuple[int, str]) -> torch.Tensor:
+        value = self.base.checkpoint(x, site)
+        if site[1] in self._RECURRENCE_NAMES:
+            sample = value[0, 0] if site[1] == "decay_output" else value[0]
+            self.records.setdefault(site, []).append(sample.clone())
+        return value
+
+    def silu(self, x: torch.Tensor, site: tuple[int, str]) -> torch.Tensor:
+        return self.base.silu(x, site)
+
+    def softplus(self, x: torch.Tensor, site: tuple[int, str]) -> torch.Tensor:
+        return self.base.softplus(x, site)
+
+    def exp(self, x: torch.Tensor, site: tuple[int, str]) -> torch.Tensor:
+        return self.base.exp(x, site)
+
+    def inv_sqrt(self, x: torch.Tensor, site: tuple[int, str]) -> torch.Tensor:
+        return self.base.inv_sqrt(x, site)
 
 
 @torch.no_grad()
@@ -226,6 +259,7 @@ def _collect_autoregressive_trace(
     prompt_tokens: int,
     generate_tokens: int,
     ops=None,
+    record_recurrence: bool = False,
 ) -> _AutoregressiveTrace:
     if prompt_tokens < 1 or generate_tokens < 1:
         raise ValueError("autoregressive prompt/generate token counts must be positive")
@@ -239,6 +273,8 @@ def _collect_autoregressive_trace(
     expected_final: list[torch.Tensor] = []
     layer_outputs: list[list[torch.Tensor]] = [[] for _ in model.backbone.layers]
     layer_states: list[list[torch.Tensor]] = [[] for _ in model.backbone.layers]
+    recurrence_ops = _RecurrenceRecordingOps(ops) if record_recurrence else None
+    active_ops = recurrence_ops if recurrence_ops is not None else ops
     states = init_states(model)
     logits = None
 
@@ -254,7 +290,7 @@ def _collect_autoregressive_trace(
         output = model_forward(
             model,
             step,
-            ops=ops,
+            ops=active_ops,
             states=states,
             output_hidden_states=True,
         )
@@ -272,7 +308,7 @@ def _collect_autoregressive_trace(
         output = model_forward(
             model,
             step,
-            ops=ops,
+            ops=active_ops,
             states=states,
             output_hidden_states=True,
         )
@@ -283,6 +319,15 @@ def _collect_autoregressive_trace(
     final_tensor = torch.stack(expected_final)
     if not torch.isfinite(embeddings).all() or not torch.isfinite(final_tensor).all():
         raise ValueError("autoregressive export produced non-finite embeddings/hidden states")
+
+    def recurrence_values(name: str) -> list[torch.Tensor]:
+        if recurrence_ops is None:
+            return []
+        return [
+            torch.stack(recurrence_ops.records[(layer, name)])
+            for layer in range(len(model.backbone.layers))
+        ]
+
     return _AutoregressiveTrace(
         prompt_ids=prompt_ids,
         evaluated_ids=evaluated_ids,
@@ -290,6 +335,9 @@ def _collect_autoregressive_trace(
         embeddings=embeddings,
         layer_outputs=[torch.stack(values) for values in layer_outputs],
         layer_states=[torch.stack(values) for values in layer_states],
+        layer_decays=recurrence_values("decay_output"),
+        layer_state_updates=recurrence_values("state_update"),
+        layer_state_decayed=recurrence_values("state_decayed"),
         expected_final=final_tensor,
     )
 
@@ -451,6 +499,7 @@ def _export_autoregressive_assets(
         prompt_tokens,
         generate_tokens,
         ops=_poly_ops_from_export(out, n_layers),
+        record_recurrence=True,
     )
     embedding_weight = model.get_input_embeddings().weight
     output_embeddings = model.get_output_embeddings()
@@ -491,6 +540,24 @@ def _export_autoregressive_assets(
             layer_dir,
             "autoregressive_poly_state_output",
             poly_trace.layer_states[layer],
+            meta["tensors"],
+        )
+        _save(
+            layer_dir,
+            "autoregressive_poly_decay_output",
+            poly_trace.layer_decays[layer],
+            meta["tensors"],
+        )
+        _save(
+            layer_dir,
+            "autoregressive_poly_state_update",
+            poly_trace.layer_state_updates[layer],
+            meta["tensors"],
+        )
+        _save(
+            layer_dir,
+            "autoregressive_poly_state_decayed",
+            poly_trace.layer_state_decayed[layer],
             meta["tensors"],
         )
         if note not in meta["notes"]:

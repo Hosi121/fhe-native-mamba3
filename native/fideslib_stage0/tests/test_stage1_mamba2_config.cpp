@@ -68,6 +68,14 @@ auto main() -> int {
        "--debug-normalized-state-bootstrap-range", "true"});
   require(state_range_debug.debug_normalized_state_bootstrap_range,
           "normalized-state bootstrap range debug flag was not parsed");
+  const auto recurrence_debug = parse(
+      {"stage1", "--input-chain", "chain", "--tokens", "3",
+       "--autoregressive-client-loop", "true", "--debug-recurrence-token", "2",
+       "--debug-recurrence-layer", "4"});
+  require(recurrence_debug.debug_recurrence_token == 2,
+          "recurrence debug token was not parsed");
+  require(recurrence_debug.debug_recurrence_layer == 4,
+          "recurrence debug layer was not parsed");
   const auto true_bsgs = parse({"stage1", "--input", "payload", "--bsgs-replicas",
                                 "auto", "--replicated-true-bsgs", "true",
                                 "--interleaved-replicated-projection", "true",
@@ -160,6 +168,14 @@ auto main() -> int {
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--debug-decrypt", "yes"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input-chain", "chain", "--tokens", "3",
+           "--autoregressive-client-loop", "true", "--debug-recurrence-token", "2"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--tokens", "3",
+           "--debug-recurrence-token", "2", "--debug-recurrence-layer", "4"});
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--bsgs-replicas", "2junk"});

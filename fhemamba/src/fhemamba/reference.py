@@ -255,6 +255,7 @@ def mixer2_forward(
     dt = ops.checkpoint(dt, (layer_idx, "dt_out"))
     a_cont = -torch.exp(mixer.A_log.float())  # (heads,)
     decay = ops.exp(dt * a_cont, (layer_idx, "decay_exp"))  # (batch, T, heads)
+    decay = ops.checkpoint(decay, (layer_idx, "decay_output"))
 
     x_heads = hidden.reshape(batch, seq_len, heads, head_dim)
     rep = heads // groups
@@ -271,7 +272,10 @@ def mixer2_forward(
         outputs = []
         for t in range(seq_len):
             update = dt_x[:, t, :, :, None] * b_heads[:, t, :, None, :]
-            ssm_state = decay[:, t, :, None, None] * ssm_state + update
+            update = ops.checkpoint(update, (layer_idx, "state_update"))
+            decayed = decay[:, t, :, None, None] * ssm_state
+            decayed = ops.checkpoint(decayed, (layer_idx, "state_decayed"))
+            ssm_state = decayed + update
             outputs.append(torch.einsum("bhpn,bhn->bhp", ssm_state, c_heads[:, t]))
         y = torch.stack(outputs, dim=1)  # (batch, T, heads, head_dim)
         if state is not None:

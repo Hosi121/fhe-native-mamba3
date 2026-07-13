@@ -234,7 +234,10 @@ auto read_m1_payload(const std::string& dir) -> M1Payload {
   }
   for (const auto* name : {"test_layer_output_poly", "test_state_output",
                            "test_state_output_poly", "autoregressive_poly_layer_output",
-                           "autoregressive_poly_state_output"}) {
+                           "autoregressive_poly_state_output",
+                           "autoregressive_poly_decay_output",
+                           "autoregressive_poly_state_update",
+                           "autoregressive_poly_state_decayed"}) {
     if (find_key_value_pos(tensors, name) == std::string::npos) {
       continue;
     }
@@ -249,20 +252,31 @@ auto read_m1_payload(const std::string& dir) -> M1Payload {
     payload.tensors[name] = read_bin_tensor(dir, name, shape);
   }
   for (const auto* name : {"test_state_output", "test_state_output_poly",
-                           "autoregressive_poly_state_output"}) {
+                           "autoregressive_poly_state_output",
+                           "autoregressive_poly_state_update",
+                           "autoregressive_poly_state_decayed"}) {
     const auto found = payload.shapes.find(name);
     if (found == payload.shapes.end()) {
       continue;
     }
     const auto& shape = found->second;
     const bool autoregressive =
-        std::string_view(name) == "autoregressive_poly_state_output";
+        std::string_view(name).find("autoregressive_poly_") == 0;
     if (shape.size() != 4 || shape[0] < 1 ||
         (!autoregressive && shape[0] > payload.n_test_tokens) ||
         shape[1] != payload.num_heads || shape[2] != payload.head_dim ||
         shape[3] != payload.state_size) {
       throw std::runtime_error(std::string(name) +
                                " shape must be (tokens, heads, head_dim, state_size)");
+    }
+  }
+  const auto autoregressive_decay =
+      payload.shapes.find("autoregressive_poly_decay_output");
+  if (autoregressive_decay != payload.shapes.end()) {
+    const auto& shape = autoregressive_decay->second;
+    if (shape.size() != 2 || shape[0] < 1 || shape[1] != payload.num_heads) {
+      throw std::runtime_error(
+          "autoregressive_poly_decay_output shape must be (tokens, heads)");
     }
   }
   const auto autoregressive_boundary =
