@@ -227,25 +227,32 @@ up to 4.014), then layer 16 (up to 1.701) and layer 18 (up to 0.288). A
 random-direction final-gain proxy ranks layer-6 groups 2 and 3 first, but this
 proxy is for experiment prioritization, not an error bound or exact attribution.
 
-Late-layer behavior separates the residual path from recurrent state. At the
-second token, layer-boundary error rises from 0.193 at layer 21 to 0.839 at
-layer 22 and 1.693 at layer 23, while the corresponding state-group maxima stay
-at 0.00254, 0.00215, and 0.00120. The calibrated residual bootstrap bounds at
-layers 22 and 23 are 1201.49 and 1709.49, so the single-bootstrap error floor is
-rescaled by roughly three orders of magnitude. The next gate therefore applies
-Meta-BTS only to selected high-bound residual layers. This adds three physical
-bootstraps per token instead of applying Meta-BTS to all state refreshes; it does
-not address the independent layer-6 state-update error, which remains a separate
-localization target.
+The first late-layer boundary trace cannot support residual-versus-state
+attribution. Those payloads did not contain polynomial-circuit layer outputs,
+and the old native debug path silently compared encrypted boundaries with the
+exact-model outputs instead. The reported boundary values therefore mixed
+polynomial-approximation error with FHE error. The exporter now emits
+`test_layer_output_poly`, and native layer diagnostics fail closed when either
+the layer or state polynomial reference is absent. The state-group comparisons
+above remain valid because those payloads did contain polynomial state
+references.
 
-That selective residual gate is now refuted. Applying Meta-BTS at layers 21-23
-passes the one-token final-output tolerance with error 0.01691, but it increases
-physical bootstraps from 108 to 111 and does not improve the late layer
-boundaries. The debug boundary errors at layers 21-23 are 0.188, 0.413, and
-0.787, versus 0.0959, 0.128, and 0.306 in the matched single-BTS trace. The
-final RMSNorm hides most of this difference. No two-token promotion is
-justified; the next diagnostic checks whether the layer-6 normalized-state
-bootstrap input exceeds its calibrated message range.
+Selective residual Meta-BTS is still not a promotion candidate on the evidence
+that is valid: applying it at layers 21-23 passes the one-token final-output
+tolerance with error 0.01691 but increases physical bootstraps from 108 to 111,
+without an improvement in final error over the single-BTS baseline. The prior
+late-boundary comparison is discarded rather than used as evidence either for
+or against the candidate.
+
+Normalized-state range and refresh-delta traces rule out the state bootstrap
+itself as the main source of the large layer-6 error. The largest normalized
+pre-bootstrap state through layer 6 is 0.580, safely inside the CKKS bootstrap
+message interval. At layer 4, normalized post-update state errors span roughly
+0.003-0.037 while the ordinary bootstrap changes the state by only
+1.3e-5-4.9e-5. At layer 6, the corresponding errors are 0.0056-0.0872 and the
+bootstrap delta is 0.9e-5-2.5e-5. The error is therefore already present in the
+upstream/state-update arithmetic; further state-bootstrap margin or Meta-BTS
+sweeps are not justified.
 
 ### dt/decay head expansion
 
@@ -275,14 +282,16 @@ Source: [Mamba-3 paper and released kernels](https://arxiv.org/abs/2603.15569),
 
 ## Recommended order
 
-1. Check the layer-6 normalized-state bootstrap input range, then isolate the
-   layer-6 and layer-16 state-update errors with targeted prefix experiments.
-2. Promote interleaved projections for amortized multi-token runs and assess
+1. Port the current runner to the B300 on one GPU and establish one reproducible
+   end-to-end baseline before spending more DGX time.
+2. Change the state-update/upstream circuit as a whole, then compare candidates
+   at 24 layers and multiple tokens; do not continue per-layer bootstrap probes.
+3. Promote interleaved projections for amortized multi-token runs and assess
    backend hoisting.
-3. Investigate a faster or more accurate bootstrap backend. Single-BTS carried
+4. Investigate a faster or more accurate bootstrap backend. Single-BTS carried
    state is faster, but neither it nor Meta-BTS currently passes the full-depth
    multi-token gate; gated RMSNorm still requires Meta-BTS.
-4. Build a global bootstrap-placement optimizer for residual/projection
+5. Build a global bootstrap-placement optimizer for residual/projection
    coordination, not for the now-refuted gated checkpoint removal.
-5. Add a slot simulator for shared dt/decay head expansion.
-6. Keep Mamba-3-lite as a separately trained architecture experiment.
+6. Add a slot simulator for shared dt/decay head expansion.
+7. Keep Mamba-3-lite as a separately trained architecture experiment.
