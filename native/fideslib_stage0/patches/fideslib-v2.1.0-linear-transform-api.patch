@@ -1,0 +1,49 @@
+--- a/api/CryptoContext.hpp
++++ b/api/CryptoContext.hpp
+@@ -184,6 +184,13 @@
+ 	void AccumulateSumInPlace(Ciphertext<DCRTPoly>& ct, int slots, int stride = 1);
+ 	void AccumulateSumInPlace(Ciphertext<DCRTPoly>& ct, int slots, int stride, int start);
+ 
++	// Fused baby rotations, plaintext products, giant rotations, and sums.
++	// This exposes the existing CKKS::LinearTransform GPU primitive through
++	// the public context API without leaking device object registries.
++	void LinearTransformInPlace(Ciphertext<DCRTPoly>& ct,
++	  int rowSize, int bStep, const std::vector<Plaintext>& pts,
++	  int stride = 1, int offset = 0);
++
+ 	void ConvolutionTransformInPlace(Ciphertext<DCRTPoly>& ct, int gStep, int bStep, const std::vector<Plaintext>& pts, const std::vector<int>& indexes, int stride = 1, int rowSize = 0);
+ 
+ 	void SpecialConvolutionTransformInPlace(Ciphertext<DCRTPoly>& ct,
+--- a/api/CryptoContext.cpp
++++ b/api/CryptoContext.cpp
+@@ -1716,6 +1716,30 @@ void CryptoContextImpl<DCRTPoly>::AccumulateSumInPlace(Ciphertext<DCRTPoly>& ct,
+ 	FIDESlib::CKKS::Accumulate(*res_gpu, 4, stride, slots, start);
+ }
+ 
++void CryptoContextImpl<DCRTPoly>::LinearTransformInPlace(Ciphertext<DCRTPoly>& ct,
++  int rowSize,
++  int bStep,
++  const std::vector<Plaintext>& pts,
++  int stride,
++  int offset) {
++
++	if (this->devices.empty()) {
++		OPENFHE_THROW("Not implemented for CPU path");
++	}
++
++	this->LoadCiphertext(ct);
++	auto ct_gpu = std::static_pointer_cast<FIDESlib::CKKS::Ciphertext>(this->GetDeviceCiphertext(ct->gpu));
++	std::vector<FIDESlib::CKKS::Plaintext*> pts_gpu;
++	pts_gpu.reserve(pts.size());
++	for (const auto& pt : pts) {
++		this->LoadPlaintext(const_cast<Plaintext&>(pt));
++		auto pt_gpu = std::static_pointer_cast<FIDESlib::CKKS::Plaintext>(this->GetDevicePlaintext(pt->gpu));
++		pts_gpu.push_back(pt_gpu.get());
++	}
++
++	FIDESlib::CKKS::LinearTransform(*ct_gpu, rowSize, bStep, pts_gpu, stride, offset);
++}
++
+ void CryptoContextImpl<DCRTPoly>::ConvolutionTransformInPlace(Ciphertext<DCRTPoly>& ct,
+   int gStep,
+   int bStep,
