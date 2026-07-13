@@ -769,6 +769,19 @@ auto main(int argc, char* argv[]) -> int {
         throw std::runtime_error("--tokens exceeds n_test_tokens in layer payload " +
                                  std::to_string(index));
       }
+      if (args.debug_layer_errors) {
+        for (const auto* name : {"test_layer_output_poly",
+                                 "test_state_output_poly"}) {
+          const auto shape = layer_payloads[index].shapes.find(name);
+          if (shape == layer_payloads[index].shapes.end() ||
+              shape->second.empty() || shape->second[0] < args.tokens) {
+            throw std::runtime_error(
+                std::string("debug-layer-errors requires ") + name +
+                " with references for every requested token in layer payload " +
+                std::to_string(index));
+          }
+        }
+      }
       for (const auto& [name, spec] : layer_payloads[index].polys) {
         if (!spec.coeffs.empty()) {
           verify_cheb_ps_host(name, spec.coeffs);
@@ -3569,11 +3582,7 @@ auto main(int argc, char* argv[]) -> int {
             write_double_vector_json(errors, group_errors);
             log_phase("DEBUG state " + key + " group_errors=" + errors.str());
           }
-          const auto poly_boundary = layer_payload.tensors.find("test_layer_output_poly");
-          const auto& boundary =
-              poly_boundary != layer_payload.tensors.end()
-                  ? poly_boundary->second
-                  : layer_plans[static_cast<std::size_t>(layer)].test_layer_output;
+          const auto& boundary = layer_payload.tensors.at("test_layer_output_poly");
           double boundary_error = 0.0;
           int non_finite = 0;
           try {

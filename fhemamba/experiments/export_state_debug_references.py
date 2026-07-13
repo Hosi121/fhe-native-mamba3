@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add recurrent-state debug references to an existing Mamba-2 chain payload."""
+"""Add polynomial boundary and recurrent-state debug references to a chain payload."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(args.checkpoint).float().eval().to(args.device)
     output = export_state_debug_references(model, args.chain_dir, tokens=args.tokens)
-    print(f"added exact/poly recurrent-state references to {output}")
+    print(f"added polynomial boundary and exact/poly recurrent-state references to {output}")
 
 
 if __name__ == "__main__":

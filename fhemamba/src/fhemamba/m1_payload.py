@@ -324,7 +324,7 @@ def _poly_ops_from_export(out: Path, n_layers: int) -> PolyOps:
 
 @torch.no_grad()
 def export_state_debug_references(model, chain_dir: str | Path, tokens: int | None = None) -> Path:
-    """Add exact/poly recurrent-state references to an existing chain payload."""
+    """Add polynomial layer-boundary and exact/poly state debug references."""
     out = Path(chain_dir)
     chain = json.loads((out / "chain.json").read_text())
     n_layers = int(chain["n_layers"])
@@ -378,7 +378,10 @@ def export_state_debug_references(model, chain_dir: str | Path, tokens: int | No
         ids,
         ops=_poly_ops_from_export(out, n_layers),
     )
-    note = "test_state_output[_poly] stores post-update recurrent state for debug attribution"
+    state_note = "test_state_output[_poly] stores post-update recurrent state for debug attribution"
+    boundary_note = (
+        "test_layer_output_poly stores the polynomial-circuit layer boundary for debug attribution"
+    )
     for layer, directory in enumerate(chain["layer_dirs"]):
         layer_dir = out / directory
         meta_path = layer_dir / "meta.json"
@@ -386,10 +389,18 @@ def export_state_debug_references(model, chain_dir: str | Path, tokens: int | No
         if meta.get("test_token_ids") not in (None, token_ids):
             raise ValueError(f"test_token_ids mismatch in {layer_dir}")
         meta["test_token_ids"] = token_ids
+        _save(
+            layer_dir,
+            "test_layer_output_poly",
+            poly.layer_outputs[layer],
+            meta["tensors"],
+        )
         _save(layer_dir, "test_state_output", exact.layer_states[layer], meta["tensors"])
         _save(layer_dir, "test_state_output_poly", poly.layer_states[layer], meta["tensors"])
-        if note not in meta["notes"]:
-            meta["notes"].append(note)
+        if boundary_note not in meta["notes"]:
+            meta["notes"].append(boundary_note)
+        if state_note not in meta["notes"]:
+            meta["notes"].append(state_note)
         meta_path.write_text(json.dumps(meta, indent=2))
     return out
 

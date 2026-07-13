@@ -135,7 +135,9 @@ def test_chain_export(tmp_path, monkeypatch) -> None:
     payload_module.export_state_debug_references(model, out, tokens=1)
     refreshed_meta = json.loads((out / chain["layer_dirs"][0] / "meta.json").read_text())
     assert refreshed_meta["test_token_ids"] == expected_token_ids
+    assert refreshed_meta["tensors"]["test_layer_output_poly"] == [1, 32]
     assert refreshed_meta["tensors"]["test_state_output_poly"] == [1, 4, 16, 8]
+    assert sum("polynomial-circuit layer boundary" in note for note in refreshed_meta["notes"]) == 1
     assert sum("post-update recurrent state" in note for note in refreshed_meta["notes"]) == 1
     with pytest.raises(ValueError, match="within the exported chain length"):
         payload_module.export_state_debug_references(model, out, tokens=3)
