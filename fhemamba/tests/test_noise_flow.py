@@ -2,7 +2,12 @@
 
 import pytest
 import torch
-from fhemamba.noise_flow import horizon, measure_amplification, reanchor_cadence
+from fhemamba.noise_flow import (
+    horizon,
+    measure_amplification,
+    measure_group_amplification,
+    reanchor_cadence,
+)
 
 transformers = pytest.importorskip("transformers")
 
@@ -32,7 +37,53 @@ def test_amplification_is_positive_and_finite() -> None:
     assert len(amp["lambda_out"]) == 2
     for lo, lc in zip(amp["lambda_out"], amp["lambda_carry"], strict=True):
         assert 0.0 <= lo < 1e4
-        assert 0.0 <= lc < 1e4
+        # Mamba-2 carries a state perturbation through multiplication by an
+        # exponential decay in (0, 1]. This assertion catches accidental
+        # inclusion of the randn probe magnitude in the measured gain.
+        assert 0.0 <= lc <= 1.01
+
+
+def test_group_amplification_matches_packed_groups_and_scales() -> None:
+    model = _tiny()
+    ids = torch.arange(8).unsqueeze(0)
+    scales = [[2.0, 3.0], [5.0, 7.0]]
+    result = measure_group_amplification(
+        model,
+        ids,
+        heads_per_group=2,
+        probes=2,
+        state_group_scales=scales,
+    )
+
+    assert result["groups_per_layer"] == [2, 2]
+    assert len(result["records"]) == 4
+    for record in result["records"]:
+        assert record["head_end"] - record["head_start"] == 2
+        assert 0.0 <= record["carry_gain"] <= 1.01
+        assert record["boundary_gain"] >= 0.0
+        assert record["final_gain"] >= 0.0
+        assert record["normalized_state_output_gain"] == pytest.approx(
+            record["final_gain"] * record["state_scale"]
+        )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"heads_per_group": 3}, "not divisible"),
+        (
+            {"heads_per_group": 2, "state_group_scales": [[1.0], [1.0]]},
+            "must contain 2 values",
+        ),
+        (
+            {"heads_per_group": 2, "state_group_scales": [[1.0, -1.0], [1.0, 1.0]]},
+            "positive and finite",
+        ),
+    ],
+)
+def test_group_amplification_rejects_incompatible_geometry(kwargs, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        measure_group_amplification(_tiny(), torch.arange(8).unsqueeze(0), **kwargs)
 
 
 def test_horizon_monotone_in_epsilon() -> None:

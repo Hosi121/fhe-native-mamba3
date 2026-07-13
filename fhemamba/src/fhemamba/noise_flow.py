@@ -24,9 +24,31 @@ measure-first methodology.
 
 from __future__ import annotations
 
+import math
+
 import torch
 
-from fhemamba.reference import init_states, model_forward
+from fhemamba.reference import LayerState, init_states, model_forward
+
+
+def _validate_probe_args(prompt_ids: torch.Tensor, delta: float, probes: int) -> None:
+    if prompt_ids.ndim != 2 or prompt_ids.shape[1] < 2:
+        raise ValueError("prompt_ids must have shape (batch, tokens) with at least two tokens")
+    if not math.isfinite(delta) or delta <= 0:
+        raise ValueError("delta must be positive and finite")
+    if probes < 1:
+        raise ValueError("probes must be at least one")
+
+
+def _clone_states(states: list[LayerState]) -> list[LayerState]:
+    return [LayerState(conv=state.conv.clone(), ssm=state.ssm.clone()) for state in states]
+
+
+def _linf_noise(shape: torch.Size, delta: float, gen: torch.Generator, like: torch.Tensor):
+    """A reproducible random direction whose L-infinity norm is exactly delta."""
+    noise = torch.randn(shape, generator=gen)
+    noise = noise / noise.abs().amax() * delta
+    return noise.to(device=like.device, dtype=like.dtype)
 
 
 @torch.no_grad()
@@ -40,24 +62,21 @@ def measure_amplification(
     """Per-layer amplification factors around a real decode point.
 
     Baseline: prefill prompt_ids, then decode one more token. Perturbed: same,
-    but the SSM state of layer l is perturbed by delta*randn right after
-    prefill. lambda_out[l] = |Δ final hidden| / delta;
-    lambda_carry[l] = |Δ state_l after the step| / delta.
+    but the SSM state of layer l is perturbed in a random direction with exact
+    L-infinity norm ``delta`` right after prefill. lambda_out[l] =
+    ||Δ final hidden||_inf / delta; lambda_carry[l] =
+    ||Δ state_l after the step||_inf / delta.
     """
+    _validate_probe_args(prompt_ids, delta, probes)
     gen = torch.Generator().manual_seed(seed)
     next_tok = prompt_ids[:, -1:]
 
     # Prefill ONCE; per-probe states are cheap clones (re-prefilling per probe
     # would cost n_layers x probes full prefills).
-    prefill_states = init_states(model)
+    prefill_states = init_states(model, batch_size=prompt_ids.shape[0])
     model_forward(model, prompt_ids[:, :-1], scan="chunked", states=prefill_states)
 
-    def fresh_states():
-        from fhemamba.reference import LayerState
-
-        return [LayerState(conv=st.conv.clone(), ssm=st.ssm.clone()) for st in prefill_states]
-
-    base_states = fresh_states()
+    base_states = _clone_states(prefill_states)
     base_hidden = model_forward(model, next_tok, states=base_states, output_hidden_states=True)[
         "hidden_states"
     ][-1][0, -1]
@@ -69,8 +88,12 @@ def measure_amplification(
         out_amps = []
         carry_amps = []
         for _ in range(probes):
-            states = fresh_states()
-            noise = delta * torch.randn(states[layer].ssm.shape, generator=gen)
+            states = _clone_states(prefill_states)
+            # Generate on CPU so a fixed seed gives the same direction on CPU
+            # and CUDA, then normalize the actual perturbation. Dividing an
+            # unnormalized randn probe by ``delta`` folds the random tensor's
+            # maximum coordinate into the reported gain.
+            noise = _linf_noise(states[layer].ssm.shape, delta, gen, states[layer].ssm)
             states[layer].ssm = states[layer].ssm + noise
             hidden = model_forward(model, next_tok, states=states, output_hidden_states=True)[
                 "hidden_states"
@@ -88,6 +111,132 @@ def measure_amplification(
         "lambda_carry": lambda_carry,
         "delta": delta,
         "probes": probes,
+    }
+
+
+@torch.no_grad()
+def measure_group_amplification(
+    model,
+    prompt_ids: torch.Tensor,
+    *,
+    heads_per_group: int = 4,
+    delta: float = 1e-3,
+    probes: int = 1,
+    seed: int = 0,
+    state_group_scales: list[list[float]] | None = None,
+) -> dict:
+    """Measure decode sensitivity for each packed Mamba-2 state group.
+
+    The native CKKS kernel packs ``heads_per_group`` adjacent heads in one
+    recurrent-state ciphertext. This probe perturbs exactly one such group
+    after plaintext prefill, advances one token, and measures L-infinity gain
+    at three points: the injected layer boundary, its carried state, and the
+    final normalized hidden state.
+
+    When ``state_group_scales`` contains the persistent normalization scale S
+    used by the encrypted kernel (stored state u = state / S),
+    ``normalized_state_output_gain`` reports final_gain * S. It therefore
+    ranks the effect of equal-sized refresh noise in stored normalized state,
+    rather than equal-sized perturbations in plaintext state units.
+    """
+    _validate_probe_args(prompt_ids, delta, probes)
+    if heads_per_group < 1:
+        raise ValueError("heads_per_group must be at least one")
+
+    gen = torch.Generator().manual_seed(seed)
+    next_tok = prompt_ids[:, -1:]
+    prefill_states = init_states(model, batch_size=prompt_ids.shape[0])
+    model_forward(model, prompt_ids[:, :-1], scan="chunked", states=prefill_states)
+
+    group_counts = []
+    for layer, state in enumerate(prefill_states):
+        if state.ssm.ndim != 4:
+            raise ValueError(f"layer {layer} is not a Mamba-2 head-structured state")
+        heads = state.ssm.shape[1]
+        if heads % heads_per_group:
+            raise ValueError(
+                f"layer {layer} has {heads} heads, not divisible by heads_per_group="
+                f"{heads_per_group}"
+            )
+        group_counts.append(heads // heads_per_group)
+
+    if state_group_scales is not None:
+        if len(state_group_scales) != len(prefill_states):
+            raise ValueError("state_group_scales must contain one row per layer")
+        for layer, (scales, groups) in enumerate(
+            zip(state_group_scales, group_counts, strict=True)
+        ):
+            if len(scales) != groups:
+                raise ValueError(f"state_group_scales[{layer}] must contain {groups} values")
+            if any(not math.isfinite(scale) or scale <= 0 for scale in scales):
+                raise ValueError(f"state_group_scales[{layer}] must be positive and finite")
+
+    base_states = _clone_states(prefill_states)
+    base_outputs = model_forward(model, next_tok, states=base_states, output_hidden_states=True)[
+        "hidden_states"
+    ]
+    base_final = base_outputs[-1][..., -1, :]
+
+    records = []
+    for layer, groups in enumerate(group_counts):
+        for group in range(groups):
+            head_start = group * heads_per_group
+            head_end = head_start + heads_per_group
+            boundary_gains = []
+            carry_gains = []
+            final_gains = []
+            for _ in range(probes):
+                states = _clone_states(prefill_states)
+                target = states[layer].ssm[:, head_start:head_end]
+                target.add_(_linf_noise(target.shape, delta, gen, target))
+                outputs = model_forward(model, next_tok, states=states, output_hidden_states=True)[
+                    "hidden_states"
+                ]
+                boundary_gains.append(
+                    float(
+                        (outputs[layer][..., -1, :] - base_outputs[layer][..., -1, :]).abs().amax()
+                    )
+                    / delta
+                )
+                carry_gains.append(
+                    float(
+                        (
+                            states[layer].ssm[:, head_start:head_end]
+                            - base_states[layer].ssm[:, head_start:head_end]
+                        )
+                        .abs()
+                        .amax()
+                    )
+                    / delta
+                )
+                final_gains.append(
+                    float((outputs[-1][..., -1, :] - base_final).abs().amax()) / delta
+                )
+
+            scale = state_group_scales[layer][group] if state_group_scales is not None else 1.0
+            final_gain = sum(final_gains) / probes
+            records.append(
+                {
+                    "layer": layer,
+                    "group": group,
+                    "head_start": head_start,
+                    "head_end": head_end,
+                    "state_scale": scale,
+                    "boundary_gain": sum(boundary_gains) / probes,
+                    "carry_gain": sum(carry_gains) / probes,
+                    "final_gain": final_gain,
+                    "normalized_state_output_gain": final_gain * scale,
+                }
+            )
+
+    return {
+        "records": records,
+        "delta": delta,
+        "probes": probes,
+        "heads_per_group": heads_per_group,
+        "layers": len(prefill_states),
+        "groups_per_layer": group_counts,
+        "state_group_scales_applied": state_group_scales is not None,
     }
 
 
