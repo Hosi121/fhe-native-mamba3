@@ -199,8 +199,16 @@ ordinary bootstrap rather than Meta-BTS. Against the same interval-2 run this
 reduces physical bootstraps from 50 to 38, bootstrap time from 24.50 s to
 18.54 s, and evaluation from 55.21 s to 49.11 s (11.1%). Maximum error rises
 slightly from 0.0213 to 0.0228 and remains below the 0.05 gate. This is not yet
-a 24-layer long-generation certificate; it establishes the refresh policy to
-take into that run.
+a 24-layer long-generation certificate.
+
+The subsequent 24-layer/two-token interval-1 gate failed with both refresh
+implementations. Single-BTS state refresh produced per-token errors 0.02090 and
+0.07887 in 373.85 s; its 144 logical state refreshes contributed to 360 physical
+bootstraps. Applying Meta-BTS to all normalized-state refreshes produced errors
+0.03181 and 0.07739 in 448.00 s, with 504 physical bootstraps. Thus Meta-BTS
+improved the failing second-token error by only 0.00148 while adding 74.15 s
+(19.8%) evaluation time. It is not a 24-layer accuracy fix, and single-BTS
+remains the runner default until the accumulated-error source is isolated.
 
 ### dt/decay head expansion
 
@@ -230,12 +238,14 @@ Source: [Mamba-3 paper and released kernels](https://arxiv.org/abs/2603.15569),
 
 ## Recommended order
 
-1. Run the normalized interval-2 refresh policy through the 24-layer
-   multi-token gate, then extend the token horizon.
+1. Localize the 24-layer second-token error by layer and state group, then tune
+   state scaling or refresh placement on a short prefix before rerunning 24
+   layers.
 2. Promote interleaved projections for amortized multi-token runs and assess
    backend hoisting.
-3. Investigate a faster or more accurate bootstrap backend; Meta-BTS removal
-   is valid only for calibration-normalized carried state, not gated RMSNorm.
+3. Investigate a faster or more accurate bootstrap backend. Single-BTS carried
+   state is faster, but neither it nor Meta-BTS currently passes the full-depth
+   multi-token gate; gated RMSNorm still requires Meta-BTS.
 4. Build a global bootstrap-placement optimizer for residual/projection
    coordination, not for the now-refuted gated checkpoint removal.
 5. Add a slot simulator for shared dt/decay head expansion.

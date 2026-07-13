@@ -64,9 +64,10 @@ The layer ladder and process-separated runner source the same promoted native
 defaults from `experiments/dgx_mamba2_common.sh`: true BSGS, interleaved
 projections, replicated state expansion, normalized recurrent state, a 5 GiB
 plaintext cache, and interval-1 state refresh. Normalized state uses Meta-BTS
-by default because single-BTS refresh does not clear the 24-layer/two-token
-accuracy gate; set `NORMALIZED_STATE_META_BTS=0` only for a separately measured
-short-chain speed experiment.
+only when `NORMALIZED_STATE_META_BTS=1` is set. Neither single-BTS nor Meta-BTS
+state refresh currently clears the 24-layer/two-token accuracy gate, while
+Meta-BTS adds 144 physical bootstraps in that run, so the faster single-BTS path
+remains the default.
 
 Add a two-token prompt / four-token greedy client-loop trace to an existing
 chain payload without repeating calibration or layer export:

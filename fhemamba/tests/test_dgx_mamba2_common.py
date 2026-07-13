@@ -42,7 +42,7 @@ def test_dgx_mamba2_common_defaults_to_promoted_structural_path() -> None:
     assert args["--interleaved-replicated-projection"] == "1"
     assert args["--replicated-state-blocks"] == "1"
     assert args["--normalized-recurrent-state"] == "1"
-    assert args["--normalized-state-meta-bts"] == "1"
+    assert args["--normalized-state-meta-bts"] == "0"
     assert args["--state-refresh-interval"] == "1"
     assert args["--pt-cache-gib"] == "5"
     assert args["--pt-cache-weight-level"] == "20"
