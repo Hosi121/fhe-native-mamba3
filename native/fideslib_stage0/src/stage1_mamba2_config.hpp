@@ -156,6 +156,9 @@ struct Config {
   // folded into existing plaintext masks, so this changes neither the Mamba
   // formula nor multiplicative depth. It is opt-in until encrypted parity.
   bool normalized_recurrent_state = false;
+  // Retain two-pass Meta-BTS for normalized carried state when deep chains
+  // need a lower refresh noise floor than the faster single-BTS path.
+  bool normalized_state_meta_bts = false;
   int bootstrap_level_budget_cts = 5;
   int bootstrap_level_budget_stc = 5;
   int bootstrap_bsgs_dim_cts = 0;

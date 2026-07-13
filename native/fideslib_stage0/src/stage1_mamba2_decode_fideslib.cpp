@@ -94,11 +94,13 @@ namespace {
 using fhemamba::stage1::Config;
 using fhemamba::stage1::ChainPayload;
 using fhemamba::stage1::M1Payload;
+using fhemamba::stage1::NormalizedStateLayout;
 using fhemamba::stage1::parse_args;
 using fhemamba::stage1::json_escape;
 using fhemamba::stage1::count_server_secret_files;
 using fhemamba::stage1::cheb_baby_size;
 using fhemamba::stage1::cheb_ps_depth;
+using fhemamba::stage1::build_normalized_state_layout;
 using fhemamba::stage1::derive_packing;
 using fhemamba::stage1::DepthEstimate;
 using fhemamba::stage1::estimate_levels;
@@ -328,9 +330,7 @@ struct LayerPlan {
   // Per-layer measured carried-lineage bounds (< 0 -> generic fallback).
   double state_abs_max = -1.0;
   std::vector<double> state_group_abs_max;
-  std::vector<double> state_group_scales;
-  std::vector<std::vector<double>> normalized_state_x_masks;
-  std::vector<std::vector<double>> normalized_state_readout_masks;
+  NormalizedStateLayout normalized_state;
   double fifo_abs_max = -1.0;
   double y_scale = 1.0;
   std::map<std::string, double> checkpoint_abs_max;
@@ -1824,15 +1824,15 @@ auto main(int argc, char* argv[]) -> int {
       const int level = static_cast<int>(ciphertext->GetLevel());
       const bool carried = is_carried_checkpoint(what);
       const bool residual_checkpoint = what.find("residual") != std::string::npos;
-      // Persistent normalized state is already stored at calibration scale,
-      // so undoing a standard bootstrap only amplifies its error by ~1.  The
-      // second Meta-BTS pass was needed for large carried-state bounds; on
-      // normalized state it doubles refresh cost without that justification.
+      // Persistent normalized state is stored at calibration scale, so a
+      // standard bootstrap is the fast path for short chains. Deep chains
+      // can opt back into Meta-BTS to reduce accumulated refresh error.
       const bool normalized_state =
           carried && what.find("state") != std::string::npos &&
           args.normalized_recurrent_state;
       const bool use_meta_bts =
-          args.meta_bts && !normalized_state &&
+          args.meta_bts &&
+          (!normalized_state || args.normalized_state_meta_bts) &&
           (carried || what.find("gated_poly_input") != std::string::npos);
       // Meta-BTS residual amplification needs one live level after the
       // normalize/rescale, so eligible checkpoints trigger one level earlier.
@@ -2072,32 +2072,8 @@ auto main(int argc, char* argv[]) -> int {
           throw std::runtime_error(
               "normalized recurrent state requires one calibrated bound per head group");
         }
-        plan.state_group_scales.reserve(static_cast<std::size_t>(group_count));
-        plan.normalized_state_x_masks.reserve(static_cast<std::size_t>(group_count));
-        plan.normalized_state_readout_masks.reserve(
-            static_cast<std::size_t>(group_count));
-        for (int group = 0; group < group_count; ++group) {
-          const double measured =
-              plan.state_group_abs_max[static_cast<std::size_t>(group)];
-          if (!std::isfinite(measured) || measured < 0.0) {
-            throw std::runtime_error(
-                "normalized recurrent state received an invalid calibrated bound");
-          }
-          const double scale = std::max(measured, 1.0e-6);
-          plan.state_group_scales.push_back(scale);
-          std::vector<double> x_mask(batch, 0.0);
-          for (int slot = 0; slot < group_block; ++slot) {
-            x_mask[static_cast<std::size_t>(group * group_block + slot)] =
-                1.0 / scale;
-          }
-          plan.normalized_state_x_masks.push_back(std::move(x_mask));
-          std::vector<double> readout_mask(batch, 0.0);
-          for (int slot = 0; slot < group_block; ++slot) {
-            readout_mask[static_cast<std::size_t>(slot)] = scale;
-          }
-          plan.normalized_state_readout_masks.push_back(
-              std::move(readout_mask));
-        }
+        plan.normalized_state = build_normalized_state_layout(
+            plan.state_group_abs_max, group_block, batch_size);
         // maybe_bootstrap observes the stored coordinate system. Each state
         // ciphertext is now bounded by one; its original scale is folded
         // into the update/readout masks above.
@@ -2485,7 +2461,7 @@ auto main(int argc, char* argv[]) -> int {
                     std::to_string(group),
                 1,
                 [&plan, group]() {
-                  return plan.normalized_state_x_masks[
+                  return plan.normalized_state.update_masks[
                       static_cast<std::size_t>(group)];
                 },
                 args.pt_cache_weight_level);
@@ -2494,7 +2470,7 @@ auto main(int argc, char* argv[]) -> int {
                     std::to_string(group),
                 1,
                 [&plan, group]() {
-                  return plan.normalized_state_readout_masks[
+                  return plan.normalized_state.readout_masks[
                       static_cast<std::size_t>(group)];
                 },
                 args.pt_cache_weight_level);
@@ -2872,7 +2848,7 @@ auto main(int argc, char* argv[]) -> int {
       std::vector<double> legacy_mask;
       const std::vector<double>* mask = nullptr;
       if (args.normalized_recurrent_state) {
-        mask = &plan.normalized_state_x_masks[static_cast<std::size_t>(group)];
+        mask = &plan.normalized_state.update_masks[static_cast<std::size_t>(group)];
       } else {
         legacy_mask = block_mask(group_block * group, group_block);
         mask = &legacy_mask;
@@ -3247,7 +3223,7 @@ auto main(int argc, char* argv[]) -> int {
             }
             const auto& readout_mask =
                 args.normalized_recurrent_state
-                    ? plan.normalized_state_readout_masks[
+                    ? plan.normalized_state.readout_masks[
                           static_cast<std::size_t>(group)]
                     : group_mask;
             const std::string readout_key =
@@ -3937,12 +3913,15 @@ auto main(int argc, char* argv[]) -> int {
     out << ",\"state_refresh_interval\":" << args.state_refresh_interval;
     out << ",\"normalized_recurrent_state\":"
         << (args.normalized_recurrent_state ? "true" : "false");
+    out << ",\"normalized_state_meta_bts\":"
+        << (args.normalized_state_meta_bts ? "true" : "false");
     out << ",\"normalized_state_group_scales\":[";
     for (std::size_t layer = 0; layer < layer_plans.size(); ++layer) {
       if (layer > 0) {
         out << ",";
       }
-      write_double_vector_json(out, layer_plans[layer].state_group_scales);
+      write_double_vector_json(out,
+                               layer_plans[layer].normalized_state.group_scales);
     }
     out << "]";
     out << ",\"replicated_state_blocks\":"
@@ -4213,6 +4192,8 @@ auto main(int argc, char* argv[]) -> int {
         << args.state_refresh_interval << ",";
     out << "\"persistent_normalized_recurrent_state\":"
         << (args.normalized_recurrent_state ? "true" : "false") << ",";
+    out << "\"normalized_state_meta_bts_refresh\":"
+        << (args.normalized_state_meta_bts ? "true" : "false") << ",";
     out << "\"per_token_fresh_embedding_encryption\":true,";
     out << "\"multi_stream_slot_packing\":" << (args.streams > 1 ? "true" : "false") << ",";
     out << "\"streams\":" << args.streams << ",";

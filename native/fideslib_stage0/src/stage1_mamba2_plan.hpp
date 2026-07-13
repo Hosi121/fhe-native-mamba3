@@ -25,13 +25,19 @@ struct ReplicatedShape {
 
 struct PackingDims {
   int batch = 0;
-  int group_count = 0;   // number of state ciphertexts (3)
-  int group_heads = 0;   // heads per state ciphertext (8)
-  int group_block = 0;   // group_heads * head_dim (512)
+  int group_count = 0;   // number of full-slot state ciphertexts
+  int group_heads = 0;   // heads carried by one state ciphertext
+  int group_block = 0;   // group_heads * head_dim
   int xbc0 = 0;          // start of xBC inside proj layout (d_inner)
   int dt0 = 0;           // start of dt inside proj layout (d_inner + conv_dim)
   int b_base = 0;        // start of B inside packed conv layout (d_inner)
   int c_base = 0;        // start of C inside packed conv layout (d_inner + state)
+};
+
+struct NormalizedStateLayout {
+  std::vector<double> group_scales;
+  std::vector<std::vector<double>> update_masks;
+  std::vector<std::vector<double>> readout_masks;
 };
 
 
@@ -52,6 +58,9 @@ auto python_mod(int value, int modulus) -> int;
 auto slot_bsgs_giant_with_zero(int input_dim, int output_dim, int baby_step)
     -> std::vector<int>;
 auto derive_packing(const M1Payload& payload, int batch) -> PackingDims;
+auto build_normalized_state_layout(
+    const std::vector<double>& state_group_abs_max, int group_block, int batch)
+    -> NormalizedStateLayout;
 auto int_log2(int value) -> int;
 auto required_rotations(const M1Payload& payload, const PackingDims& dims,
                         const ReplicatedShape& rep_in,

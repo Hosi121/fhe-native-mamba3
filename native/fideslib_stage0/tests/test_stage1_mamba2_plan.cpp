@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <set>
 #include <stdexcept>
@@ -71,6 +72,27 @@ auto main() -> int {
               interleaved_out.per_replica == 77 &&
               interleaved_out.guard_windows == 1,
           "unexpected interleaved out-projection shape");
+
+  const auto normalized =
+      build_normalized_state_layout({0.0, 2.0, 4.0}, 4, 16);
+  require(normalized.group_scales ==
+              std::vector<double>({1.0e-6, 2.0, 4.0}),
+          "unexpected normalized-state scales");
+  require(normalized.update_masks[1][4] == 0.5 &&
+              normalized.update_masks[1][7] == 0.5 &&
+              normalized.update_masks[1][3] == 0.0,
+          "normalized-state update mask has the wrong placement");
+  require(normalized.readout_masks[2][0] == 4.0 &&
+              normalized.readout_masks[2][3] == 4.0 &&
+              normalized.readout_masks[2][4] == 0.0,
+          "normalized-state readout mask has the wrong placement");
+  require_invalid([] { build_normalized_state_layout({}, 4, 16); });
+  require_invalid(
+      [] { build_normalized_state_layout({1.0, 2.0}, 9, 16); });
+  require_invalid([] {
+    build_normalized_state_layout({std::numeric_limits<double>::quiet_NaN()},
+                                  4, 16);
+  });
 
   const auto rotations = required_rotations(payload, packing, rep_in, rep_out);
   require(!rotations.empty(), "rotation plan is empty");

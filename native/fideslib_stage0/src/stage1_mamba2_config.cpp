@@ -172,6 +172,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.state_refresh_interval = parse_int(arg, value);
     } else if (arg == "--normalized-recurrent-state") {
       config.normalized_recurrent_state = parse_bool_arg(arg, value);
+    } else if (arg == "--normalized-state-meta-bts") {
+      config.normalized_state_meta_bts = parse_bool_arg(arg, value);
     } else if (arg == "--bootstrap-level-budget-cts") {
       config.bootstrap_level_budget_cts = parse_int(arg, value);
     } else if (arg == "--bootstrap-level-budget-stc") {
@@ -327,6 +329,11 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.bsgs_replicas == "1") {
     throw std::invalid_argument(
         "interleaved-replicated-projection requires replicated layout");
+  }
+  if (config.normalized_state_meta_bts &&
+      !config.normalized_recurrent_state) {
+    throw std::invalid_argument(
+        "normalized-state-meta-bts requires normalized-recurrent-state");
   }
   if (config.security != "not-set" && config.security != "128-classic") {
     throw std::invalid_argument("security must be not-set or 128-classic");

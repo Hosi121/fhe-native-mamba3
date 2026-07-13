@@ -211,6 +211,41 @@ auto derive_packing(const M1Payload& payload, int batch) -> PackingDims {
   return dims;
 }
 
+auto build_normalized_state_layout(
+    const std::vector<double>& state_group_abs_max, int group_block, int batch)
+    -> NormalizedStateLayout {
+  if (state_group_abs_max.empty() || group_block <= 0 || batch <= 0 ||
+      state_group_abs_max.size() * static_cast<std::size_t>(group_block) >
+          static_cast<std::size_t>(batch)) {
+    throw std::invalid_argument("invalid normalized-state mask geometry");
+  }
+
+  NormalizedStateLayout layout;
+  layout.group_scales.reserve(state_group_abs_max.size());
+  layout.update_masks.reserve(state_group_abs_max.size());
+  layout.readout_masks.reserve(state_group_abs_max.size());
+  for (std::size_t group = 0; group < state_group_abs_max.size(); ++group) {
+    const double measured = state_group_abs_max[group];
+    if (!std::isfinite(measured) || measured < 0.0) {
+      throw std::invalid_argument(
+          "normalized-state bounds must be finite and non-negative");
+    }
+    const double scale = std::max(measured, 1.0e-6);
+    layout.group_scales.push_back(scale);
+
+    std::vector<double> update_mask(static_cast<std::size_t>(batch), 0.0);
+    const auto update_begin = group * static_cast<std::size_t>(group_block);
+    std::fill_n(update_mask.begin() + static_cast<std::ptrdiff_t>(update_begin),
+                group_block, 1.0 / scale);
+    layout.update_masks.push_back(std::move(update_mask));
+
+    std::vector<double> readout_mask(static_cast<std::size_t>(batch), 0.0);
+    std::fill_n(readout_mask.begin(), group_block, scale);
+    layout.readout_masks.push_back(std::move(readout_mask));
+  }
+  return layout;
+}
+
 auto int_log2(int value) -> int {
   if (value <= 0) {
     throw std::invalid_argument("log2 input must be positive");

@@ -78,7 +78,8 @@ auto main() -> int {
   const auto consumption_plain =
       parse({"stage1", "--input", "payload", "--pt-cache-weight-level", "20",
              "--pt-miss-consumption-level", "1", "--state-refresh-interval", "2",
-             "--normalized-recurrent-state", "true"});
+             "--normalized-recurrent-state", "true",
+             "--normalized-state-meta-bts", "true"});
   require(consumption_plain.pt_cache_weight_level == 20,
           "weight plaintext cache level was not parsed");
   require(consumption_plain.pt_miss_consumption_level,
@@ -87,6 +88,8 @@ auto main() -> int {
           "state refresh interval was not parsed");
   require(consumption_plain.normalized_recurrent_state,
           "normalized recurrent state was not parsed");
+  require(consumption_plain.normalized_state_meta_bts,
+          "normalized state Meta-BTS was not parsed");
 
   require_invalid([] { parse({"stage1"}); });
   require_invalid([] {
@@ -130,6 +133,10 @@ auto main() -> int {
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--state-refresh-interval", "-1"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--normalized-state-meta-bts",
+           "true"});
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--replicated-true-bsgs", "1"});
