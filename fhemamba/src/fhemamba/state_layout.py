@@ -15,6 +15,14 @@ class StateBlockExpansionCost:
     levels: int
 
 
+@dataclass(frozen=True)
+class HeadExpansionCost:
+    ct_pt_mul: int
+    rotations: int
+    adds: int
+    levels: int
+
+
 def recurrent_state_group_scales(
     state_head_abs_max: list[float] | np.ndarray,
     group_heads: int,
@@ -140,5 +148,95 @@ def replicated_state_block_cost(state_size: int, group_block: int) -> StateBlock
         ct_pt_mul=1,
         rotations=1 + state_log + block_log,
         adds=state_log + block_log,
+        levels=2,
+    )
+
+
+def _require_head_geometry(
+    heads: int, head_dim: int, state_size: int, group_heads: int, batch: int
+) -> tuple[int, int]:
+    if min(heads, head_dim, state_size, group_heads, batch) <= 0:
+        raise ValueError("head expansion dimensions must be positive")
+    if heads % group_heads:
+        raise ValueError("group_heads must divide heads")
+    group_block = group_heads * head_dim
+    if group_block * state_size != batch:
+        raise ValueError("group block times state size must fill the slot batch")
+    if head_dim & (head_dim - 1) or state_size & (state_size - 1):
+        raise ValueError("head_dim and state_size must be powers of two")
+    return heads // group_heads, group_block
+
+
+def direct_grouped_head_expansion(
+    head_values: np.ndarray,
+    head_dim: int,
+    state_size: int,
+    group_heads: int,
+    batch: int,
+) -> list[np.ndarray]:
+    """Slot-exact specification of the current per-group head expansion."""
+    values = np.asarray(head_values)
+    groups, _ = _require_head_geometry(values.size, head_dim, state_size, group_heads, batch)
+    outputs: list[np.ndarray] = []
+    for group in range(groups):
+        start = group * group_heads
+        group_values = np.repeat(values[start : start + group_heads], head_dim)
+        expanded = np.tile(group_values, state_size)
+        outputs.append(expanded)
+    return outputs
+
+
+def shared_grouped_head_expansion(
+    head_values: np.ndarray,
+    head_dim: int,
+    state_size: int,
+    group_heads: int,
+    batch: int,
+) -> list[np.ndarray]:
+    """Expand all heads once, then extract and state-fill each head group."""
+    values = np.asarray(head_values)
+    groups, group_block = _require_head_geometry(
+        values.size, head_dim, state_size, group_heads, batch
+    )
+    all_heads = np.zeros(batch, dtype=values.dtype)
+    all_heads[np.arange(values.size) * head_dim] = values
+    for step in range(head_dim.bit_length() - 1):
+        all_heads += np.roll(all_heads, 1 << step)
+
+    outputs: list[np.ndarray] = []
+    for group in range(groups):
+        group_values = np.zeros(batch, dtype=values.dtype)
+        start = group * group_block
+        group_values[:group_block] = all_heads[start : start + group_block]
+        for step in range(state_size.bit_length() - 1):
+            group_values += np.roll(group_values, group_block << step)
+        outputs.append(group_values)
+    return outputs
+
+
+def direct_grouped_head_expansion_cost(
+    heads: int, head_dim: int, state_size: int, group_heads: int, batch: int
+) -> HeadExpansionCost:
+    groups, _ = _require_head_geometry(heads, head_dim, state_size, group_heads, batch)
+    head_steps = head_dim.bit_length() - 1
+    state_steps = state_size.bit_length() - 1
+    return HeadExpansionCost(
+        ct_pt_mul=heads,
+        rotations=groups + heads - groups + groups * (head_steps + state_steps),
+        adds=heads - groups + groups * (head_steps + state_steps),
+        levels=1,
+    )
+
+
+def shared_grouped_head_expansion_cost(
+    heads: int, head_dim: int, state_size: int, group_heads: int, batch: int
+) -> HeadExpansionCost:
+    groups, _ = _require_head_geometry(heads, head_dim, state_size, group_heads, batch)
+    head_steps = head_dim.bit_length() - 1
+    state_steps = state_size.bit_length() - 1
+    return HeadExpansionCost(
+        ct_pt_mul=heads + groups,
+        rotations=1 + heads - 1 + head_steps + groups - 1 + groups * state_steps,
+        adds=heads - 1 + head_steps + groups * state_steps,
         levels=2,
     )

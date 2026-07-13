@@ -1,13 +1,46 @@
 import numpy as np
 import pytest
 from fhemamba.state_layout import (
+    direct_grouped_head_expansion,
+    direct_grouped_head_expansion_cost,
     direct_state_block_cost,
     normalized_recurrence_step,
     recurrent_state_group_scales,
     replicated_state_block_cost,
     replicated_state_blocks,
+    shared_grouped_head_expansion,
+    shared_grouped_head_expansion_cost,
     state_block_reference,
 )
+
+
+def test_shared_head_expansion_matches_per_group_layout() -> None:
+    rng = np.random.default_rng(31)
+    heads = rng.standard_normal(24)
+    direct = direct_grouped_head_expansion(heads, 64, 128, 4, 32768)
+    shared = shared_grouped_head_expansion(heads, 64, 128, 4, 32768)
+
+    assert len(direct) == len(shared) == 6
+    for direct_group, shared_group in zip(direct, shared, strict=True):
+        np.testing.assert_array_equal(shared_group, direct_group)
+
+
+def test_shared_head_expansion_trades_one_level_for_fewer_rotations() -> None:
+    direct = direct_grouped_head_expansion_cost(24, 64, 128, 4, 32768)
+    shared = shared_grouped_head_expansion_cost(24, 64, 128, 4, 32768)
+
+    assert (direct.ct_pt_mul, direct.rotations, direct.adds, direct.levels) == (
+        24,
+        102,
+        96,
+        1,
+    )
+    assert (shared.ct_pt_mul, shared.rotations, shared.adds, shared.levels) == (
+        30,
+        77,
+        71,
+        2,
+    )
 
 
 def test_replicated_state_blocks_match_dense_mamba_layout() -> None:

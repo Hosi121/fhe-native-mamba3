@@ -147,7 +147,7 @@ auto estimate_levels(
     const std::set<int>& bootstrap_before_token,
     const std::set<int>& debug_client_reencrypt_before_token,
     bool refresh_recurrent_state_post, int state_refresh_interval,
-    bool replicated_state_blocks,
+    bool replicated_state_blocks, bool shared_head_expansion,
     int streams) -> DepthEstimate {
   if (tokens <= 0 || state_refresh_interval < 0 || streams <= 0) {
     throw std::invalid_argument("depth estimate tokens and streams must be positive");
@@ -181,8 +181,9 @@ auto estimate_levels(
   const int decay_lvl = dt_lvl + 1 + exp_depth + exp_spec.squarings;
   const int x_exp = xconv + 1;
   const int bc_exp = xconv + (replicated_state_blocks ? 2 : 1);
-  const int dt_exp = dt_lvl + 1;
-  const int decay_exp_lvl = decay_lvl + 1;
+  const int head_group_extra = shared_head_expansion ? 1 : 0;
+  const int dt_exp = dt_lvl + 1 + head_group_extra;
+  const int decay_exp_lvl = decay_lvl + 1 + head_group_extra;
   const int dtx = std::max(x_exp, dt_exp) + 1;
   const int update = std::max(dtx, bc_exp) + 1;
 
@@ -196,7 +197,7 @@ auto estimate_levels(
   estimate.req_conv = replicated_state_blocks ? 7 : 6;
   estimate.req_dt = 2 + exp_depth + exp_spec.squarings;
   estimate.req_decay = 3;
-  estimate.req_state_pre = 5;
+  estimate.req_state_pre = 5 + head_group_extra;
   estimate.req_state_tail = 4;
   estimate.req_y = 4 + norm_extra;
   estimate.req_out = 2;

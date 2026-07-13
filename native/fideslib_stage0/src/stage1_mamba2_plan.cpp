@@ -336,7 +336,7 @@ auto int_log2(int value) -> int {
 
 auto required_rotations(const M1Payload& payload, const PackingDims& dims,
                         const ReplicatedShape& rep_in, const ReplicatedShape& rep_out,
-                        bool replicated_state_blocks)
+                        bool replicated_state_blocks, bool shared_head_expansion)
     -> std::vector<int32_t> {
   std::set<int32_t> rotations;
   auto insert_all = [&](const std::vector<int32_t>& values) {
@@ -403,12 +403,18 @@ auto required_rotations(const M1Payload& payload, const PackingDims& dims,
       rotations.insert(static_cast<int32_t>(-giant_stride * a));
     }
   }
-  // dt/decay head placement: rotate whole dt block of group g to slot 0, then
-  // move head h_local from slot h_local to slot h_local*head_dim.
-  for (int g = 0; g < dims.group_count; ++g) {
-    rotations.insert(static_cast<int32_t>(dims.dt0 + dims.group_heads * g));
+  // dt/decay head placement. The shared schedule shifts the full head vector
+  // once and moves every head seed before extracting groups; the direct
+  // schedule shifts and places each group independently.
+  const int placed_heads = shared_head_expansion ? payload.num_heads : dims.group_heads;
+  if (shared_head_expansion) {
+    rotations.insert(static_cast<int32_t>(dims.dt0));
+  } else {
+    for (int g = 0; g < dims.group_count; ++g) {
+      rotations.insert(static_cast<int32_t>(dims.dt0 + dims.group_heads * g));
+    }
   }
-  for (int h = 1; h < dims.group_heads; ++h) {
+  for (int h = 1; h < placed_heads; ++h) {
     rotations.insert(static_cast<int32_t>(-(payload.head_dim - 1) * h));
   }
   rotations.erase(0);
@@ -469,7 +475,7 @@ void verify_naf(const std::vector<int32_t>& indices) {
 auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int layers,
                           int streams, int stream_stride,
                           const ReplicatedShape& rep_in, const ReplicatedShape& rep_out,
-                          bool replicated_state_blocks)
+                          bool replicated_state_blocks, bool shared_head_expansion)
     -> std::map<int32_t, double> {
   if (layers <= 0 || streams <= 0 || stream_stride <= 0) {
     throw std::invalid_argument("rotation frequency geometry must be positive");
@@ -554,7 +560,7 @@ auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int
     add(-(1 << k), 2.0 * S * L);  // B/C block fills
   }
   for (int k = 0; k < int_log2(payload.head_dim); ++k) {
-    add(-(1 << k), 2.0 * G * S * L);  // dt/decay head fills
+    add(-(1 << k), (shared_head_expansion ? 2.0 : 2.0 * G) * S * L);
   }
   for (int k = 0; k < int_log2(payload.state_size); ++k) {
     add(-(dims.group_block << k), 3.0 * G * S * L);  // x/dt/decay across n
@@ -564,6 +570,9 @@ auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int
   // x expand group shifts, readout sums, group placement.
   for (int g = 1; g < dims.group_count; ++g) {
     add(dims.group_block * g, S * L);
+    if (shared_head_expansion) {
+      add(dims.group_block * g, 2.0 * S * L);  // dt/decay group extraction
+    }
     add(-dims.group_block * g, S * L);
   }
   for (int k = 0; k < int_log2(payload.state_size); ++k) {
@@ -589,11 +598,17 @@ auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims, int
     }
   }
   // dt/decay head placement.
-  for (int g = 0; g < dims.group_count; ++g) {
-    add(dims.dt0 + dims.group_heads * g, 2.0 * S * L);
+  const int placed_heads = shared_head_expansion ? payload.num_heads : dims.group_heads;
+  if (shared_head_expansion) {
+    add(dims.dt0, 2.0 * S * L);
+  } else {
+    for (int g = 0; g < dims.group_count; ++g) {
+      add(dims.dt0 + dims.group_heads * g, 2.0 * S * L);
+    }
   }
-  for (int h = 1; h < dims.group_heads; ++h) {
-    add(-(payload.head_dim - 1) * h, 2.0 * G * S * L);
+  for (int h = 1; h < placed_heads; ++h) {
+    add(-(payload.head_dim - 1) * h,
+        (shared_head_expansion ? 2.0 : 2.0 * G) * S * L);
   }
   return freq;
 }

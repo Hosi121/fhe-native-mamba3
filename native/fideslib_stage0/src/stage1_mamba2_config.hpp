@@ -136,6 +136,10 @@ struct Config {
   // Expand the contiguous Mamba B/C vectors into recurrent-state blocks by
   // logarithmic rotate-add replication instead of one mask per state slot.
   bool replicated_state_blocks = false;
+  // Expand all 24 dt/decay head scalars to head_dim once, then extract the six
+  // recurrent groups. This trades six extra ct-pt masks and one level for 25
+  // fewer rotations per expanded tensor at the 130M geometry.
+  bool shared_head_expansion = false;
   // In direct-drop alignment mode, discard projection-input towers that the
   // following inverse-norm multiply would discard from the linear result
   // anyway. This keeps residual/state branches unchanged while making the

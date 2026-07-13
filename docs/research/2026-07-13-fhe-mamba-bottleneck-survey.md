@@ -316,11 +316,25 @@ sweeps are not justified.
 
 ### dt/decay head expansion
 
-The current dt and decay expansions each perform 102 rotations and 24 ct-pt
-products per layer. A shared all-head seed expansion can reduce work before
-splitting the six state groups, at the cost of extra multiplicative levels.
-It needs the same treatment as B/C: slot-exact simulation, depth-model update,
-one-layer parity, then a measured promotion gate.
+The direct dt and decay paths each expand the same 24 heads independently in
+six state groups. The implemented opt-in shared path expands all heads once,
+then masks and fills each group. A slot-exact simulator, operation model,
+depth estimator, rotation planner, and native implementation now agree on the
+layout. The 24-layer, three-token B300 gate passes with maximum error 0.04123.
+
+| Path | Rotations | ct-pt products | Eval | Warm step | Peak RSS |
+|---|---:|---:|---:|---:|---:|
+| direct | 30,141 | 44,624 | 145.75 s | 26.38 s | 120.24 GiB |
+| shared | 27,141 | 45,344 | 153.46 s | 26.07 s | 125.82 GiB |
+
+Across all three tokens, measured dt/decay time falls from 6.68 to 5.88 s
+(11.9%). On each warm token it falls by about 0.51 s, while the whole warm
+step improves by only 0.30 s (1.2%) because the remaining phases dominate.
+The extra group-mask level increases required rotation keys from 135 to 150,
+plaintext cache from 64.82 to 65.40 GiB, and process RSS by 5.57 GiB. Cold
+setup and the first token regress enough that the three-token evaluation is
+slower overall. `SHARED_HEAD_EXPANSION=1` therefore remains a long-lived
+server/long-session experiment rather than the B300 default.
 
 ## Architecture branch, not a current-checkpoint optimization
 
@@ -351,7 +365,8 @@ Source: [Mamba-3 paper and released kernels](https://arxiv.org/abs/2603.15569),
    lower warm projection time can amortize first-token loading.
 4. Build a global bootstrap-placement optimizer for residual/projection
    coordination, not for the now-refuted gated checkpoint removal.
-5. Add a slot simulator for shared dt/decay head expansion.
+5. Re-test shared dt/decay head expansion on a long-lived server session where
+   setup and rotation-key generation are amortized.
 6. Investigate a faster or more accurate bootstrap backend; gated RMSNorm still
    requires Meta-BTS even though paired normalized state now passes.
 7. Keep Mamba-3-lite as a separately trained architecture experiment.

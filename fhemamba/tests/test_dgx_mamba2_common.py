@@ -44,6 +44,7 @@ def test_dgx_mamba2_common_defaults_to_promoted_structural_path() -> None:
     assert args["--fused-replicated-linear-transform-scope"] == "all"
     assert args["--interleaved-replicated-projection"] == "1"
     assert args["--replicated-state-blocks"] == "1"
+    assert args["--shared-head-expansion"] == "0"
     assert args["--normalized-recurrent-state"] == "1"
     assert args["--normalized-state-meta-bts"] == "0"
     assert args["--meta-bts-residual-layers"] == ""

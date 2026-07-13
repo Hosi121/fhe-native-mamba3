@@ -48,6 +48,8 @@ def test_b300_sync_profiles_keep_experimental_builds_isolated() -> None:
         in runner
     )
     assert 'COMPLEX_STATE_PAIRING="${COMPLEX_STATE_PAIRING:-1}"' in runner
+    assert 'if [[ "${SHARED_HEAD_EXPANSION}" == "1" ]]' in runner
+    assert 'PT_CACHE_GIB="${PT_CACHE_GIB:-${default_pt_cache_gib}}"' in runner
 
 
 def test_mamba2_decode_wires_complex_state_pairing() -> None:
@@ -63,6 +65,20 @@ def test_mamba2_decode_wires_complex_state_pairing() -> None:
     assert "EvalConjugate(refreshed)" in source
     assert "paired_state_bootstrap_count" in source
     assert '--complex-state-pairing "$COMPLEX_STATE_PAIRING"' in runner
+
+
+def test_mamba2_decode_wires_shared_head_expansion() -> None:
+    source = (
+        ROOT / "native" / "fideslib_stage0" / "src" / "stage1_mamba2_decode_fideslib.cpp"
+    ).read_text()
+    config = (ROOT / "native" / "fideslib_stage0" / "src" / "stage1_mamba2_config.cpp").read_text()
+    runner = (ROOT / "fhemamba" / "experiments" / "dgx_mamba2_common.sh").read_text()
+
+    assert 'arg == "--shared-head-expansion"' in config
+    assert "place_all_heads" in source
+    assert "extract_shared_head_group" in source
+    assert "shared_head_expansion" in source
+    assert '--shared-head-expansion "$SHARED_HEAD_EXPANSION"' in runner
 
 
 def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:

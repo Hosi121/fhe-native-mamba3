@@ -1030,11 +1030,13 @@ auto main(int argc, char* argv[]) -> int {
     // layers) plus the BSGS layout choice; the required set is the source of
     // truth (logged to JSON for reconciliation with the Python planner).
     const auto rotation_indices = required_rotations(
-        dims_payload, packing, rep_in, rep_out, args.replicated_state_blocks);
+        dims_payload, packing, rep_in, rep_out, args.replicated_state_blocks,
+        args.shared_head_expansion);
     verify_naf(rotation_indices);
     auto rotation_freqs = rotation_frequencies(
         dims_payload, packing, layers_loaded, args.streams, stream_stride,
-        rep_in, rep_out, args.replicated_state_blocks);
+        rep_in, rep_out, args.replicated_state_blocks,
+        args.shared_head_expansion);
     {
       // Guard against generator/frequency drift: every counted index must be
       // required, and every required index gets an entry (frequency 0 if a
@@ -1129,6 +1131,7 @@ auto main(int argc, char* argv[]) -> int {
             args.refresh_recurrent_state_post_layers.count(0) > 0,
         args.state_refresh_interval,
         args.replicated_state_blocks,
+        args.shared_head_expansion,
         args.streams);
     for (std::size_t index = 1; index < layer_payloads.size(); ++index) {
       const auto candidate = estimate_levels(
@@ -1138,6 +1141,7 @@ auto main(int argc, char* argv[]) -> int {
               args.refresh_recurrent_state_post_layers.count(static_cast<int>(index)) > 0,
           args.state_refresh_interval,
           args.replicated_state_blocks,
+          args.shared_head_expansion,
           args.streams);
       depth_estimate.required_depth =
           std::max(depth_estimate.required_depth, candidate.required_depth);
@@ -2476,7 +2480,7 @@ auto main(int argc, char* argv[]) -> int {
       plan.req_conv = args.replicated_state_blocks ? 7 : 6;
       plan.req_dt = 2 + exp_depth + p_exp.squarings;
       plan.req_decay = 3;
-      plan.req_state_pre = 5;
+      plan.req_state_pre = 5 + (args.shared_head_expansion ? 1 : 0);
       plan.req_state_tail = 4;
       plan.req_y = 4 + norm_extra;
       plan.req_out = 2;
@@ -2700,10 +2704,22 @@ auto main(int argc, char* argv[]) -> int {
           }
         }
       }
-      for (int h_local = 0; h_local < group_heads; ++h_local) {
-        register_plain("mask.unit." + std::to_string(h_local),
-                       2 * group_count * layers_count,
-                       [unit_mask, h_local]() { return unit_mask(h_local); });
+      const int unit_head_masks = args.shared_head_expansion ? heads : group_heads;
+      for (int head = 0; head < unit_head_masks; ++head) {
+        register_plain(
+            "mask.unit." + std::to_string(head),
+            args.shared_head_expansion ? 2 * layers_count
+                                       : 2 * group_count * layers_count,
+            [unit_mask, head]() { return unit_mask(head); });
+      }
+      if (args.shared_head_expansion) {
+        for (int group = 0; group < group_count; ++group) {
+          register_plain(
+              "mask.head_group." + std::to_string(group), 2 * layers_count,
+              [block_mask, group, group_block]() {
+                return block_mask(group_block * group, group_block);
+              });
+        }
       }
       if (args.normalized_recurrent_state) {
         for (const auto& plan : layer_plans) {
@@ -3106,6 +3122,41 @@ auto main(int argc, char* argv[]) -> int {
       }
       accumulator = doubling_fill(accumulator, 1, int_log2(head_dim));
       return doubling_fill(accumulator, group_block, int_log2(state_size));
+    };
+
+    auto place_all_heads = [&](const Ciphertext<DCRTPoly>& source,
+                               const std::vector<double>* head_mask = nullptr) {
+      auto shifted = rotate(source, dt0);
+      Ciphertext<DCRTPoly> accumulator;
+      bool has_accumulator = false;
+      for (int head = 0; head < heads; ++head) {
+        if (head_mask != nullptr &&
+            head_mask->at(static_cast<std::size_t>(head)) == 0.0) {
+          continue;
+        }
+        auto term = mul_mask(shifted, "mask.unit." + std::to_string(head),
+                             unit_mask(head));
+        term = rotate(term, -(head_dim - 1) * head);
+        if (!has_accumulator) {
+          accumulator = term;
+          has_accumulator = true;
+        } else {
+          accumulator = add_aligned(accumulator, term);
+        }
+      }
+      if (!has_accumulator) {
+        throw std::logic_error("place_all_heads called without an active head");
+      }
+      return doubling_fill(accumulator, 1, int_log2(head_dim));
+    };
+
+    auto extract_shared_head_group = [&](const Ciphertext<DCRTPoly>& expanded,
+                                         int group) {
+      auto grouped = mul_mask(
+          expanded, "mask.head_group." + std::to_string(group),
+          block_mask(group_block * group, group_block));
+      grouped = rotate(grouped, group_block * group);
+      return doubling_fill(grouped, group_block, int_log2(state_size));
     };
 
     auto expand_x = [&](const Ciphertext<DCRTPoly>& conv_packed, int group,
@@ -3557,6 +3608,21 @@ auto main(int argc, char* argv[]) -> int {
                       "autoregressive_poly_state_decayed")
                 : nullptr;
 
+        Ciphertext<DCRTPoly> shared_dt_heads;
+        Ciphertext<DCRTPoly> shared_decay_heads;
+        if (args.shared_head_expansion) {
+          shared_dt_heads = time_phase(
+              "dt_expand", [&]() { return place_all_heads(dt_stream); });
+          if (runtime.has_state && std::any_of(
+                                       plan.exp_head_mask.begin(),
+                                       plan.exp_head_mask.end(),
+                                       [](double keep) { return keep != 0.0; })) {
+            shared_decay_heads = time_phase("decay_expand", [&]() {
+              return place_all_heads(decay_stream, &plan.exp_head_mask);
+            });
+          }
+        }
+
         // Pair scheduling stays outside the group algebra so both states are
         // updated before they share a post-update bootstrap.
         auto refresh_state_batch = [&](int group_begin, int group_end,
@@ -3582,8 +3648,11 @@ auto main(int argc, char* argv[]) -> int {
           auto x_group = time_phase("x_expand", [&]() {
             return expand_x(conv_stream, group, plan);
           });
-          auto dt_group = time_phase(
-              "dt_expand", [&]() { return place_heads(dt_stream, group); });
+          auto dt_group = time_phase("dt_expand", [&]() {
+            return args.shared_head_expansion
+                       ? extract_shared_head_group(shared_dt_heads, group)
+                       : place_heads(dt_stream, group);
+          });
           const bool decay_group_active = std::any_of(
               plan.exp_head_mask.begin() + group * group_heads,
               plan.exp_head_mask.begin() + (group + 1) * group_heads,
@@ -3591,7 +3660,10 @@ auto main(int argc, char* argv[]) -> int {
           Ciphertext<DCRTPoly> decay_group;
           if (runtime.has_state && decay_group_active) {
             decay_group = time_phase("decay_expand", [&]() {
-              return place_heads(decay_stream, group, &plan.exp_head_mask);
+              return args.shared_head_expansion
+                         ? extract_shared_head_group(shared_decay_heads, group)
+                         : place_heads(decay_stream, group,
+                                       &plan.exp_head_mask);
             });
           }
           const double recurrence_scale = recurrence_scale_for(group);
@@ -4562,6 +4634,8 @@ auto main(int argc, char* argv[]) -> int {
     out << "]";
     out << ",\"replicated_state_blocks\":"
         << (args.replicated_state_blocks ? "true" : "false");
+    out << ",\"shared_head_expansion\":"
+        << (args.shared_head_expansion ? "true" : "false");
     out << "},";
     out << "\"measurements\":{";
     out.precision(12);  // show real CKKS noise digits in errors and samples

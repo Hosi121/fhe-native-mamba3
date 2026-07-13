@@ -74,7 +74,8 @@ auto int_log2(int value) -> int;
 auto required_rotations(const M1Payload& payload, const PackingDims& dims,
                         const ReplicatedShape& rep_in,
                         const ReplicatedShape& rep_out,
-                        bool replicated_state_blocks = false)
+                        bool replicated_state_blocks = false,
+                        bool shared_head_expansion = false)
     -> std::vector<int32_t>;
 auto naf_steps(int value) -> std::vector<int>;
 void verify_naf(const std::vector<int32_t>& indices);
@@ -82,7 +83,8 @@ auto rotation_frequencies(const M1Payload& payload, const PackingDims& dims,
                           int layers, int streams, int stream_stride,
                           const ReplicatedShape& rep_in,
                           const ReplicatedShape& rep_out,
-                          bool replicated_state_blocks = false)
+                          bool replicated_state_blocks = false,
+                          bool shared_head_expansion = false)
     -> std::map<int32_t, double>;
 auto rotation_key_gib_estimate(int ring_dim, int multiplicative_depth)
     -> double;

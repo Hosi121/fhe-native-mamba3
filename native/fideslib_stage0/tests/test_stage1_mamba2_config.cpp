@@ -83,6 +83,7 @@ auto main() -> int {
                                 "--fideslib-sync-profile", "bootstrap-lifetime",
                                 "--interleaved-replicated-projection", "true",
                                 "--replicated-state-blocks", "true",
+                                "--shared-head-expansion", "true",
                                 "--projection-late-level", "true"});
   require(true_bsgs.replicated_true_bsgs, "true replicated BSGS was not parsed");
   require(true_bsgs.fused_replicated_linear_transform,
@@ -95,6 +96,8 @@ auto main() -> int {
           "interleaved replicated projection was not parsed");
   require(true_bsgs.replicated_state_blocks,
           "replicated state blocks mode was not parsed");
+  require(true_bsgs.shared_head_expansion,
+          "shared head expansion mode was not parsed");
   require(true_bsgs.projection_late_level,
           "projection late-level mode was not parsed");
   const auto consumption_plain =

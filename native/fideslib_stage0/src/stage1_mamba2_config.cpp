@@ -159,6 +159,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.interleaved_replicated_projection = parse_bool_arg(arg, value);
     } else if (arg == "--replicated-state-blocks") {
       config.replicated_state_blocks = parse_bool_arg(arg, value);
+    } else if (arg == "--shared-head-expansion") {
+      config.shared_head_expansion = parse_bool_arg(arg, value);
     } else if (arg == "--projection-late-level") {
       config.projection_late_level = parse_bool_arg(arg, value);
     } else if (arg == "--output-json") {

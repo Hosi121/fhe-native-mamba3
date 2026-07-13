@@ -214,6 +214,21 @@ auto main() -> int {
     require(frequency > 0.0,
             "replicated-state rotation frequency is not positive");
   }
+  const auto shared_head_rotations =
+      required_rotations(payload, packing, bsgs_in, bsgs_out, true, true);
+  const std::set<int32_t> shared_head_required(
+      shared_head_rotations.begin(), shared_head_rotations.end());
+  require(shared_head_required.count(
+              -(payload.head_dim - 1) * (payload.num_heads - 1)) == 1,
+          "shared-head final seed rotation is missing");
+  const auto shared_head_frequencies = rotation_frequencies(
+      payload, packing, 24, 1, 32768, bsgs_in, bsgs_out, true, true);
+  for (const auto& [index, frequency] : shared_head_frequencies) {
+    require(shared_head_required.count(index) == 1,
+            "shared-head frequency contains an unplanned rotation");
+    require(frequency > 0.0,
+            "shared-head rotation frequency is not positive");
+  }
 
   const auto small_shape = resolve_replicated_shape(4, 4, 32, 0);
   std::vector<double> weights(16);
