@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-/workspace}"
+FIDESLIB_DIR="${FIDESLIB_DIR:-${ROOT_DIR}/src/FIDESlib}"
+OPENFHE_PREFIX="${OPENFHE_PREFIX:-${ROOT_DIR}/install/openfhe-fides}"
+FIDESLIB_PREFIX="${FIDESLIB_PREFIX:-${ROOT_DIR}/install/fideslib}"
+FIDESLIB_BUILD_DIR="${FIDESLIB_BUILD_DIR:-${ROOT_DIR}/build/fideslib-sm100}"
+STAGE_BUILD_DIR="${STAGE_BUILD_DIR:-${ROOT_DIR}/build/fideslib-stage0-sm100}"
+FIDESLIB_ARCH="${FIDESLIB_ARCH:-100-real}"
+BUILD_JOBS="${BUILD_JOBS:-32}"
+LOG_FILE="${LOG_FILE:-${ROOT_DIR}/logs/fideslib-build-sm100.log}"
+
+mkdir -p "$(dirname "${LOG_FILE}")" "${ROOT_DIR}/build" "${ROOT_DIR}/install"
+exec > >(tee -a "${LOG_FILE}") 2>&1
+
+echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "fideslib_arch=${FIDESLIB_ARCH}"
+echo "build_jobs=${BUILD_JOBS}"
+nvidia-smi --query-gpu=index,name,compute_cap,memory.total --format=csv,noheader
+nvcc --version
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends \
+  build-essential \
+  ca-certificates \
+  cmake \
+  git \
+  libomp-dev \
+  ninja-build \
+  pkg-config
+rm -rf /var/lib/apt/lists/*
+
+test -d "${FIDESLIB_DIR}/.git"
+git config --global --add safe.directory "${FIDESLIB_DIR}"
+git -C "${FIDESLIB_DIR}" rev-parse HEAD
+
+apply_patch_once() {
+  local patch_path="$1"
+  if git -C "${FIDESLIB_DIR}" apply --reverse --check "${patch_path}"; then
+    echo "patch_already_applied=${patch_path}"
+  elif git -C "${FIDESLIB_DIR}" apply --check "${patch_path}"; then
+    git -C "${FIDESLIB_DIR}" apply "${patch_path}"
+    echo "patch_applied=${patch_path}"
+  else
+    echo "patch_cannot_be_applied=${patch_path}" >&2
+    return 1
+  fi
+}
+
+apply_patch_once \
+  "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-bootstrap-stage-sync.patch"
+
+if [[ ! -f "${OPENFHE_PREFIX}/lib/OpenFHE/OpenFHEConfig.cmake" && \
+      ! -f "${OPENFHE_PREFIX}/lib/cmake/OpenFHE/OpenFHEConfig.cmake" ]]; then
+  (
+    cd "${FIDESLIB_DIR}/deps"
+    ./build.sh "${OPENFHE_PREFIX}"
+  )
+else
+  echo "using_existing_openfhe=${OPENFHE_PREFIX}"
+fi
+
+cmake \
+  -S "${FIDESLIB_DIR}" \
+  -B "${FIDESLIB_BUILD_DIR}" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCUDA_PATH=/usr/local/cuda \
+  -DFIDESLIB_ARCH="${FIDESLIB_ARCH}" \
+  -DOPENFHE_INSTALL_PREFIX="${OPENFHE_PREFIX}" \
+  -DFIDESLIB_INSTALL_PREFIX="${FIDESLIB_PREFIX}" \
+  -DFIDESLIB_INSTALL_OPENFHE=OFF \
+  -DFIDESLIB_COMPILE_TESTS=OFF \
+  -DFIDESLIB_COMPILE_BENCHMARKS=OFF
+cmake --build "${FIDESLIB_BUILD_DIR}" --target fideslib gpu-test -j "${BUILD_JOBS}"
+cmake --build "${FIDESLIB_BUILD_DIR}" --target install -j "${BUILD_JOBS}"
+
+"${FIDESLIB_BUILD_DIR}/gpu-test"
+
+cmake \
+  -S "${ROOT_DIR}/cipher/native/fideslib_stage0" \
+  -B "${STAGE_BUILD_DIR}" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="${FIDESLIB_PREFIX};${OPENFHE_PREFIX}"
+cmake --build "${STAGE_BUILD_DIR}" \
+  --target stage1_mamba2_decode_fideslib stage1_bootstrap_probe fideslib_client_server_probe \
+  -j "${BUILD_JOBS}"
+
+echo "completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
