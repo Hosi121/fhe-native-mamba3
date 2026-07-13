@@ -210,6 +210,34 @@ improved the failing second-token error by only 0.00148 while adding 74.15 s
 (19.8%) evaluation time. It is not a 24-layer accuracy fix, and single-BTS
 remains the runner default until the accumulated-error source is isolated.
 
+### Recurrent error attribution
+
+The noise-flow probe now normalizes every random perturbation to exactly the
+requested L-infinity magnitude before dividing by that magnitude. The previous
+probe multiplied by an unnormalized Gaussian maximum and therefore overstated
+carry amplification. With the corrected probe, all layer-local state carry
+gains are at most one; the recurrence is not intrinsically multiplying state
+error by about four per token.
+
+The native debug path now decrypts all six packed recurrent-state groups after
+each layer update and compares them with exported polynomial-circuit state
+references. A matched 24-layer/two-token run records final errors 0.01607 and
+0.08236. The second token has its largest state errors at layer 6 (group maxima
+up to 4.014), then layer 16 (up to 1.701) and layer 18 (up to 0.288). A
+random-direction final-gain proxy ranks layer-6 groups 2 and 3 first, but this
+proxy is for experiment prioritization, not an error bound or exact attribution.
+
+Late-layer behavior separates the residual path from recurrent state. At the
+second token, layer-boundary error rises from 0.193 at layer 21 to 0.839 at
+layer 22 and 1.693 at layer 23, while the corresponding state-group maxima stay
+at 0.00254, 0.00215, and 0.00120. The calibrated residual bootstrap bounds at
+layers 22 and 23 are 1201.49 and 1709.49, so the single-bootstrap error floor is
+rescaled by roughly three orders of magnitude. The next gate therefore applies
+Meta-BTS only to selected high-bound residual layers. This adds three physical
+bootstraps per token instead of applying Meta-BTS to all state refreshes; it does
+not address the independent layer-6 state-update error, which remains a separate
+localization target.
+
 ### dt/decay head expansion
 
 The current dt and decay expansions each perform 102 rotations and 24 ct-pt
@@ -238,9 +266,8 @@ Source: [Mamba-3 paper and released kernels](https://arxiv.org/abs/2603.15569),
 
 ## Recommended order
 
-1. Localize the 24-layer second-token error by layer and state group, then tune
-   state scaling or refresh placement on a short prefix before rerunning 24
-   layers.
+1. Gate selective residual Meta-BTS at layers 21-23, then isolate the independent
+   layer-6 and layer-16 state-update errors with targeted prefix experiments.
 2. Promote interleaved projections for amortized multi-token runs and assess
    backend hoisting.
 3. Investigate a faster or more accurate bootstrap backend. Single-BTS carried
