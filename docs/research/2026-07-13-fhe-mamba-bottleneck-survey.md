@@ -35,12 +35,24 @@ replicated B/C schedule reduce total evaluation by 48.7%, ct-pt products from
 
 ### Cache-pressure sweep
 
-The 20 GiB cache holds only 1,346 of 6,591 entries; the remaining 5,245 misses
-are already encoded at their consumption level 35. Peak RSS rises by 10.2 GiB
-over the old 5 GiB-cache run, while bootstrap and gated-norm time are higher.
-This does not prove contention, but makes a controlled 5/10/20/30 GiB sweep the
-cheapest next experiment. Cache size must be selected on end-to-end latency,
-not hit rate.
+The controlled 5/10/20/30 GiB sweep is complete for the same 24-layer,
+one-token configuration:
+
+| Cache | Cached entries | Misses | Setup | Eval | Total | Peak RSS | Result |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 5 GiB | 228 | 6,356 | 26.72 s | 166.39 s | 193.11 s | 38.72 GiB | passed |
+| 10 GiB | 527 | 6,064 | 27.11 s | 165.95 s | 193.07 s | 43.75 GiB | passed |
+| 20 GiB | 1,346 | 5,245 | 26.26 s | 182.04 s | 208.31 s | 54.21 GiB | passed |
+| 30 GiB | - | - | - | - | - | >64.55 GiB | OS-killed at layer 9 |
+
+Five and 10 GiB are tied within run-to-run noise, while 5 GiB uses 5.03 GiB
+less peak RSS. Compared with 20 GiB, the 5 GiB run reduces evaluation by 8.6%
+and setup-plus-evaluation by 7.3%. Its polynomial-circuit error is 0.02330,
+still below the 0.05 gate. The larger cache reduces cheap consumption-level
+encodes but creates unified-memory pressure in bootstrap and gated norm; at
+30 GiB the process is no longer reliable. The runtime and DGX ladder therefore
+now default to 5 GiB. Cache size should continue to be selected on end-to-end
+latency and peak memory, not hit rate.
 
 ### Global bootstrap placement
 
@@ -139,11 +151,10 @@ Source: [Mamba-3 paper and released kernels](https://arxiv.org/abs/2603.15569),
 
 ## Recommended order
 
-1. Sweep plaintext-cache budget on the new 24-layer gate.
-2. Build an offline global bootstrap-placement optimizer from level telemetry.
-3. Sweep gated-norm polynomial degree, Newton iterations, and certified range.
-4. Finish the slot-exact interleaved projection candidate and assess hoisting.
-5. Add a slot simulator for shared dt/decay head expansion.
-6. Regenerate the long-horizon reference payload and resume multi-token state
+1. Build an offline global bootstrap-placement optimizer from level telemetry.
+2. Sweep gated-norm polynomial degree, Newton iterations, and certified range.
+3. Finish the slot-exact interleaved projection candidate and assess hoisting.
+4. Add a slot simulator for shared dt/decay head expansion.
+5. Regenerate the long-horizon reference payload and resume multi-token state
    packing/refresh work.
-7. Keep Mamba-3-lite as a separately trained architecture experiment.
+6. Keep Mamba-3-lite as a separately trained architecture experiment.

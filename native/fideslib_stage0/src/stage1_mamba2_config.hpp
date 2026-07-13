@@ -47,7 +47,9 @@ struct Config {
   // greedily by per-token reuse count and everything else falls back to
   // on-the-fly encoding.
   std::string pt_cache = "auto";
-  double pt_cache_gib = 40.0;
+  // DGX Spark 24-layer sweep: 5/10 GiB tie on latency while larger caches
+  // increase unified-memory pressure and slow bootstrap/nonlinear phases.
+  double pt_cache_gib = 5.0;
   // Expert knob: encode cached plaintexts at this consumption level using the
   // 5-arg MakeCKKSPackedPlaintext overload (already used by the forensic
   // path), shrinking entries by (depth+1-level)/(depth+1). Must be <= the

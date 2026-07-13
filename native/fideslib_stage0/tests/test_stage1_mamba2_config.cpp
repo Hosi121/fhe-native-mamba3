@@ -39,6 +39,7 @@ auto main() -> int {
   require(defaults.process_role == "inline", "unexpected process role default");
   require(defaults.ring_dim == 131072, "unexpected ring dimension default");
   require(defaults.multiplicative_depth == 44, "unexpected depth default");
+  require(defaults.pt_cache_gib == 5.0, "unexpected plaintext cache default");
 
   const std::string binary_hash(64, 'a');
   const auto provenance = parse({"stage1", "--input", "payload",
