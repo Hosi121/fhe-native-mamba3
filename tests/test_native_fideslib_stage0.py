@@ -27,6 +27,21 @@ def test_b300_build_exposes_ckks_complex_data_type() -> None:
     assert "SetCKKSDataType(config.complex_pair ? COMPLEX : REAL)" in probe
 
 
+def test_mamba2_decode_wires_complex_state_pairing() -> None:
+    source = (
+        ROOT / "native" / "fideslib_stage0" / "src" / "stage1_mamba2_decode_fideslib.cpp"
+    ).read_text()
+    config = (ROOT / "native" / "fideslib_stage0" / "src" / "stage1_mamba2_config.cpp").read_text()
+    runner = (ROOT / "fhemamba" / "experiments" / "dgx_mamba2_common.sh").read_text()
+
+    assert 'arg == "--complex-state-pairing"' in config
+    assert "SetCKKSDataType(args.complex_state_pairing ? COMPLEX : REAL)" in source
+    assert "maybe_bootstrap_pair" in source
+    assert "EvalConjugate(refreshed)" in source
+    assert "paired_state_bootstrap_count" in source
+    assert '--complex-state-pairing "$COMPLEX_STATE_PAIRING"' in runner
+
+
 def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     source = ROOT / "native" / "fideslib_stage0" / "src" / "stage0_static_mimo.cpp"
     stage1_bootstrap_source = (

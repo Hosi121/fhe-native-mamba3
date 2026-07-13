@@ -165,6 +165,10 @@ struct Config {
   // folded into existing plaintext masks, so this changes neither the Mamba
   // formula nor multiplicative depth. It is opt-in until encrypted parity.
   bool normalized_recurrent_state = false;
+  // Pack two real recurrent-state ciphertexts into the real/imaginary
+  // components of one CKKS ciphertext for a shared bootstrap, then split
+  // them with conjugation. This halves ordinary state-refresh bootstraps.
+  bool complex_state_pairing = false;
   // Retain two-pass Meta-BTS for normalized carried state when deep chains
   // need a lower refresh noise floor than the faster single-BTS path.
   bool normalized_state_meta_bts = false;

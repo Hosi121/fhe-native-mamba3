@@ -98,6 +98,7 @@ auto main() -> int {
       parse({"stage1", "--input", "payload", "--pt-cache-weight-level", "20",
              "--pt-miss-consumption-level", "1", "--state-refresh-interval", "2",
              "--normalized-recurrent-state", "true",
+             "--complex-state-pairing", "true",
              "--normalized-state-meta-bts", "true",
              "--meta-bts", "true",
              "--meta-bts-residual-layers", "21,22,23"});
@@ -109,6 +110,8 @@ auto main() -> int {
           "state refresh interval was not parsed");
   require(consumption_plain.normalized_recurrent_state,
           "normalized recurrent state was not parsed");
+  require(consumption_plain.complex_state_pairing,
+          "complex state pairing was not parsed");
   require(consumption_plain.normalized_state_meta_bts,
           "normalized state Meta-BTS was not parsed");
   require(consumption_plain.meta_bts_residual_layers == std::set<int>({21, 22, 23}),

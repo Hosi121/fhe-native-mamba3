@@ -56,6 +56,7 @@ init_dgx_mamba2_defaults() {
   REFRESH_RECURRENT_STATE_POST_LAYERS="${REFRESH_RECURRENT_STATE_POST_LAYERS:-}"
   STATE_REFRESH_INTERVAL="${STATE_REFRESH_INTERVAL:-1}"
   NORMALIZED_RECURRENT_STATE="${NORMALIZED_RECURRENT_STATE:-1}"
+  COMPLEX_STATE_PAIRING="${COMPLEX_STATE_PAIRING:-0}"
   NORMALIZED_STATE_META_BTS="${NORMALIZED_STATE_META_BTS:-0}"
   TOLERANCE="${TOLERANCE:-0.05}"
 }
@@ -111,6 +112,7 @@ build_dgx_mamba2_args() {
     --refresh-recurrent-state-post-layers "$REFRESH_RECURRENT_STATE_POST_LAYERS"
     --state-refresh-interval "$STATE_REFRESH_INTERVAL"
     --normalized-recurrent-state "$NORMALIZED_RECURRENT_STATE"
+    --complex-state-pairing "$COMPLEX_STATE_PAIRING"
     --normalized-state-meta-bts "$NORMALIZED_STATE_META_BTS"
     --tolerance "$TOLERANCE"
   )

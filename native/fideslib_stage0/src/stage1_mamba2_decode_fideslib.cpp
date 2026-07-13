@@ -55,6 +55,7 @@
 #include <any>
 #include <chrono>
 #include <cmath>
+#include <complex>
 #include <limits>
 #include <cstdint>
 #include <cstdlib>
@@ -72,6 +73,7 @@
 #include <string_view>
 #include <thread>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace fideslib;
@@ -1196,6 +1198,7 @@ auto main(int argc, char* argv[]) -> int {
     parameters.SetMultiplicativeDepth(static_cast<uint32_t>(args.multiplicative_depth));
     parameters.SetScalingModSize(static_cast<uint32_t>(args.scaling_mod_size));
     parameters.SetBatchSize(static_cast<uint32_t>(batch_size));
+    parameters.SetCKKSDataType(args.complex_state_pairing ? COMPLEX : REAL);
     parameters.SetDevices({0});
     parameters.SetPlaintextAutoload(false);
     parameters.SetCiphertextAutoload(true);
@@ -1300,6 +1303,7 @@ auto main(int argc, char* argv[]) -> int {
     int fused_projection_fallbacks = 0;
     int bootstraps = 0;
     int state_bootstraps = 0;  // refreshes of carried-forward (state/FIFO) cts
+    int paired_state_bootstraps = 0;
     int meta_bts_applied = 0;  // refreshes that ran the double-BTS path
     int debug_client_reencrypt_ciphertexts = 0;
     double bootstrap_eval_seconds = 0.0;
@@ -1311,9 +1315,12 @@ auto main(int argc, char* argv[]) -> int {
       int requirement = 0;
       int policy_headroom = 0;
       int physical_bootstraps = 0;
+      int logical_ciphertexts = 1;
       bool carried = false;
       bool meta_bts = false;
+      bool complex_pair = false;
       double bound = 0.0;
+      double secondary_bound = 0.0;
       double seconds = 0.0;
     };
     std::vector<BootstrapEvent> bootstrap_events;
@@ -1378,6 +1385,22 @@ auto main(int argc, char* argv[]) -> int {
       }
       return cc->MakeCKKSPackedPlaintext(
           values, 1, level, nullptr, static_cast<uint32_t>(batch_size));
+    };
+    std::map<std::pair<uint32_t, double>, Plaintext> imaginary_constant_cache;
+    auto imaginary_constant_plain = [&](double value, uint32_t level) {
+      const auto key = std::make_pair(level, value);
+      auto found = imaginary_constant_cache.find(key);
+      if (found != imaginary_constant_cache.end()) {
+        return found->second;
+      }
+      std::vector<std::complex<double>> values(
+          static_cast<std::size_t>(batch_size), {0.0, value});
+      auto plain = cc->MakeCKKSPackedPlaintext(
+          values, 1, level, nullptr, static_cast<uint32_t>(batch_size));
+      auto [entry, inserted] =
+          imaginary_constant_cache.emplace(key, std::move(plain));
+      (void)inserted;
+      return entry->second;
     };
     auto encrypt_values = [&](const std::vector<double>& values) {
       auto plain = make_plain(values);
@@ -1887,57 +1910,40 @@ auto main(int argc, char* argv[]) -> int {
     RecurrenceDebugMetrics debug_recurrence;
     int active_layer_index = -1;
     bool carried_bound_fallback_warned = false;
-    auto eval_bootstrap_synced = [&](const Ciphertext<DCRTPoly>& input) {
-      if (cudaDeviceSynchronize() != 0) {
-        throw std::runtime_error("CUDA synchronization failed before EvalBootstrap");
-      }
-      auto output = cc->EvalBootstrap(input);
-      if (cudaDeviceSynchronize() != 0) {
-        throw std::runtime_error("CUDA synchronization failed after EvalBootstrap");
-      }
-      return output;
+    auto normalized_state_checkpoint = [&](const std::string& what) {
+      return is_carried_checkpoint(what) &&
+             what.find("state") != std::string::npos &&
+             args.normalized_recurrent_state;
     };
-    auto maybe_bootstrap = [&](Ciphertext<DCRTPoly>& ciphertext, int requirement,
-                               const std::string& what, int& counter) {
+    auto bootstrap_uses_meta = [&](const std::string& what) {
+      return should_use_meta_bts(
+          args, active_layer_index, is_carried_checkpoint(what),
+          normalized_state_checkpoint(what), what);
+    };
+    auto bootstrap_policy_headroom = [&](const std::string& what) {
+      if (is_carried_checkpoint(what)) {
+        return args.carried_bootstrap_headroom;
+      }
+      if (what.find("residual") != std::string::npos) {
+        return args.residual_bootstrap_headroom;
+      }
+      return args.auto_bootstrap_headroom;
+    };
+    auto bootstrap_needed = [&](const Ciphertext<DCRTPoly>& ciphertext,
+                                int requirement, const std::string& what) {
       if (!bootstrap_available) {
-        return;
+        return false;
       }
       const int level = static_cast<int>(ciphertext->GetLevel());
-      const bool carried = is_carried_checkpoint(what);
-      const bool residual_checkpoint = what.find("residual") != std::string::npos;
-      // Persistent normalized state is stored at calibration scale, so a
-      // standard bootstrap is the fast path for short chains. Deep chains
-      // can opt back into Meta-BTS to reduce accumulated refresh error.
-      const bool normalized_state =
-          carried && what.find("state") != std::string::npos &&
-          args.normalized_recurrent_state;
-      const bool use_meta_bts = should_use_meta_bts(
-          args, active_layer_index, carried, normalized_state, what);
-      // Meta-BTS residual amplification needs one live level after the
-      // normalize/rescale, so eligible checkpoints trigger one level earlier.
-      const int meta_headroom = use_meta_bts ? 1 : 0;
-      int policy_headroom = args.auto_bootstrap_headroom;
-      if (residual_checkpoint) {
-        policy_headroom = args.residual_bootstrap_headroom;
-      }
-      if (carried) {
-        policy_headroom = args.carried_bootstrap_headroom;
-      }
+      const int meta_headroom = bootstrap_uses_meta(what) ? 1 : 0;
       if (args.multiplicative_depth - level >=
-          requirement + meta_headroom + policy_headroom) {
-        return;
+          requirement + meta_headroom + bootstrap_policy_headroom(what)) {
+        return false;
       }
-      if (level < kAssumedBootstrapOutputLevel + kMinBootstrapGain) {
-        return;  // bootstrapping cannot usefully improve a near-fresh ciphertext
-      }
-      debug_value_stats(ciphertext, "pre_bootstrap." + what);
-      // FIDESlib EvalBootstrap needs noiseScaleDeg-1 inputs with |m| <~ 1:
-      // deg-2 refresh error grows polynomially with magnitude (all-NaN at the
-      // measured |m|~24 y checkpoint). Normalize by the per-checkpoint bound,
-      // force rescale to deg 1, refresh, then undo the normalization. The
-      // undo-multiply scales the refresh noise floor by the bound, so carried
-      // lineages (state, FIFO) use the tighter state margin to inject less
-      // noise per token; transient activations keep the looser margin.
+      return level >= kAssumedBootstrapOutputLevel + kMinBootstrapGain;
+    };
+    auto bootstrap_bound_for = [&](const std::string& what) {
+      const bool carried = is_carried_checkpoint(what);
       double base_bound = checkpoint_bound(what);
       if (!carried) {
         const bool scaled_y = what.find("y_scaled") != std::string::npos;
@@ -1959,13 +1965,7 @@ auto main(int argc, char* argv[]) -> int {
             base_bound = y_bound->second;
           }
         }
-      }
-      if (carried) {
-        ++state_bootstraps;
-        // Export-time carried bounds replace the generic 24/6 values. State
-        // checkpoints use the maximum for the heads packed in that state
-        // ciphertext when the payload supplies head-wise calibration; older
-        // independent-calibration payloads retain their per-layer scalar.
+      } else {
         const bool is_fifo = what.find("fifo") != std::string::npos;
         double measured = is_fifo ? active_fifo_bound : active_state_bound;
         if (!is_fifo && !active_state_group_bounds.empty()) {
@@ -1974,7 +1974,8 @@ auto main(int argc, char* argv[]) -> int {
             --digit;
           }
           if (digit < what.size()) {
-            const auto state_slot = static_cast<std::size_t>(std::stoul(what.substr(digit)));
+            const auto state_slot =
+                static_cast<std::size_t>(std::stoul(what.substr(digit)));
             measured = active_state_group_bounds[
                 state_slot % active_state_group_bounds.size()];
           }
@@ -1988,8 +1989,47 @@ auto main(int argc, char* argv[]) -> int {
                     "payload to tighten refresh noise)");
         }
       }
-      const double bound = base_bound *
-                           (carried ? args.state_bootstrap_margin : args.bootstrap_norm_margin);
+      return base_bound *
+             (carried ? args.state_bootstrap_margin : args.bootstrap_norm_margin);
+    };
+    auto eval_bootstrap_synced = [&](const Ciphertext<DCRTPoly>& input) {
+      if (cudaDeviceSynchronize() != 0) {
+        throw std::runtime_error("CUDA synchronization failed before EvalBootstrap");
+      }
+      auto output = cc->EvalBootstrap(input);
+      if (cudaDeviceSynchronize() != 0) {
+        throw std::runtime_error("CUDA synchronization failed after EvalBootstrap");
+      }
+      return output;
+    };
+    auto maybe_bootstrap = [&](Ciphertext<DCRTPoly>& ciphertext, int requirement,
+                               const std::string& what, int& counter) {
+      if (!bootstrap_available) {
+        return;
+      }
+      const int level = static_cast<int>(ciphertext->GetLevel());
+      const bool carried = is_carried_checkpoint(what);
+      // Persistent normalized state is stored at calibration scale, so a
+      // standard bootstrap is the fast path for short chains. Deep chains
+      // can opt back into Meta-BTS to reduce accumulated refresh error.
+      const bool normalized_state = normalized_state_checkpoint(what);
+      const bool use_meta_bts = bootstrap_uses_meta(what);
+      const int policy_headroom = bootstrap_policy_headroom(what);
+      if (!bootstrap_needed(ciphertext, requirement, what)) {
+        return;
+      }
+      debug_value_stats(ciphertext, "pre_bootstrap." + what);
+      // FIDESlib EvalBootstrap needs noiseScaleDeg-1 inputs with |m| <~ 1:
+      // deg-2 refresh error grows polynomially with magnitude (all-NaN at the
+      // measured |m|~24 y checkpoint). Normalize by the per-checkpoint bound,
+      // force rescale to deg 1, refresh, then undo the normalization. The
+      // undo-multiply scales the refresh noise floor by the bound, so carried
+      // lineages (state, FIFO) use the tighter state margin to inject less
+      // noise per token; transient activations keep the looser margin.
+      if (carried) {
+        ++state_bootstraps;
+      }
+      const double bound = bootstrap_bound_for(what);
       const auto bootstrap_start = now();
       std::vector<double> debug_normalized_bootstrap_input;
       time_phase("bootstrap", [&]() {
@@ -2124,6 +2164,92 @@ auto main(int argc, char* argv[]) -> int {
       });
       log_phase("auto bootstrap " + what + " level_before=" + std::to_string(level) +
                 " level_after=" + std::to_string(ciphertext->GetLevel()));
+    };
+
+    auto maybe_bootstrap_pair = [&](Ciphertext<DCRTPoly>& first,
+                                    Ciphertext<DCRTPoly>& second,
+                                    int requirement,
+                                    const std::string& first_name,
+                                    const std::string& second_name,
+                                    int& counter) {
+      const bool pairable =
+          args.complex_state_pairing &&
+          bootstrap_needed(first, requirement, first_name) &&
+          bootstrap_needed(second, requirement, second_name) &&
+          !bootstrap_uses_meta(first_name) &&
+          !bootstrap_uses_meta(second_name) &&
+          is_carried_checkpoint(first_name) &&
+          is_carried_checkpoint(second_name) &&
+          !args.debug_decrypt && !args.debug_refresh_probes &&
+          !args.debug_normalized_state_bootstrap_range;
+      if (!pairable) {
+        maybe_bootstrap(first, requirement, first_name, counter);
+        maybe_bootstrap(second, requirement, second_name, counter);
+        return;
+      }
+
+      const int first_level = static_cast<int>(first->GetLevel());
+      const int second_level = static_cast<int>(second->GetLevel());
+      const double first_bound = bootstrap_bound_for(first_name);
+      const double second_bound = bootstrap_bound_for(second_name);
+      const int policy_headroom = bootstrap_policy_headroom(first_name);
+      const auto bootstrap_start = now();
+      time_phase("bootstrap", [&]() {
+        cc->EvalMultInPlace(first, 1.0 / first_bound);
+        auto input_imaginary = imaginary_constant_plain(
+            1.0 / second_bound, static_cast<uint32_t>(second->GetLevel()));
+        cc->EvalMultInPlace(second, input_imaginary);
+        ct_pt_muls += 2;
+        while (first->GetNoiseScaleDeg() > 1) {
+          cc->RescaleInPlace(first);
+        }
+        while (second->GetNoiseScaleDeg() > 1) {
+          cc->RescaleInPlace(second);
+        }
+
+        auto packed = add_aligned(first, second);
+        auto refreshed = eval_bootstrap_synced(packed);
+        ++bootstraps;
+        auto conjugated = cc->EvalConjugate(refreshed);
+
+        ++adds;
+        first = cc->EvalAdd(refreshed, conjugated);
+        cc->EvalMultInPlace(first, 0.5 * first_bound);
+
+        ++adds;
+        second = cc->EvalSub(refreshed, conjugated);
+        auto output_imaginary = imaginary_constant_plain(
+            -0.5 * second_bound,
+            static_cast<uint32_t>(second->GetLevel()));
+        cc->EvalMultInPlace(second, output_imaginary);
+        ct_pt_muls += 2;
+      });
+
+      state_bootstraps += 2;
+      ++paired_state_bootstraps;
+      counter += 2;
+      const double event_seconds = seconds_since(bootstrap_start);
+      bootstrap_eval_seconds += event_seconds;
+      bootstrap_events.push_back(BootstrapEvent{
+          .checkpoint = first_name + "+" + second_name,
+          .level_before = std::max(first_level, second_level),
+          .level_after = static_cast<int>(first->GetLevel()),
+          .requirement = requirement,
+          .policy_headroom = policy_headroom,
+          .physical_bootstraps = 1,
+          .logical_ciphertexts = 2,
+          .carried = true,
+          .meta_bts = false,
+          .complex_pair = true,
+          .bound = first_bound,
+          .secondary_bound = second_bound,
+          .seconds = event_seconds,
+      });
+      log_phase("complex-paired state bootstrap " + first_name + "+" +
+                second_name + " levels_before=" +
+                std::to_string(first_level) + "/" +
+                std::to_string(second_level) + " level_after=" +
+                std::to_string(first->GetLevel()));
     };
 
     // Newton inverse-sqrt refinement: y <- 1.5*y + (-0.5*v*y)*(y*y). Each
@@ -3396,18 +3522,68 @@ auto main(int argc, char* argv[]) -> int {
           ckks_levels[tag + "bc_expand"] = static_cast<int>(b_expanded->GetLevel());
           debug_value_stats(b_expanded, tag + "bc_expand");
         }
-        Ciphertext<DCRTPoly> y_stream;
-        bool has_y_stream = false;
-        for (int group = 0; group < group_count; ++group) {
-          const auto state_slot =
-              static_cast<std::size_t>(stream * group_count + group);
-          const std::string state_name =
-              "state" + std::to_string(stream * group_count + group);
+
+        const auto state_slot_for = [&](int group) {
+          return static_cast<std::size_t>(stream * group_count + group);
+        };
+        const auto state_checkpoint = [&](std::string_view prefix, int group) {
+          return tag + std::string(prefix) +
+                 std::to_string(stream * group_count + group);
+        };
+        const auto recurrence_scale_for = [&](int group) {
+          return args.normalized_recurrent_state
+                     ? plan.normalized_state.group_scales[
+                           static_cast<std::size_t>(group)]
+                     : 1.0;
+        };
+        const std::vector<double>* state_reference =
+            debug_recurrence_target
+                ? &recurrence_payload->tensors.at(
+                      "autoregressive_poly_state_output")
+                : nullptr;
+        const std::vector<double>* decay_reference =
+            debug_recurrence_target
+                ? &recurrence_payload->tensors.at(
+                      "autoregressive_poly_decay_output")
+                : nullptr;
+        const std::vector<double>* update_reference =
+            debug_recurrence_target
+                ? &recurrence_payload->tensors.at(
+                      "autoregressive_poly_state_update")
+                : nullptr;
+        const std::vector<double>* decayed_reference =
+            debug_recurrence_target
+                ? &recurrence_payload->tensors.at(
+                      "autoregressive_poly_state_decayed")
+                : nullptr;
+
+        // Pair scheduling stays outside the group algebra so both states are
+        // updated before they share a post-update bootstrap.
+        auto refresh_state_batch = [&](int group_begin, int group_end,
+                                       int requirement,
+                                       std::string_view checkpoint_prefix) {
+          const auto first_slot = state_slot_for(group_begin);
+          const auto first_name =
+              state_checkpoint(checkpoint_prefix, group_begin);
+          if (group_end - group_begin == 2) {
+            maybe_bootstrap_pair(
+                runtime.state_cts[first_slot], runtime.state_cts[first_slot + 1],
+                requirement, first_name,
+                state_checkpoint(checkpoint_prefix, group_begin + 1),
+                layer_bootstraps);
+          } else {
+            maybe_bootstrap(runtime.state_cts[first_slot], requirement,
+                            first_name, layer_bootstraps);
+          }
+        };
+
+        auto update_state_group = [&](int group) {
+          const auto state_slot = state_slot_for(group);
           auto x_group = time_phase("x_expand", [&]() {
             return expand_x(conv_stream, group, plan);
           });
-          auto dt_group =
-              time_phase("dt_expand", [&]() { return place_heads(dt_stream, group); });
+          auto dt_group = time_phase(
+              "dt_expand", [&]() { return place_heads(dt_stream, group); });
           const bool decay_group_active = std::any_of(
               plan.exp_head_mask.begin() + group * group_heads,
               plan.exp_head_mask.begin() + (group + 1) * group_heads,
@@ -3418,37 +3594,15 @@ auto main(int argc, char* argv[]) -> int {
               return place_heads(decay_stream, group, &plan.exp_head_mask);
             });
           }
-          const double recurrence_scale =
-              args.normalized_recurrent_state
-                  ? plan.normalized_state.group_scales[
-                        static_cast<std::size_t>(group)]
-                  : 1.0;
-          if (debug_recurrence_target && stream == 0 && runtime.has_state) {
-            const auto& state_reference = recurrence_payload->tensors.at(
-                "autoregressive_poly_state_output");
-            debug_recurrence.incoming[static_cast<std::size_t>(group)] =
-                recurrence_state_error(
-                    runtime.state_cts[state_slot], state_reference,
-                    token_index - 1, group, recurrence_scale, "incoming");
-          }
-          if (runtime.has_state) {
-            maybe_bootstrap(runtime.state_cts[state_slot], plan.req_state_pre,
-                            tag + state_name, layer_bootstraps);
-          }
+          const double recurrence_scale = recurrence_scale_for(group);
           if (debug_recurrence_target && stream == 0) {
-            const auto& state_reference = recurrence_payload->tensors.at(
-                "autoregressive_poly_state_output");
             debug_recurrence.previous[static_cast<std::size_t>(group)] =
                 recurrence_state_error(
-                    runtime.state_cts[state_slot], state_reference,
+                    runtime.state_cts[state_slot], *state_reference,
                     token_index - 1, group, recurrence_scale, "previous");
             if (decay_group_active) {
               debug_recurrence.decay[static_cast<std::size_t>(group)] =
-                  recurrence_decay_error(
-                      decay_group,
-                      recurrence_payload->tensors.at(
-                          "autoregressive_poly_decay_output"),
-                      group);
+                  recurrence_decay_error(decay_group, *decay_reference, group);
             }
           }
           time_phase("state_update", [&]() {
@@ -3457,21 +3611,18 @@ auto main(int argc, char* argv[]) -> int {
             if (debug_recurrence_target && stream == 0) {
               debug_recurrence.update[static_cast<std::size_t>(group)] =
                   recurrence_state_error(
-                      update,
-                      recurrence_payload->tensors.at(
-                          "autoregressive_poly_state_update"),
+                      update, *update_reference,
                       token_index, group, recurrence_scale, "update");
             }
             if (!runtime.has_state) {
               runtime.state_cts[state_slot] = update;
             } else if (decay_group_active) {
-              auto decayed = mul_aligned(decay_group, runtime.state_cts[state_slot]);
+              auto decayed =
+                  mul_aligned(decay_group, runtime.state_cts[state_slot]);
               if (debug_recurrence_target && stream == 0) {
                 debug_recurrence.decayed[static_cast<std::size_t>(group)] =
                     recurrence_state_error(
-                        decayed,
-                        recurrence_payload->tensors.at(
-                            "autoregressive_poly_state_decayed"),
+                        decayed, *decayed_reference,
                         token_index, group, recurrence_scale, "decayed");
               }
               runtime.state_cts[state_slot] = add_aligned(decayed, update);
@@ -3481,64 +3632,94 @@ auto main(int argc, char* argv[]) -> int {
             if (debug_recurrence_target && stream == 0) {
               debug_recurrence.combined[static_cast<std::size_t>(group)] =
                   recurrence_state_error(
-                      runtime.state_cts[state_slot],
-                      recurrence_payload->tensors.at(
-                          "autoregressive_poly_state_output"),
+                      runtime.state_cts[state_slot], *state_reference,
                       token_index, group, recurrence_scale, "combined");
             }
           });
-          // The updated state feeds this token's readout and is the carried
-          // lineage for the next token. Refresh after the recurrent multiply
-          // so both consumers start from a usable level.
-          const bool periodic_state_refresh =
-              runtime.has_state && args.state_refresh_interval > 0 &&
-              token_index % args.state_refresh_interval == 0;
-          const int state_tail_requirement =
-              runtime.has_state &&
-                      (args.refresh_recurrent_state_post ||
-                       args.refresh_recurrent_state_post_layers.count(layer_index) > 0 ||
-                       periodic_state_refresh)
-                  ? args.multiplicative_depth
-                  : plan.req_state_tail;
-          maybe_bootstrap(runtime.state_cts[state_slot], state_tail_requirement,
-                          tag + "state_post" + std::to_string(stream * group_count + group),
-                          layer_bootstraps);
-          if (debug_recurrence_target && stream == 0) {
-            debug_recurrence.post_refresh[static_cast<std::size_t>(group)] =
-                recurrence_state_error(
-                    runtime.state_cts[state_slot],
-                    recurrence_payload->tensors.at(
-                        "autoregressive_poly_state_output"),
-                    token_index, group, recurrence_scale, "post_refresh");
-            debug_recurrence.recorded = true;
+        };
+
+        auto readout_state_group = [&](int group) {
+          auto readout = mul_aligned(
+              runtime.state_cts[state_slot_for(group)]->Clone(),
+              c_expanded->Clone());
+          for (int k = 0; k < int_log2(state_size); ++k) {
+            readout = add_aligned(
+                readout, rotate(readout, group_block << k));
           }
-          ckks_levels[tag + state_name] =
-              static_cast<int>(runtime.state_cts[state_slot]->GetLevel());
-          debug_value_stats(runtime.state_cts[state_slot], tag + state_name);
-          auto y_group = time_phase("readout", [&]() {
-            auto readout =
-                mul_aligned(runtime.state_cts[state_slot]->Clone(), c_expanded->Clone());
-            for (int k = 0; k < int_log2(state_size); ++k) {
-              readout = add_aligned(readout, rotate(readout, group_block << k));
+          const auto& readout_mask =
+              args.normalized_recurrent_state
+                  ? plan.normalized_state.readout_masks[
+                        static_cast<std::size_t>(group)]
+                  : group_mask;
+          const std::string readout_key =
+              args.normalized_recurrent_state
+                  ? plan.cache_prefix + "normalized_state_readout." +
+                        std::to_string(group)
+                  : "mask.group";
+          auto masked = mul_mask(readout, readout_key, readout_mask);
+          return rotate(masked, -group_block * group);
+        };
+
+        Ciphertext<DCRTPoly> y_stream;
+        bool has_y_stream = false;
+        const bool periodic_state_refresh =
+            runtime.has_state && args.state_refresh_interval > 0 &&
+            token_index % args.state_refresh_interval == 0;
+        const int state_tail_requirement =
+            runtime.has_state &&
+                    (args.refresh_recurrent_state_post ||
+                     args.refresh_recurrent_state_post_layers.count(layer_index) > 0 ||
+                     periodic_state_refresh)
+                ? args.multiplicative_depth
+                : plan.req_state_tail;
+        const int state_group_batch = args.complex_state_pairing ? 2 : 1;
+        for (int group_base = 0; group_base < group_count;
+             group_base += state_group_batch) {
+          const int group_end = std::min(group_count, group_base + state_group_batch);
+
+          if (runtime.has_state) {
+            for (int group = group_base; group < group_end; ++group) {
+              if (debug_recurrence_target && stream == 0) {
+                debug_recurrence.incoming[static_cast<std::size_t>(group)] =
+                    recurrence_state_error(
+                        runtime.state_cts[state_slot_for(group)],
+                        *state_reference, token_index - 1, group,
+                        recurrence_scale_for(group), "incoming");
+              }
             }
-            const auto& readout_mask =
-                args.normalized_recurrent_state
-                    ? plan.normalized_state.readout_masks[
-                          static_cast<std::size_t>(group)]
-                    : group_mask;
-            const std::string readout_key =
-                args.normalized_recurrent_state
-                    ? plan.cache_prefix + "normalized_state_readout." +
-                          std::to_string(group)
-                    : "mask.group";
-            auto masked = mul_mask(readout, readout_key, readout_mask);
-            return rotate(masked, -group_block * group);
-          });
-          if (!has_y_stream) {
-            y_stream = y_group;
-            has_y_stream = true;
-          } else {
-            y_stream = add_aligned(y_stream, y_group);
+            refresh_state_batch(group_base, group_end, plan.req_state_pre,
+                                "state");
+          }
+
+          for (int group = group_base; group < group_end; ++group) {
+            update_state_group(group);
+          }
+
+          refresh_state_batch(group_base, group_end, state_tail_requirement,
+                              "state_post");
+
+          for (int group = group_base; group < group_end; ++group) {
+            const auto state_slot = state_slot_for(group);
+            if (debug_recurrence_target && stream == 0) {
+              debug_recurrence.post_refresh[static_cast<std::size_t>(group)] =
+                  recurrence_state_error(
+                      runtime.state_cts[state_slot], *state_reference,
+                      token_index, group, recurrence_scale_for(group),
+                      "post_refresh");
+              debug_recurrence.recorded = true;
+            }
+            const auto state_name = state_checkpoint("state", group);
+            ckks_levels[state_name] =
+                static_cast<int>(runtime.state_cts[state_slot]->GetLevel());
+            debug_value_stats(runtime.state_cts[state_slot], state_name);
+            auto y_group = time_phase(
+                "readout", [&]() { return readout_state_group(group); });
+            if (!has_y_stream) {
+              y_stream = y_group;
+              has_y_stream = true;
+            } else {
+              y_stream = add_aligned(y_stream, y_group);
+            }
           }
         }
         if (stream != 0) {
@@ -3742,11 +3923,23 @@ auto main(int argc, char* argv[]) -> int {
           active_state_group_bounds = plan.state_group_abs_max;
           active_fifo_bound = plan.fifo_abs_max;
           active_checkpoint_bounds = plan.checkpoint_abs_max;
+          active_layer_index = static_cast<int>(layer);
           const std::string tag = layer_key(token, static_cast<int>(layer)) + ".scheduled.";
-          for (std::size_t state = 0; state < runtime.state_cts.size(); ++state) {
-            maybe_bootstrap(runtime.state_cts[state], args.multiplicative_depth,
-                            tag + "state" + std::to_string(state),
-                            token_bootstraps_total);
+          for (std::size_t state = 0; state < runtime.state_cts.size();) {
+            if (args.complex_state_pairing && state + 1 < runtime.state_cts.size()) {
+              maybe_bootstrap_pair(
+                  runtime.state_cts[state], runtime.state_cts[state + 1],
+                  args.multiplicative_depth,
+                  tag + "state" + std::to_string(state),
+                  tag + "state" + std::to_string(state + 1),
+                  token_bootstraps_total);
+              state += 2;
+            } else {
+              maybe_bootstrap(runtime.state_cts[state], args.multiplicative_depth,
+                              tag + "state" + std::to_string(state),
+                              token_bootstraps_total);
+              ++state;
+            }
           }
           for (std::size_t fifo = 0; fifo < runtime.conv_fifo.size(); ++fifo) {
             maybe_bootstrap(runtime.conv_fifo[fifo], args.multiplicative_depth,
@@ -4352,6 +4545,8 @@ auto main(int argc, char* argv[]) -> int {
     out << ",\"state_refresh_interval\":" << args.state_refresh_interval;
     out << ",\"normalized_recurrent_state\":"
         << (args.normalized_recurrent_state ? "true" : "false");
+    out << ",\"complex_state_pairing\":"
+        << (args.complex_state_pairing ? "true" : "false");
     out << ",\"normalized_state_meta_bts\":"
         << (args.normalized_state_meta_bts ? "true" : "false");
     out << ",\"normalized_state_group_scales\":[";
@@ -4507,6 +4702,10 @@ auto main(int argc, char* argv[]) -> int {
     out << "},";
     out << "\"executed_bootstrap_count\":" << bootstraps << ",";
     out << "\"state_bootstrap_count\":" << state_bootstraps << ",";
+    out << "\"paired_state_bootstrap_count\":"
+        << paired_state_bootstraps << ",";
+    out << "\"complex_constant_plaintext_count\":"
+        << imaginary_constant_cache.size() << ",";
     out << "\"debug_client_reencrypt_ciphertext_count\":"
         << debug_client_reencrypt_ciphertexts << ",";
     out << "\"meta_bts\":{";
@@ -4564,9 +4763,13 @@ auto main(int argc, char* argv[]) -> int {
       out << "\"requirement\":" << event.requirement << ",";
       out << "\"policy_headroom\":" << event.policy_headroom << ",";
       out << "\"physical_bootstraps\":" << event.physical_bootstraps << ",";
+      out << "\"logical_ciphertexts\":" << event.logical_ciphertexts << ",";
       out << "\"carried\":" << (event.carried ? "true" : "false") << ",";
       out << "\"meta_bts\":" << (event.meta_bts ? "true" : "false") << ",";
+      out << "\"complex_pair\":" << (event.complex_pair ? "true" : "false")
+          << ",";
       out << "\"bound\":" << event.bound << ",";
+      out << "\"secondary_bound\":" << event.secondary_bound << ",";
       out << "\"seconds\":" << event.seconds;
       out << "}";
     }

@@ -199,6 +199,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.state_refresh_interval = parse_int(arg, value);
     } else if (arg == "--normalized-recurrent-state") {
       config.normalized_recurrent_state = parse_bool_arg(arg, value);
+    } else if (arg == "--complex-state-pairing") {
+      config.complex_state_pairing = parse_bool_arg(arg, value);
     } else if (arg == "--normalized-state-meta-bts") {
       config.normalized_state_meta_bts = parse_bool_arg(arg, value);
     } else if (arg == "--bootstrap-level-budget-cts") {
