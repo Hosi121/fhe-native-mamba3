@@ -91,6 +91,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
     const char* value = argv[++i];
     if (arg == "--debug-decrypt") {
       config.debug_decrypt = parse_bool_arg(arg, value);
+    } else if (arg == "--debug-normalized-state-bootstrap-range") {
+      config.debug_normalized_state_bootstrap_range = parse_bool_arg(arg, value);
     } else if (arg == "--debug-refresh-probes") {
       config.debug_refresh_probes = parse_bool_arg(arg, value);
     } else if (arg == "--debug-layer-errors") {
@@ -229,6 +231,7 @@ auto parse_args(int argc, char* argv[]) -> Config {
   if (config.process_role == "server-eval" &&
       (config.debug_decrypt || config.debug_refresh_probes ||
        config.debug_layer_errors ||
+       config.debug_normalized_state_bootstrap_range ||
        !config.debug_client_reencrypt_before_token.empty())) {
     throw std::invalid_argument(
         "server-eval forbids every secret-key diagnostic option");

@@ -44,6 +44,7 @@ def test_dgx_mamba2_common_defaults_to_promoted_structural_path() -> None:
     assert args["--normalized-recurrent-state"] == "1"
     assert args["--normalized-state-meta-bts"] == "0"
     assert args["--meta-bts-residual-layers"] == ""
+    assert args["--debug-normalized-state-bootstrap-range"] == "0"
     assert args["--state-refresh-interval"] == "1"
     assert args["--pt-cache-gib"] == "5"
     assert args["--pt-cache-weight-level"] == "20"
@@ -54,8 +55,10 @@ def test_dgx_mamba2_common_preserves_environment_overrides() -> None:
         PT_CACHE_GIB="9",
         NORMALIZED_RECURRENT_STATE="0",
         META_BTS_RESIDUAL_LAYERS="21,22,23",
+        DEBUG_NORMALIZED_STATE_BOOTSTRAP_RANGE="1",
     )
 
     assert args["--pt-cache-gib"] == "9"
     assert args["--normalized-recurrent-state"] == "0"
     assert args["--meta-bts-residual-layers"] == "21,22,23"
+    assert args["--debug-normalized-state-bootstrap-range"] == "1"

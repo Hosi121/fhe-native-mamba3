@@ -1800,6 +1800,7 @@ auto main(int argc, char* argv[]) -> int {
     std::vector<double> active_state_group_bounds;
     double active_fifo_bound = -1.0;
     std::map<std::string, double> active_checkpoint_bounds;
+    std::map<std::string, double> debug_normalized_state_bootstrap_max;
     int active_layer_index = -1;
     bool carried_bound_fallback_warned = false;
     auto eval_bootstrap_synced = [&](const Ciphertext<DCRTPoly>& input) {
@@ -1913,7 +1914,9 @@ auto main(int argc, char* argv[]) -> int {
           cc->RescaleInPlace(ciphertext);
         }
         debug_value_stats(ciphertext, "norm_bootstrap_in." + what);
-        if (args.debug_decrypt) {
+        if (args.debug_decrypt ||
+            (normalized_state &&
+             args.debug_normalized_state_bootstrap_range)) {
           // Clip guard: the normalized input must stay within [-1, 1] or the
           // bound clipped a real value (bound < true max |m|). Cheap decrypt,
           // debug-only; logs a warning so a too-tight margin is caught in sim
@@ -1927,6 +1930,12 @@ auto main(int argc, char* argv[]) -> int {
             if (std::isfinite(value)) {
               clip_max = std::max(clip_max, std::abs(value));
             }
+          }
+          if (normalized_state &&
+              args.debug_normalized_state_bootstrap_range) {
+            debug_normalized_state_bootstrap_max[what] = clip_max;
+            log_phase("DEBUG normalized_state_bootstrap_range " + what +
+                      " normalized_max=" + std::to_string(clip_max));
           }
           if (clip_max > 1.0 + 1e-6) {
             log_phase("WARNING: bootstrap norm clip at " + what +
@@ -3922,6 +3931,8 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"meta_bts_residual_layers\":";
     write_int_set_json(out, args.meta_bts_residual_layers);
     out << ",";
+    out << "\"debug_normalized_state_bootstrap_range\":"
+        << (args.debug_normalized_state_bootstrap_range ? "true" : "false") << ",";
     std::vector<int> gated_init_degrees;
     std::vector<int> gated_newton_iterations;
     gated_init_degrees.reserve(layer_plans.size());
@@ -4127,6 +4138,9 @@ auto main(int argc, char* argv[]) -> int {
     out << ",";
     out << "\"applied_count\":" << meta_bts_applied;
     out << "},";
+    out << "\"debug_normalized_state_bootstrap_max\":";
+    write_double_map_json(out, debug_normalized_state_bootstrap_max);
+    out << ",";
     out << "\"bootstrap_events\":[";
     for (std::size_t index = 0; index < bootstrap_events.size(); ++index) {
       if (index != 0) {
@@ -4221,6 +4235,7 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"zero_intermediate_decrypts\":"
         << ((args.debug_decrypt || args.debug_refresh_probes ||
              args.debug_layer_errors ||
+             args.debug_normalized_state_bootstrap_range ||
              !args.debug_client_reencrypt_before_token.empty() ||
              args.autoregressive_client_loop)
                 ? "false"

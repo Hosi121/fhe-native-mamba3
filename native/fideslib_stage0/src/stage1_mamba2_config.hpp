@@ -170,6 +170,9 @@ struct Config {
   // (max |value|, non-finite slot count). Voids the zero-intermediate-decrypt
   // privacy claim; for NaN localization, never for reported runs.
   bool debug_decrypt = false;
+  // Debug-only: decrypt only normalized recurrent-state inputs immediately
+  // before bootstrap and record their maximum magnitude.
+  bool debug_normalized_state_bootstrap_range = false;
   // Repeat-bootstrap probes are much more invasive than value telemetry and
   // can perturb the GPU state being diagnosed. Keep them opt-in.
   bool debug_refresh_probes = false;

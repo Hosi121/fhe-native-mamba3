@@ -63,6 +63,11 @@ auto main() -> int {
   const auto explicit_false =
       parse({"stage1", "--input", "payload", "--debug-decrypt", "false"});
   require(!explicit_false.debug_decrypt, "false boolean was not parsed");
+  const auto state_range_debug = parse(
+      {"stage1", "--input", "payload",
+       "--debug-normalized-state-bootstrap-range", "true"});
+  require(state_range_debug.debug_normalized_state_bootstrap_range,
+          "normalized-state bootstrap range debug flag was not parsed");
   const auto true_bsgs = parse({"stage1", "--input", "payload", "--bsgs-replicas",
                                 "auto", "--replicated-true-bsgs", "true",
                                 "--interleaved-replicated-projection", "true",
@@ -126,6 +131,21 @@ auto main() -> int {
         "--output-json",
         "result.json",
         "--debug-decrypt",
+        "1",
+    });
+  });
+  require_invalid([] {
+    parse({
+        "stage1",
+        "--input",
+        "payload",
+        "--process-role",
+        "server-eval",
+        "--handoff-dir",
+        "handoff",
+        "--output-json",
+        "result.json",
+        "--debug-normalized-state-bootstrap-range",
         "1",
     });
   });
