@@ -134,9 +134,19 @@ Source: [Powerformer, ACL 2025](https://aclanthology.org/2025.acl-long.543/).
 Projections still take 25.2% of evaluation. Cachemir's interleaved replicated
 packing combines replication with BSGS for decode VMMs and couples it to a
 global bootstrap plan. Our true-BSGS path reduces rotations but does not expose
-backend-level double-hoisted key switching. The next native candidate remains
-a slot-exact interleaved layout, followed by a FIDESlib hoisting API or backend
-patch. No cost-only implementation should be promoted.
+backend-level double-hoisted key switching.
+
+The slot-exact interleaved-window candidate is now implemented and encrypted-
+parity gated. A guard input window lets the output projection use 20 active
+replicas in 1,536-slot windows instead of 10 replicas in 3,072-slot windows.
+On a clean one-layer/one-token pair this reduces projection time from 2.040 s
+to 1.693 s (17.0%) and total evaluation from 6.937 s to 6.622 s (4.5%). Total
+ct-pt products fall from 683 to 606, while rotations rise from 439 to 452.
+The tradeoff is 12 more loaded rotation keys (125 to 137), about 2.11 GiB more
+estimated key memory, and 0.72 GiB more measured peak RSS. Setup rises by
+1.74 s, so this layout is intended for multi-token sessions that amortize key
+setup. The remaining projection work is a FIDESlib hoisting API or backend
+patch, not another cost-only layout claim.
 
 Sources: [Cachemir](https://arxiv.org/abs/2602.11470), [improved double-hoisting
 BSGS](https://eprint.iacr.org/2025/429.pdf).
@@ -175,6 +185,23 @@ but correct extraction requires conjugation/automorphism evaluation that the
 current FIDESlib wrapper does not expose. This is a high-impact backend API
 task after the corrected six-token reference gate.
 
+Persistent calibration-normalized state is now available as an orthogonal
+improvement: each group stores `u = state / S`, with `1/S` folded into the
+existing update mask and `S` folded into the readout mask. A one-layer,
+two-token encrypted gate passes at per-token polynomial-circuit errors
+2.75e-4 and 2.97e-4 without state bootstrap. Normalization controls magnitude
+but does not remove recurrent CKKS error: a two-layer/four-token run without
+state refresh reaches 0.266 error at token 2 and cannot decrypt token 3.
+
+Refreshing normalized state every two tokens restores the two-layer/four-token
+gate. Because the stored bound is about one, normalized state now uses one
+ordinary bootstrap rather than Meta-BTS. Against the same interval-2 run this
+reduces physical bootstraps from 50 to 38, bootstrap time from 24.50 s to
+18.54 s, and evaluation from 55.21 s to 49.11 s (11.1%). Maximum error rises
+slightly from 0.0213 to 0.0228 and remains below the 0.05 gate. This is not yet
+a 24-layer long-generation certificate; it establishes the refresh policy to
+take into that run.
+
 ### dt/decay head expansion
 
 The current dt and decay expansions each perform 102 rotations and 24 ct-pt
@@ -203,11 +230,12 @@ Source: [Mamba-3 paper and released kernels](https://arxiv.org/abs/2603.15569),
 
 ## Recommended order
 
-1. Regenerate the long-horizon reference payload and resume multi-token state
-   packing/refresh work.
-2. Finish the slot-exact interleaved projection candidate and assess hoisting.
-3. Investigate a faster or more accurate bootstrap backend; local Meta-BTS
-   removal is numerically invalid.
+1. Run the normalized interval-2 refresh policy through the 24-layer
+   multi-token gate, then extend the token horizon.
+2. Promote interleaved projections for amortized multi-token runs and assess
+   backend hoisting.
+3. Investigate a faster or more accurate bootstrap backend; Meta-BTS removal
+   is valid only for calibration-normalized carried state, not gated RMSNorm.
 4. Build a global bootstrap-placement optimizer for residual/projection
    coordination, not for the now-refuted gated checkpoint removal.
 5. Add a slot simulator for shared dt/decay head expansion.
