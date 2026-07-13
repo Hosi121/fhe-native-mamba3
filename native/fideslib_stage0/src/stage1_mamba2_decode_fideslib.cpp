@@ -1801,6 +1801,7 @@ auto main(int argc, char* argv[]) -> int {
     double active_fifo_bound = -1.0;
     std::map<std::string, double> active_checkpoint_bounds;
     std::map<std::string, double> debug_normalized_state_bootstrap_max;
+    std::map<std::string, double> debug_normalized_state_bootstrap_delta_max;
     int active_layer_index = -1;
     bool carried_bound_fallback_warned = false;
     auto eval_bootstrap_synced = [&](const Ciphertext<DCRTPoly>& input) {
@@ -1907,6 +1908,7 @@ auto main(int argc, char* argv[]) -> int {
       const double bound = base_bound *
                            (carried ? args.state_bootstrap_margin : args.bootstrap_norm_margin);
       const auto bootstrap_start = now();
+      std::vector<double> debug_normalized_bootstrap_input;
       time_phase("bootstrap", [&]() {
         cc->EvalMultInPlace(ciphertext, 1.0 / bound);
         ++ct_pt_muls;
@@ -1926,7 +1928,8 @@ auto main(int argc, char* argv[]) -> int {
           cc->Decrypt(secret_key, clip_handle, &clip_plain);
           clip_plain->SetLength(static_cast<std::size_t>(batch_size));
           double clip_max = 0.0;
-          for (const double value : clip_plain->GetRealPackedValue()) {
+          const auto clip_values = clip_plain->GetRealPackedValue();
+          for (const double value : clip_values) {
             if (std::isfinite(value)) {
               clip_max = std::max(clip_max, std::abs(value));
             }
@@ -1934,6 +1937,7 @@ auto main(int argc, char* argv[]) -> int {
           if (normalized_state &&
               args.debug_normalized_state_bootstrap_range) {
             debug_normalized_state_bootstrap_max[what] = clip_max;
+            debug_normalized_bootstrap_input = clip_values;
             log_phase("DEBUG normalized_state_bootstrap_range " + what +
                       " normalized_max=" + std::to_string(clip_max));
           }
@@ -1998,6 +2002,28 @@ auto main(int argc, char* argv[]) -> int {
           ++ct_pt_muls;
         }
       });
+      if (!debug_normalized_bootstrap_input.empty()) {
+        Plaintext post_plain;
+        auto post_handle = ciphertext->Clone();
+        cc->Decrypt(secret_key, post_handle, &post_plain);
+        post_plain->SetLength(static_cast<std::size_t>(batch_size));
+        const auto post_values = post_plain->GetRealPackedValue();
+        double delta_max = 0.0;
+        const auto value_count = std::min(
+            debug_normalized_bootstrap_input.size(), post_values.size());
+        for (std::size_t index = 0; index < value_count; ++index) {
+          if (std::isfinite(debug_normalized_bootstrap_input[index]) &&
+              std::isfinite(post_values[index])) {
+            delta_max = std::max(
+                delta_max,
+                std::abs(post_values[index] -
+                         debug_normalized_bootstrap_input[index] * bound));
+          }
+        }
+        debug_normalized_state_bootstrap_delta_max[what] = delta_max;
+        log_phase("DEBUG normalized_state_bootstrap_delta " + what +
+                  " max_abs=" + std::to_string(delta_max));
+      }
       debug_value_stats(ciphertext, "post_bootstrap." + what);
       const double event_seconds = seconds_since(bootstrap_start);
       bootstrap_eval_seconds += event_seconds;
@@ -4140,6 +4166,9 @@ auto main(int argc, char* argv[]) -> int {
     out << "},";
     out << "\"debug_normalized_state_bootstrap_max\":";
     write_double_map_json(out, debug_normalized_state_bootstrap_max);
+    out << ",";
+    out << "\"debug_normalized_state_bootstrap_delta_max\":";
+    write_double_map_json(out, debug_normalized_state_bootstrap_delta_max);
     out << ",";
     out << "\"bootstrap_events\":[";
     for (std::size_t index = 0; index < bootstrap_events.size(); ++index) {
