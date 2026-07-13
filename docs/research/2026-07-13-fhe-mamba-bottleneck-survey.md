@@ -148,6 +148,27 @@ estimated key memory, and 0.72 GiB more measured peak RSS. Setup rises by
 setup. The remaining projection work is a FIDESlib hoisting API or backend
 patch, not another cost-only layout claim.
 
+That backend path is now implemented as an opt-in FIDESlib
+`LinearTransform`: baby rotations are hoisted and the plaintext products and
+reductions are fused before the giant rotations. On the B300, against the same
+24-layer/three-token autoregressive headclip payload and 65 GiB plaintext
+cache, fusing both projections reduces evaluation from 205.02 s to 131.70 s
+(35.8%) and projection time from 120.82 s to 53.43 s (55.8%). The measured
+token steps are 73.10, 29.20, and 29.40 s. All 144 projection calls use the
+fused path without fallback, and generated token IDs match the reference.
+This configuration is not promoted: its maximum polynomial-circuit error is
+0.05782, above the 0.05 gate, even though its exact-model error improves from
+0.26649 to 0.25408.
+
+Fusing only `out_proj` retains the scalar accumulation order on the
+recurrence-sensitive input projection. It passes the same gate at 0.04940
+polynomial-circuit error and 0.25693 exact-model error, with matching token
+IDs. Evaluation is 177.60 s (13.4% below the scalar baseline), and the two
+carried-state steps average 30.23 s. The accuracy margin is too small to make
+this the default from one randomized-key run, so both scopes remain explicit
+runtime options. Per-token phase and operation telemetry is emitted with the
+artifacts to keep cold first-token cost separate from warm decode cost.
+
 Sources: [Cachemir](https://arxiv.org/abs/2602.11470), [improved double-hoisting
 BSGS](https://eprint.iacr.org/2025/429.pdf).
 
@@ -209,6 +230,16 @@ bootstraps. Applying Meta-BTS to all normalized-state refreshes produced errors
 improved the failing second-token error by only 0.00148 while adding 74.15 s
 (19.8%) evaluation time. It is not a 24-layer accuracy fix, and single-BTS
 remains the runner default until the accumulated-error source is isolated.
+
+The newer B300 fused-projection path clears the interval-1 three-token gate
+when only `out_proj` is fused, but this does not make interval-2 refresh valid
+at full depth. With both projections fused and refresh interval 2, token 1
+reaches the autoregressive client with approximation noise high enough that
+CKKS decoding fails before the 0.05 numerical gate can run. The six state
+groups already occupy one full 32,768-slot ciphertext each, so they cannot be
+combined by ordinary slot packing. Reducing their refresh cost now requires a
+backend batch/concurrent-bootstrap primitive or real/imaginary packing with a
+conjugation API; simply skipping every other refresh is ruled out.
 
 ### Recurrent error attribution
 
