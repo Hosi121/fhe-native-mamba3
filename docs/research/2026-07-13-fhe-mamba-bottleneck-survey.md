@@ -64,6 +64,39 @@ planner over the existing level trace: replay candidate placements, preserve
 all live-out levels, then execute only candidates that reduce the measured
 latency model. This is safer than manually removing checkpoints.
 
+Native event telemetry now reconciles all 84 logical refresh events with the
+108 physical bootstraps and 53.56 s bootstrap timer on the 24-layer gate:
+
+```bash
+PYTHONPATH=fhemamba/src .venv/bin/python \
+  fhemamba/experiments/build_bootstrap_telemetry_report.py INPUT.json \
+  --output-json REPORT.json
+```
+
+| Checkpoint family | Events | Physical BTS | Seconds | Trigger gap |
+|---|---:|---:|---:|---:|
+| gated polynomial input | 24 | 48 | 24.26 | 9-13 levels |
+| projection | 23 | 23 | 11.24 | 7 levels |
+| residual | 23 | 23 | 11.23 | 12 levels |
+| dt | 9 | 9 | 4.38 | 2-11 levels |
+| first decay square | 4 | 4 | 1.95 | 1-4 levels |
+| final norm | 1 | 1 | 0.49 | 11 levels |
+
+The top three families account for 87.3% of bootstrap time. Their large
+trigger gaps rule out simply deleting local checkpoints. The low-gap dt and
+decay events are the first safe headroom sweep; residual/projection
+coordination and the gated Meta-BTS path require graph or circuit changes.
+
+That sweep found a useful one-token candidate. Reducing general auto headroom
+from 4 to 0 passes the 24-layer gate with error 0.03207 (tolerance 0.05), cuts
+physical bootstraps from 108 to 103, bootstrap time from 53.56 to 51.10 s, and
+evaluation from 167.92 to 163.94 s (2.4%). Five dt events disappear, but four
+low-gap decay events remain or move later in the decay chain, so the realized
+reduction is five rather than the nine suggested by independently deleting
+the baseline events. This is not yet the general default: it needs a passing
+multi-token accuracy gate, which the current 24-layer recurrent baseline does
+not yet provide.
+
 Source: [ReSBM, ASPLOS 2025](https://pacman.cs.tsinghua.edu.cn/~cwg/publication/10-1145-3669940-3707276/).
 
 ### Gated RMSNorm approximation gate

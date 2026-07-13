@@ -1232,6 +1232,19 @@ auto main(int argc, char* argv[]) -> int {
     int debug_client_reencrypt_ciphertexts = 0;
     double bootstrap_eval_seconds = 0.0;
     double debug_client_reencrypt_seconds = 0.0;
+    struct BootstrapEvent {
+      std::string checkpoint;
+      int level_before = 0;
+      int level_after = 0;
+      int requirement = 0;
+      int policy_headroom = 0;
+      int physical_bootstraps = 0;
+      bool carried = false;
+      bool meta_bts = false;
+      double bound = 0.0;
+      double seconds = 0.0;
+    };
+    std::vector<BootstrapEvent> bootstrap_events;
     std::map<std::string, double> phase_timings;
     std::map<std::string, OperationCounts> phase_operation_counts;
     std::map<std::string, int> ckks_levels;
@@ -1964,7 +1977,20 @@ auto main(int argc, char* argv[]) -> int {
         }
       });
       debug_value_stats(ciphertext, "post_bootstrap." + what);
-      bootstrap_eval_seconds += seconds_since(bootstrap_start);
+      const double event_seconds = seconds_since(bootstrap_start);
+      bootstrap_eval_seconds += event_seconds;
+      bootstrap_events.push_back(BootstrapEvent{
+          .checkpoint = what,
+          .level_before = level,
+          .level_after = static_cast<int>(ciphertext->GetLevel()),
+          .requirement = requirement,
+          .policy_headroom = policy_headroom,
+          .physical_bootstraps = use_meta_bts ? 2 : 1,
+          .carried = carried,
+          .meta_bts = use_meta_bts,
+          .bound = bound,
+          .seconds = event_seconds,
+      });
       log_phase("auto bootstrap " + what + " level_before=" + std::to_string(level) +
                 " level_after=" + std::to_string(ciphertext->GetLevel()));
     };
@@ -3939,6 +3965,26 @@ auto main(int argc, char* argv[]) -> int {
         << json_escape(args.meta_bts_residual_align_mode) << "\",";
     out << "\"applied_count\":" << meta_bts_applied;
     out << "},";
+    out << "\"bootstrap_events\":[";
+    for (std::size_t index = 0; index < bootstrap_events.size(); ++index) {
+      if (index != 0) {
+        out << ",";
+      }
+      const auto& event = bootstrap_events[index];
+      out << "{";
+      out << "\"checkpoint\":\"" << json_escape(event.checkpoint) << "\",";
+      out << "\"level_before\":" << event.level_before << ",";
+      out << "\"level_after\":" << event.level_after << ",";
+      out << "\"requirement\":" << event.requirement << ",";
+      out << "\"policy_headroom\":" << event.policy_headroom << ",";
+      out << "\"physical_bootstraps\":" << event.physical_bootstraps << ",";
+      out << "\"carried\":" << (event.carried ? "true" : "false") << ",";
+      out << "\"meta_bts\":" << (event.meta_bts ? "true" : "false") << ",";
+      out << "\"bound\":" << event.bound << ",";
+      out << "\"seconds\":" << event.seconds;
+      out << "}";
+    }
+    out << "],";
     out << "\"peak_rss_gib\":" << peak_rss_gib() << ",";
     out << "\"rss_gib\":" << rss_gib();
     out << "},";
