@@ -9,6 +9,7 @@ LAYERS="${LAYERS:-24}"
 TOKENS="${TOKENS:-1}"
 AUTOREGRESSIVE_CLIENT_LOOP="${AUTOREGRESSIVE_CLIENT_LOOP:-0}"
 NORMALIZED_STATE_META_BTS="${NORMALIZED_STATE_META_BTS:-0}"
+STATE_REFRESH_INTERVAL="${STATE_REFRESH_INTERVAL:-1}"
 INPUT_CHAIN="${INPUT_CHAIN:-${ROOT_DIR}/payloads/m2_chain_payload_sqnewton_wiki512_t2}"
 RESULTS_DIR="${RESULTS_DIR:-${ROOT_DIR}/results}"
 META_BTS_RESIDUAL_LAYERS="${META_BTS_RESIDUAL_LAYERS:-21,22,23}"
@@ -50,6 +51,7 @@ docker run --rm \
   --env TOKENS="${TOKENS}" \
   --env AUTOREGRESSIVE_CLIENT_LOOP="${AUTOREGRESSIVE_CLIENT_LOOP}" \
   --env NORMALIZED_STATE_META_BTS="${NORMALIZED_STATE_META_BTS}" \
+  --env STATE_REFRESH_INTERVAL="${STATE_REFRESH_INTERVAL}" \
   --env BINARY_SHA256="${binary_sha256}" \
   --env LD_LIBRARY_PATH="/workspace/install/fideslib-sm${FIDESLIB_SM}/lib:/workspace/install/fideslib/lib:/workspace/install/openfhe-fides/lib:/workspace/install/openfhe-fides/lib64" \
   "${IMAGE}" \
