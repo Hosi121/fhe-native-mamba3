@@ -3252,24 +3252,27 @@ auto main(int argc, char* argv[]) -> int {
       ckks_levels[tag + "dt"] = static_cast<int>(dt_ct->GetLevel());
       debug_value_stats(dt_ct, tag + "dt");
 
-      auto decay_ct = time_phase("decay_exp_poly", [&]() {
-        auto u = add_scalar(mul_mask(dt_ct, plan.cache_prefix + "a_vec", plan.a_vec),
-                            plan.b_exp);
-        auto value = eval_chebyshev(u, plan.exp_coeffs);
-        for (int squaring = 0; squaring < plan.exp_squarings; ++squaring) {
-          const int remaining_squarings = plan.exp_squarings - squaring;
-          maybe_bootstrap(value, remaining_squarings + plan.req_decay,
-                          tag + "decay_sq" + std::to_string(squaring),
-                          layer_bootstraps);
-          ++ct_ct_muls;
-          value = cc->EvalMult(value, value);
-        }
-        return value;
-      });
-      // Checkpoint: decay feeds the per-group expand and the state multiply.
-      maybe_bootstrap(decay_ct, plan.req_decay, tag + "decay", layer_bootstraps);
-      ckks_levels[tag + "decay"] = static_cast<int>(decay_ct->GetLevel());
-      debug_value_stats(decay_ct, tag + "decay");
+      Ciphertext<DCRTPoly> decay_ct;
+      if (runtime.has_state) {
+        decay_ct = time_phase("decay_exp_poly", [&]() {
+          auto u = add_scalar(mul_mask(dt_ct, plan.cache_prefix + "a_vec", plan.a_vec),
+                              plan.b_exp);
+          auto value = eval_chebyshev(u, plan.exp_coeffs);
+          for (int squaring = 0; squaring < plan.exp_squarings; ++squaring) {
+            const int remaining_squarings = plan.exp_squarings - squaring;
+            maybe_bootstrap(value, remaining_squarings + plan.req_decay,
+                            tag + "decay_sq" + std::to_string(squaring),
+                            layer_bootstraps);
+            ++ct_ct_muls;
+            value = cc->EvalMult(value, value);
+          }
+          return value;
+        });
+        // Checkpoint: decay feeds the per-group expand and the state multiply.
+        maybe_bootstrap(decay_ct, plan.req_decay, tag + "decay", layer_bootstraps);
+        ckks_levels[tag + "decay"] = static_cast<int>(decay_ct->GetLevel());
+        debug_value_stats(decay_ct, tag + "decay");
+      }
 
       // SSM mid-section. Each stream owns a full-batch state layout, so the
       // packed multi-stream conv/dt/decay ciphertexts are shifted to stream
@@ -3285,8 +3288,11 @@ auto main(int argc, char* argv[]) -> int {
                         : rotate_composite(conv_packed, stream * stream_stride);
         const auto dt_stream =
             stream == 0 ? dt_ct : rotate_composite(dt_ct, stream * stream_stride);
-        const auto decay_stream =
-            stream == 0 ? decay_ct : rotate_composite(decay_ct, stream * stream_stride);
+        Ciphertext<DCRTPoly> decay_stream;
+        if (runtime.has_state) {
+          decay_stream =
+              stream == 0 ? decay_ct : rotate_composite(decay_ct, stream * stream_stride);
+        }
         auto bc_expanded = time_phase("bc_expand", [&]() {
           if (!args.replicated_state_blocks) {
             return std::make_pair(
@@ -3322,7 +3328,7 @@ auto main(int argc, char* argv[]) -> int {
               plan.exp_head_mask.begin() + (group + 1) * group_heads,
               [](double keep) { return keep != 0.0; });
           Ciphertext<DCRTPoly> decay_group;
-          if (decay_group_active) {
+          if (runtime.has_state && decay_group_active) {
             decay_group = time_phase("decay_expand", [&]() {
               return place_heads(decay_stream, group, &plan.exp_head_mask);
             });
