@@ -1,5 +1,6 @@
 #include "stage1_mamba2_payload.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -161,6 +162,10 @@ auto parse_poly_spec(const std::string& object_text) -> PolySpec {
   spec.iterations = static_cast<int>(json_number_or(object_text, "iterations", 0.0));
   spec.damping = json_number_or(object_text, "damping", 1.0);
   spec.guess = json_number_or(object_text, "guess", 0.0);
+  if (find_key_value_pos(object_text, "head_mask") != std::string::npos) {
+    spec.head_mask =
+        json_number_list(json_balanced(object_text, "head_mask", '[', ']'));
+  }
   return spec;
 }
 
@@ -217,6 +222,16 @@ auto read_m1_payload(const std::string& dir) -> M1Payload {
   for (const auto* name : {"conv_silu", "gate_silu", "dt_softplus", "decay_exp",
                            "rms_invsqrt", "gated_rms_invsqrt"}) {
     payload.polys[name] = parse_poly_spec(json_balanced(polys, name, '{', '}'));
+  }
+  const auto& decay_head_mask = payload.polys.at("decay_exp").head_mask;
+  if (!decay_head_mask.empty() &&
+      decay_head_mask.size() != static_cast<std::size_t>(payload.num_heads)) {
+    throw std::runtime_error("decay_exp head_mask must contain one value per head");
+  }
+  if (std::any_of(decay_head_mask.begin(), decay_head_mask.end(), [](double value) {
+        return value != 0.0 && value != 1.0;
+      })) {
+    throw std::runtime_error("decay_exp head_mask values must be zero or one");
   }
 
   const auto tensors = json_balanced(meta, "tensors", '{', '}');

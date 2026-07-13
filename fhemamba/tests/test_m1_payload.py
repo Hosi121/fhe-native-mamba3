@@ -141,6 +141,8 @@ def test_chain_export(tmp_path, monkeypatch) -> None:
         assert meta["test_token_ids"] == chain["test_token_ids"]
         assert meta["polys"]["gated_rms_invsqrt"]["iterations"] == 3
         assert len(meta["polys"]["gated_rms_invsqrt"]["coeffs"]) == 16
+        assert len(meta["polys"]["decay_exp"]["head_mask"]) == 4
+        assert meta["polys"]["decay_exp"]["squarings"] <= 3
 
     poly_final_path = out / "chain_expected_poly_final.bin"
     exported_poly_final = np.fromfile(poly_final_path, dtype="<f4").copy()

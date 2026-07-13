@@ -301,6 +301,7 @@ struct LayerPlan {
   std::vector<double> gate_coeffs;
   std::vector<double> dt_coeffs;
   std::vector<double> exp_coeffs;
+  std::vector<double> exp_head_mask;
   std::vector<double> gated_coeffs;
   std::vector<double> in_w_folded;
   std::vector<double> out_w_folded;
@@ -2201,6 +2202,10 @@ auto main(int argc, char* argv[]) -> int {
       }
       plan.dt_coeffs = p_dt.coeffs;
       plan.exp_coeffs = p_exp.coeffs;
+      plan.exp_head_mask = p_exp.head_mask;
+      if (plan.exp_head_mask.empty()) {
+        plan.exp_head_mask.assign(static_cast<std::size_t>(heads), 1.0);
+      }
       plan.rms_coeffs = p_rms.coeffs;
       for (double& coefficient : plan.rms_coeffs) {
         coefficient *= p_rms.damping / std::sqrt(static_cast<double>(d_model));
@@ -2286,7 +2291,8 @@ auto main(int argc, char* argv[]) -> int {
           plan.dt_const[base + static_cast<std::size_t>(dt0 + head)] =
               a_dt * dt_bias[static_cast<std::size_t>(head)] + b_dt;
           plan.a_vec[base + static_cast<std::size_t>(dt0 + head)] =
-              a_exp * (-std::exp(a_log[static_cast<std::size_t>(head)]));
+              plan.exp_head_mask[static_cast<std::size_t>(head)] * a_exp *
+              (-std::exp(a_log[static_cast<std::size_t>(head)]));
           for (int position = 0; position < head_dim; ++position) {
             plan.d_vec[base + static_cast<std::size_t>(head * head_dim + position)] =
                 d_skip[static_cast<std::size_t>(head)];
@@ -2908,11 +2914,17 @@ auto main(int argc, char* argv[]) -> int {
 
     // Head value of group g at proj slot dt0 + group_heads*g + h_local ->
     // all slots n*group_block + h_local*head_dim + p.
-    auto place_heads = [&](const Ciphertext<DCRTPoly>& source, int group) {
+    auto place_heads = [&](const Ciphertext<DCRTPoly>& source, int group,
+                           const std::vector<double>* head_mask = nullptr) {
       auto shifted = rotate(source, dt0 + group_heads * group);
       Ciphertext<DCRTPoly> accumulator;
       bool has_accumulator = false;
       for (int h_local = 0; h_local < group_heads; ++h_local) {
+        const int head = group_heads * group + h_local;
+        if (head_mask != nullptr &&
+            head_mask->at(static_cast<std::size_t>(head)) == 0.0) {
+          continue;
+        }
         auto term = mul_mask(shifted, "mask.unit." + std::to_string(h_local),
                              unit_mask(h_local));
         term = rotate(term, -(head_dim - 1) * h_local);
@@ -2923,6 +2935,9 @@ auto main(int argc, char* argv[]) -> int {
           ++adds;
           accumulator = cc->EvalAdd(accumulator, term);
         }
+      }
+      if (!has_accumulator) {
+        throw std::logic_error("place_heads called for an inactive packed group");
       }
       accumulator = doubling_fill(accumulator, 1, int_log2(head_dim));
       return doubling_fill(accumulator, group_block, int_log2(state_size));
@@ -3242,10 +3257,6 @@ auto main(int argc, char* argv[]) -> int {
                             plan.b_exp);
         auto value = eval_chebyshev(u, plan.exp_coeffs);
         for (int squaring = 0; squaring < plan.exp_squarings; ++squaring) {
-          // Some layers need 12-15 range-reduction squarings because a few
-          // heads have very negative A*dt. Do not wait until the final decay
-          // ciphertext is at level ~40: refresh the bounded [0, 1] partial
-          // exponential while it can still be bootstrapped reliably.
           const int remaining_squarings = plan.exp_squarings - squaring;
           maybe_bootstrap(value, remaining_squarings + plan.req_decay,
                           tag + "decay_sq" + std::to_string(squaring),
@@ -3306,8 +3317,16 @@ auto main(int argc, char* argv[]) -> int {
           });
           auto dt_group =
               time_phase("dt_expand", [&]() { return place_heads(dt_stream, group); });
-          auto decay_group =
-              time_phase("decay_expand", [&]() { return place_heads(decay_stream, group); });
+          const bool decay_group_active = std::any_of(
+              plan.exp_head_mask.begin() + group * group_heads,
+              plan.exp_head_mask.begin() + (group + 1) * group_heads,
+              [](double keep) { return keep != 0.0; });
+          Ciphertext<DCRTPoly> decay_group;
+          if (decay_group_active) {
+            decay_group = time_phase("decay_expand", [&]() {
+              return place_heads(decay_stream, group, &plan.exp_head_mask);
+            });
+          }
           const double recurrence_scale =
               args.normalized_recurrent_state
                   ? plan.normalized_state.group_scales[
@@ -3332,12 +3351,14 @@ auto main(int argc, char* argv[]) -> int {
                 recurrence_state_error(
                     runtime.state_cts[state_slot], state_reference,
                     token_index - 1, group, recurrence_scale, "previous");
-            debug_recurrence.decay[static_cast<std::size_t>(group)] =
-                recurrence_decay_error(
-                    decay_group,
-                    recurrence_payload->tensors.at(
-                        "autoregressive_poly_decay_output"),
-                    group);
+            if (decay_group_active) {
+              debug_recurrence.decay[static_cast<std::size_t>(group)] =
+                  recurrence_decay_error(
+                      decay_group,
+                      recurrence_payload->tensors.at(
+                          "autoregressive_poly_decay_output"),
+                      group);
+            }
           }
           time_phase("state_update", [&]() {
             auto dtx = mul_aligned(x_group, dt_group);
@@ -3352,7 +3373,7 @@ auto main(int argc, char* argv[]) -> int {
             }
             if (!runtime.has_state) {
               runtime.state_cts[state_slot] = update;
-            } else {
+            } else if (decay_group_active) {
               auto decayed = mul_aligned(decay_group, runtime.state_cts[state_slot]);
               if (debug_recurrence_target && stream == 0) {
                 debug_recurrence.decayed[static_cast<std::size_t>(group)] =
@@ -3363,6 +3384,8 @@ auto main(int argc, char* argv[]) -> int {
                         token_index, group, recurrence_scale, "decayed");
               }
               runtime.state_cts[state_slot] = add_aligned(decayed, update);
+            } else {
+              runtime.state_cts[state_slot] = update;
             }
             if (debug_recurrence_target && stream == 0) {
               debug_recurrence.combined[static_cast<std::size_t>(group)] =
@@ -4149,17 +4172,28 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"debug_recurrence_layer\":" << args.debug_recurrence_layer << ",";
     std::vector<int> gated_init_degrees;
     std::vector<int> gated_newton_iterations;
+    std::vector<int> decay_squarings;
+    std::vector<int> decay_heads_clipped;
     gated_init_degrees.reserve(layer_plans.size());
     gated_newton_iterations.reserve(layer_plans.size());
+    decay_squarings.reserve(layer_plans.size());
+    decay_heads_clipped.reserve(layer_plans.size());
     for (const auto& plan : layer_plans) {
       gated_init_degrees.push_back(
           plan.gated_coeffs.empty() ? 0 : static_cast<int>(plan.gated_coeffs.size()) - 1);
       gated_newton_iterations.push_back(plan.gated_iterations);
+      decay_squarings.push_back(plan.exp_squarings);
+      decay_heads_clipped.push_back(static_cast<int>(std::count(
+          plan.exp_head_mask.begin(), plan.exp_head_mask.end(), 0.0)));
     }
     out << "\"gated_init_degrees\":";
     write_int_vector_json(out, gated_init_degrees);
     out << ",\"gated_newton_iterations\":";
     write_int_vector_json(out, gated_newton_iterations);
+    out << ",\"decay_squarings\":";
+    write_int_vector_json(out, decay_squarings);
+    out << ",\"decay_heads_clipped\":";
+    write_int_vector_json(out, decay_heads_clipped);
     out << ",";
     out << "\"final_norm_scale\":" << final_norm_scale << ",";
     out << "\"carried_bounds_source\":\""

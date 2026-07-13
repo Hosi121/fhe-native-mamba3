@@ -16,8 +16,11 @@ Verified, in order of the evidence chain:
 1. **Quality-certified polynomial surrogate** — every FHE-hostile op of
    mamba2-130m (SiLU, softplus, exp discretization, both RMSNorms) replaced by
    range-calibrated polynomials / Newton iterations: WikiText-2 test PPL
-   22.307 → 22.333 (**Δ+0.12%**, no finetuning), full 280-window set.
-   Includes compile-time decay head clipping (max squarings 14 → 3).
+   22.307 → 22.333 (**Δ+0.12%**, no finetuning), full 280-window set,
+   including compile-time decay head clipping (max squarings 14 → 3). The
+   certificate existed before the head mask was wired into the native payload
+   path; encrypted artifacts predating that wiring still use the unmasked
+   0-14-squaring circuit.
 2. **Verified CKKS lowering** — the decode circuit (op schedule + level
    ledger) matches the reference to 3e-5 on the real checkpoint.
 3. **Real encrypted execution on GPU (FIDESlib, Grace-Blackwell)** —

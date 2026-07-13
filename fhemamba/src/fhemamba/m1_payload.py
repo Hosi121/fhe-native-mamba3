@@ -24,6 +24,7 @@ from fhemamba.ops import (
     SITE_NAMES,
     ChebPoly,
     Exact,
+    HeadMaskedDecay,
     NewtonInvSqrt,
     PolyInitNewton,
     PolyOps,
@@ -45,6 +46,7 @@ __all__ = [
 from torch.nn import functional as F  # noqa: N812
 
 FROZEN_DEGREES = {"conv_silu": 96, "gate_silu": 64, "dt_softplus": 64, "decay_exp": 24}
+DECAY_HEAD_CLIP = 32.0
 RMS_NEWTON = {"init_degree": 47, "iterations": 4, "lo_frac": 0.1, "hi_mul": 2.0}
 GATED_NEWTON = {
     "init_degree": 31,
@@ -351,7 +353,10 @@ def _poly_from_export_spec(spec: dict):
     if kind == "cheb-squared":
         return SquaredPoly(base)
     if kind == "cheb-resquared":
-        return SquaredExpPoly(base, int(spec["squarings"]))
+        operation = SquaredExpPoly(base, int(spec["squarings"]))
+        if "head_mask" in spec:
+            return HeadMaskedDecay(operation, tuple(float(value) for value in spec["head_mask"]))
+        return operation
     if kind == "const-newton":
         guess = float(spec["guess"])
         if guess <= 0.0:
@@ -706,14 +711,26 @@ def export_m1_payload(
         "lo": p.lo,
         "hi": p.hi,
     }
-    lo, _ = rng("decay_exp")
-    sq = fit_squared_exp(lo, FROZEN_DEGREES["decay_exp"])
+    # A is plaintext and scalar per head. Heads whose worst calibrated decay
+    # is below exp(-32) can be replaced by literal zero, avoiding a few extreme
+    # A values that otherwise force 12-15 noise-amplifying squarings.
+    _, dt_input_hi = calibration_ranges[(layer_index, "dt_softplus")]
+    dt_max = float(F.softplus(torch.tensor(dt_input_hi)))
+    reaches = (-torch.exp(m.A_log.detach().float()) * dt_max).tolist()
+    decay_head_mask = tuple(0.0 if reach < -DECAY_HEAD_CLIP else 1.0 for reach in reaches)
+    kept_reaches = [
+        reach for reach, keep in zip(reaches, decay_head_mask, strict=True) if keep > 0.0
+    ]
+    clipped_lo = min(kept_reaches) if kept_reaches else -1.0
+    sq = fit_squared_exp(min(clipped_lo * 1.3, -1e-6), FROZEN_DEGREES["decay_exp"])
     polys["decay_exp"] = {
         "kind": "cheb-resquared",
         "coeffs": list(sq.base.coeffs),
         "lo": sq.base.lo,
         "hi": 0.0,
         "squarings": sq.squarings,
+        "head_mask": list(decay_head_mask),
+        "head_clip_threshold": DECAY_HEAD_CLIP,
     }
     lo, hi = calibration_ranges[(layer_index, "rms_invsqrt")]
     base = fit_chebyshev(

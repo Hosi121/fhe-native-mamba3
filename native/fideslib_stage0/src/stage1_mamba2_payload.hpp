@@ -16,6 +16,7 @@ struct PolySpec {
   int iterations = 0;
   double damping = 1.0;
   double guess = 0.0;
+  std::vector<double> head_mask;
 };
 
 
