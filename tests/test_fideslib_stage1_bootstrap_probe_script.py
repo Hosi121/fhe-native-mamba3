@@ -63,6 +63,31 @@ def test_fideslib_stage1_bootstrap_probe_wrapper_records_failure(tmp_path: Path)
     assert validate_benchmark_artifact(payload, require_commit=True).valid is True
 
 
+def test_complex_pair_failure_keeps_probe_identity(tmp_path: Path) -> None:
+    fake_binary = _write_fake_binary(tmp_path, returncode=2)
+    output_json = tmp_path / "wrapped.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_fideslib_stage1_bootstrap_probe.py",
+            "--binary",
+            str(fake_binary),
+            "--output-json",
+            str(output_json),
+            "--complex-pair",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["stage"] == "fideslib-gpu-stage1-complex-pair-bootstrap"
+    assert payload["config"]["input_mode"] == "complex-pair-bootstrap-probe"
+    assert payload["measurement_scope"]["complex_pair_extraction_probe"] is True
+
+
 def _write_fake_binary(tmp_path: Path, *, returncode: int) -> Path:
     path = tmp_path / "fake_fides_probe.py"
     path.write_text(

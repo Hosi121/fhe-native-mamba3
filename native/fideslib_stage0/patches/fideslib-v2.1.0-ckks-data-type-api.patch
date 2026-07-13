@@ -1,0 +1,40 @@
+--- a/api/Definitions.hpp
++++ b/api/Definitions.hpp
+@@ -67,6 +67,11 @@ enum SecretKeyDist {
+     SPARSE_ENCAPSULATED = 3,  
+ };
+ 
++enum CKKSDataType {
++    REAL = 0,
++    COMPLEX,
++};
++
+ /// @brief Enumeration of supported security levels.
+ enum SecurityLevel {
+     HEStd_128_classic,
+--- a/api/CCParams.hpp
++++ b/api/CCParams.hpp
+@@ -43,6 +43,7 @@ template <> class CCParams<CryptoContextCKKSRNS> {
+ 	void SetKeySwitchTechnique(KeySwitchTechnique tech);
+ 	void SetSecretKeyDist(SecretKeyDist dist);
+ 	void SetSecurityLevel(SecurityLevel level);
++	void SetCKKSDataType(CKKSDataType dataType);
+ 
+ 	// ---- Device Parameters ----
+ 
+--- a/api/CCParams.cpp
++++ b/api/CCParams.cpp
+@@ -88,6 +88,13 @@ void CCParams<CryptoContextCKKSRNS>::SetSecurityLevel(SecurityLevel level) {
+ 	params.SetSecurityLevel(sl_openfhe);
+ }
+ 
++void CCParams<CryptoContextCKKSRNS>::SetCKKSDataType(CKKSDataType dataType) {
++	auto& params = std::any_cast<lbcrypto::CCParams<lbcrypto::CryptoContextCKKSRNS>&>(cpu);
++	auto data_type_openfhe = static_cast<lbcrypto::CKKSDataType>(dataType);
++	assert((int)data_type_openfhe == (int)dataType);
++	params.SetCKKSDataType(data_type_openfhe);
++}
++
+ // ---- Getters ----
+ 
+ SecretKeyDist CCParams<CryptoContextCKKSRNS>::GetSecretKeyDist() const {

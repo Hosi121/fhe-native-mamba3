@@ -43,6 +43,7 @@ def _build_payload(
     native_output: Path,
     command: list[str],
 ) -> dict[str, Any]:
+    complex_pair = "--complex-pair" in command
     base = {
         "version": __version__,
         "repo_commit": current_git_commit(ROOT),
@@ -54,12 +55,20 @@ def _build_payload(
     if completed.returncode != 0 or not native_output.exists():
         return {
             **base,
-            "stage": "fideslib-gpu-stage1-bootstrap-latency",
+            "stage": (
+                "fideslib-gpu-stage1-complex-pair-bootstrap"
+                if complex_pair
+                else "fideslib-gpu-stage1-bootstrap-latency"
+            ),
             "backend": "fideslib-gpu",
             "available": False,
             "encrypted": True,
             "passed": False,
-            "config": {"input_mode": "bootstrap-probe"},
+            "config": {
+                "input_mode": (
+                    "complex-pair-bootstrap-probe" if complex_pair else "bootstrap-probe"
+                )
+            },
             "reason": completed.stderr.strip() or completed.stdout.strip() or "native probe failed",
             "measurements": {
                 "bootstrap_iterations": 0,
@@ -67,6 +76,7 @@ def _build_payload(
             },
             "measurement_scope": {
                 "bootstrap_latency_probe": True,
+                "complex_pair_extraction_probe": complex_pair,
                 "gpu_bootstrap": True,
                 "stage1_target_compatible": False,
                 "non_success_probe": True,

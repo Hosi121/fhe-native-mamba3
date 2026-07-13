@@ -59,6 +59,10 @@ apply_patch_once \
   "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-b300-keyswitch-stage-sync.patch"
 apply_patch_once \
   "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-linear-transform-api.patch"
+apply_patch_once \
+  "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-conjugate-api.patch"
+apply_patch_once \
+  "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-ckks-data-type-api.patch"
 
 cuda_major="$(nvcc --version | sed -n 's/.*release \([0-9][0-9]*\)\..*/\1/p' | tail -1)"
 if [[ -z "${cuda_major}" ]]; then

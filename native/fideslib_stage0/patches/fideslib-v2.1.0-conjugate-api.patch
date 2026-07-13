@@ -1,0 +1,32 @@
+--- a/api/CryptoContext.hpp
++++ b/api/CryptoContext.hpp
+@@ -160,6 +160,7 @@ template <> class CryptoContextImpl<DCRTPoly> {
+ 
+ 	Ciphertext<DCRTPoly> EvalRotate(const Ciphertext<DCRTPoly>& ciphertext, int32_t index);
+ 	void EvalRotateInPlace(Ciphertext<DCRTPoly>& ciphertext, int32_t index);
++	Ciphertext<DCRTPoly> EvalConjugate(const Ciphertext<DCRTPoly>& ciphertext);
+ 
+ 	std::shared_ptr<void> EvalFastRotationPrecompute(const Ciphertext<DCRTPoly>& ct);
+ 	Ciphertext<DCRTPoly> EvalFastRotation(const Ciphertext<DCRTPoly>& ct, int32_t index, uint32_t m, const std::shared_ptr<void>& precomp);
+--- a/api/CryptoContext.cpp
++++ b/api/CryptoContext.cpp
+@@ -1344,6 +1344,19 @@ void CryptoContextImpl<DCRTPoly>::EvalRotateInPlace(Ciphertext<DCRTPoly>& cipher
+ 	ct_gpu->rotate(index);
+ }
+ 
++Ciphertext<DCRTPoly> CryptoContextImpl<DCRTPoly>::EvalConjugate(const Ciphertext<DCRTPoly>& ciphertext) {
++	if (this->devices.empty()) {
++		OPENFHE_THROW("EvalConjugate is only implemented for the GPU path");
++	}
++
++	this->LoadCiphertext(const_cast<Ciphertext<DCRTPoly>&>(ciphertext));
++	Ciphertext<DCRTPoly> result = std::make_shared<CiphertextImpl<DCRTPoly>>(*ciphertext);
++	auto result_gpu = std::static_pointer_cast<FIDESlib::CKKS::Ciphertext>(this->GetDeviceCiphertext(result->gpu));
++	auto input_gpu = std::static_pointer_cast<FIDESlib::CKKS::Ciphertext>(this->GetDeviceCiphertext(ciphertext->gpu));
++	result_gpu->conjugate(*input_gpu);
++	return result;
++}
++
+ std::shared_ptr<void> CryptoContextImpl<DCRTPoly>::EvalFastRotationPrecompute(const Ciphertext<DCRTPoly>& ct) {
+ 
+ 	// Fall back to CPU.

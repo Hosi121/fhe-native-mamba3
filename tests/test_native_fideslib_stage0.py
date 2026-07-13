@@ -3,6 +3,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_b300_build_exposes_fideslib_conjugation() -> None:
+    patch = (
+        ROOT / "native" / "fideslib_stage0" / "patches" / "fideslib-v2.1.0-conjugate-api.patch"
+    ).read_text()
+    build_script = (ROOT / "scripts" / "build_b300_fideslib.sh").read_text()
+
+    assert "EvalConjugate" in patch
+    assert "result_gpu->conjugate(*input_gpu)" in patch
+    assert "fideslib-v2.1.0-conjugate-api.patch" in build_script
+
+
+def test_b300_build_exposes_ckks_complex_data_type() -> None:
+    patch = (
+        ROOT / "native" / "fideslib_stage0" / "patches" / "fideslib-v2.1.0-ckks-data-type-api.patch"
+    ).read_text()
+    build_script = (ROOT / "scripts" / "build_b300_fideslib.sh").read_text()
+    probe = (ROOT / "native" / "fideslib_stage0" / "src" / "stage1_bootstrap_probe.cpp").read_text()
+
+    assert "SetCKKSDataType" in patch
+    assert "params.SetCKKSDataType(data_type_openfhe)" in patch
+    assert "fideslib-v2.1.0-ckks-data-type-api.patch" in build_script
+    assert "SetCKKSDataType(config.complex_pair ? COMPLEX : REAL)" in probe
+
+
 def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     source = ROOT / "native" / "fideslib_stage0" / "src" / "stage0_static_mimo.cpp"
     stage1_bootstrap_source = (
@@ -118,10 +142,18 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
 
     stage1_bootstrap_source_text = stage1_bootstrap_source.read_text()
     assert "fideslib-gpu-stage1-bootstrap-latency" in stage1_bootstrap_source_text
-    assert '\\"input_mode\\":\\"bootstrap-probe\\"' in stage1_bootstrap_source_text
+    assert '\\"input_mode\\":\\"' in stage1_bootstrap_source_text
+    assert "bootstrap-probe" in stage1_bootstrap_source_text
     assert '\\"stage1_target_compatible\\"' in stage1_bootstrap_source_text
     assert '\\"ring_dimension\\"' in stage1_bootstrap_source_text
     assert '\\"batch_size\\"' in stage1_bootstrap_source_text
+    assert "--complex-pair" in stage1_bootstrap_source_text
+    assert "EvalConjugate(bootstrapped)" in stage1_bootstrap_source_text
+    assert '\\"pair_real_max_abs_error\\"' in stage1_bootstrap_source_text
+    assert '\\"pair_imag_max_abs_error\\"' in stage1_bootstrap_source_text
+    assert '\\"pair_bootstrap_real_max_abs_error\\"' in stage1_bootstrap_source_text
+    assert '\\"pair_bootstrap_imag_max_abs_error\\"' in stage1_bootstrap_source_text
+    assert '\\"pair_gpu_load_imag_max_abs_error\\"' in stage1_bootstrap_source_text
 
     stage1_rotation_source_text = stage1_rotation_source.read_text()
     assert "fideslib-gpu-stage1-state-major-rotation-probe" in stage1_rotation_source_text
@@ -196,6 +228,7 @@ def test_fideslib_stage0_native_kernel_is_repo_owned() -> None:
     assert "RING_DIM:-65536" in stage1_bootstrap_slurm_text
     assert "NUM_SLOTS:-32768" in stage1_bootstrap_slurm_text
     assert "export OUTPUT_JSON" in stage1_bootstrap_slurm_text
+    assert "COMPLEX_PAIR" in stage1_bootstrap_slurm_text
 
     stage1_rotation_slurm_text = stage1_rotation_slurm.read_text()
     assert "stage1_rotation_probe" in stage1_rotation_slurm_text

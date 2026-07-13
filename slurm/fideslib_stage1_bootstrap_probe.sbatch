@@ -41,6 +41,7 @@ ITERATIONS="${ITERATIONS:-3}"
 SECURITY="${SECURITY:-128-classic}"
 SECRET_KEY_DIST="${SECRET_KEY_DIST:-sparse-ternary}"
 SKIP_DECRYPT="${SKIP_DECRYPT:-1}"
+COMPLEX_PAIR="${COMPLEX_PAIR:-0}"
 
 export LD_LIBRARY_PATH="${FIDESLIB_PREFIX}/lib:${OPENFHE_PREFIX}/lib:${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
 
@@ -89,6 +90,9 @@ NATIVE_ARGS=(
 )
 case "${SKIP_DECRYPT}" in
   1|true|TRUE|yes|YES) NATIVE_ARGS+=(--skip-decrypt) ;;
+esac
+case "${COMPLEX_PAIR}" in
+  1|true|TRUE|yes|YES) NATIVE_ARGS+=(--complex-pair) ;;
 esac
 
 "${PYTHON}" scripts/run_fideslib_stage1_bootstrap_probe.py \
