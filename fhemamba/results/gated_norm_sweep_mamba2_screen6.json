@@ -1,0 +1,60 @@
+{
+  "version": "0.4.4",
+  "stage": "mamba2-gated-norm-sweep-report",
+  "backend": "torch-plaintext",
+  "encrypted": false,
+  "status": "passed",
+  "passed": true,
+  "parameters": {
+    "checkpoint": "checkpoints/mamba2-130m-hf",
+    "tokens_prefix": "fhemamba/results/tokens_mamba2-130m-hf",
+    "device": "cuda",
+    "window": 1024,
+    "max_windows": 6,
+    "cal_windows": 6,
+    "margin": 0.3,
+    "max_delta_ppl": 0.1
+  },
+  "measurements": {
+    "exact": {
+      "ppl": 24.312796323246506,
+      "nll_per_token": 3.191002809407075,
+      "tokens": 6138,
+      "windows": 6
+    },
+    "candidates": [
+      {
+        "degree": 31,
+        "iterations": 4,
+        "ppl": 24.322259763222608,
+        "nll_per_token": 3.1913919706770324,
+        "tokens": 6138,
+        "windows": 6,
+        "delta_ppl_vs_exact": 0.009463439976101995,
+        "out_of_range_rate": 0.0,
+        "quality_gate_passed": true
+      },
+      {
+        "degree": 31,
+        "iterations": 3,
+        "ppl": 24.387102539891554,
+        "nll_per_token": 3.1940544081184834,
+        "tokens": 6138,
+        "windows": 6,
+        "delta_ppl_vs_exact": 0.07430621664504855,
+        "out_of_range_rate": 0.0,
+        "quality_gate_passed": true
+      }
+    ]
+  },
+  "measurement_scope": {
+    "plaintext_ppl_screen": true,
+    "fideslib_encrypted_execution": false,
+    "all_polynomial_substitutions_enabled": false,
+    "closed_loop_recalibration": true,
+    "claim": "Fits and closed-loop recalibrates each gated RMSNorm candidate on cached WikiText-2 train tokens, then screens isolated approximation quality on test tokens; passing candidates still require full polynomial and encrypted gates.",
+    "artifact_level_report": true,
+    "full_model_correctness_claimed": false
+  },
+  "repo_commit": "working-tree"
+}

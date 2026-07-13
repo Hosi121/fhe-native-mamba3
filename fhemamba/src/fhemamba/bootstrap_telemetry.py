@@ -18,6 +18,19 @@ def bootstrap_checkpoint_family(checkpoint: str) -> str:
     return _STATE_SUFFIX.sub(r"\1", family)
 
 
+def bootstrap_parent_phase(family: str) -> str | None:
+    """Return the inclusive phase timer that contains this refresh family."""
+    if family.startswith("gated_"):
+        return "gated_norm"
+    if family.startswith("decay_sq"):
+        return "decay_exp_poly"
+    if family.startswith("rms_newton"):
+        return "block_norm"
+    if family.startswith("final_rms_newton"):
+        return "final_norm"
+    return None
+
+
 def build_bootstrap_telemetry_report(payload: dict[str, Any]) -> dict[str, Any]:
     """Summarize event cost and trigger margins from a native artifact."""
     parameters = payload.get("parameters")
@@ -114,6 +127,50 @@ def build_bootstrap_telemetry_report(payload: dict[str, Any]) -> dict[str, Any]:
     logical_count_matches = len(normalized_events) == recorded_logical_total
     physical_count_matches = physical_total == recorded_total
     seconds_match = abs(seconds_total - recorded_seconds) <= 1e-6 * max(1.0, recorded_seconds)
+    phase_timings = payload.get("phase_timings")
+    phase_accounting: dict[str, Any] | None = None
+    if isinstance(phase_timings, dict):
+        nested_by_phase: dict[str, float] = defaultdict(float)
+        for event in normalized_events:
+            parent = bootstrap_parent_phase(str(event["family"]))
+            if parent is not None:
+                nested_by_phase[parent] += float(event["seconds"])
+        adjustments = []
+        inclusive_total = 0.0
+        exclusive_total = 0.0
+        for phase, raw_seconds in phase_timings.items():
+            inclusive = float(raw_seconds)
+            nested = nested_by_phase.get(str(phase), 0.0)
+            exclusive = inclusive - nested
+            inclusive_total += inclusive
+            exclusive_total += exclusive
+            if nested > 0.0:
+                adjustments.append(
+                    {
+                        "phase": str(phase),
+                        "inclusive_seconds": inclusive,
+                        "nested_bootstrap_seconds": nested,
+                        "exclusive_seconds": exclusive,
+                    }
+                )
+        eval_seconds = (
+            float(timing["eval_seconds"])
+            if isinstance(timing, dict) and "eval_seconds" in timing
+            else exclusive_total
+        )
+        phase_accounting = {
+            "inclusive_seconds": inclusive_total,
+            "nested_bootstrap_seconds": sum(nested_by_phase.values()),
+            "exclusive_seconds": exclusive_total,
+            "recorded_eval_seconds": eval_seconds,
+            "unattributed_seconds": eval_seconds - exclusive_total,
+            "exclusive_reconciles_eval": abs(eval_seconds - exclusive_total)
+            <= 1e-3 * max(1.0, eval_seconds),
+            "adjustments": adjustments,
+        }
+    phase_reconciled = phase_accounting is None or bool(
+        phase_accounting["exclusive_reconciles_eval"]
+    )
     return {
         "multiplicative_depth": depth,
         "event_count": len(normalized_events),
@@ -126,15 +183,16 @@ def build_bootstrap_telemetry_report(payload: dict[str, Any]) -> dict[str, Any]:
         "recorded_seconds": recorded_seconds,
         "seconds_match": seconds_match,
         "telemetry_reconciled": (
-            logical_count_matches and physical_count_matches and seconds_match
+            logical_count_matches and physical_count_matches and seconds_match and phase_reconciled
         ),
+        "phase_accounting": phase_accounting,
         "families": ordered_families,
         "events": normalized_events,
         "measurement_scope": {
             "global_bootstrap_placement_optimized": False,
             "claim": (
-                "Profiles native bootstrap trigger margins and costs; it does not "
-                "claim that any checkpoint can yet be removed."
+                "Profiles native bootstrap trigger margins, costs, and nested phase "
+                "overlap; it does not claim that any checkpoint can yet be removed."
             ),
         },
     }

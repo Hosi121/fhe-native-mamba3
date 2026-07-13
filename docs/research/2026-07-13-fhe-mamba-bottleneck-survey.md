@@ -16,15 +16,22 @@ RMSNorm on the DGX Spark:
 - peak RSS: 54.21 GiB;
 - rotation keys: 123, estimated 21.62 GiB.
 
-The measured phase ranking is now:
+The original phase timers were inclusive: `gated_norm` contains its nested
+Meta-BTS calls and `decay_exp_poly` contains mid-squaring bootstraps. Adding
+those values to the separate bootstrap timer double-counts work. Event
+telemetry on the cache-5/headroom-0 gate reconciles exclusive phase time to
+163.90 s versus the 163.94 s evaluation timer. The corrected ranking is:
 
-| Phase | Seconds | Eval share |
+| Exclusive phase | Seconds | Eval share |
 |---|---:|---:|
-| bootstrap | 62.94 | 34.6% |
-| gated RMSNorm | 38.28 | 21.0% |
-| in/out projections | 45.94 | 25.2% |
-| dt softplus | 12.75 | 7.0% |
-| B/C expansion | 5.54 | 3.0% |
+| bootstrap | 51.10 | 31.2% |
+| in/out projections | 46.83 | 28.6% |
+| dt softplus | 11.34 | 6.9% |
+| conv SiLU | 7.42 | 4.5% |
+| block RMSNorm | 7.00 | 4.3% |
+| gate SiLU | 6.66 | 4.1% |
+| gated RMSNorm excluding BTS | 4.96 | 3.0% |
+| decay polynomial excluding BTS | 2.72 | 1.7% |
 
 B/C expansion is no longer a primary bottleneck. The projection changes and
 replicated B/C schedule reduce total evaluation by 48.7%, ct-pt products from
@@ -101,12 +108,24 @@ Source: [ReSBM, ASPLOS 2025](https://pacman.cs.tsinghua.edu.cn/~cwg/publication/
 
 ### Gated RMSNorm approximation gate
 
-Gated RMSNorm now costs 21% of evaluation. Powerformer demonstrates that
-distilling normalization and nonlinear operators into HE-friendly functions
-can reduce end-to-end encrypted language-model time, but that result is for a
-retrained BERT model and cannot justify deleting Mamba-2 normalization from
-the current checkpoint. The immediate path is a degree/iteration/range sweep
-against perplexity and 2-layer encrypted error; removal requires training.
+Gated RMSNorm arithmetic is only 3.0% of evaluation after removing its nested
+Meta-BTS time, not the previously reported 21%. A closed-loop six-window PPL
+screen found degree-31/Newton-3 finite at +0.0743 PPL versus exact, compared
+with +0.0095 for degree-31/Newton-4. The 24-layer encrypted candidate passes
+with error 0.01891, but only reduces evaluation from 163.94 to 162.68 s (0.8%)
+and exclusive gated arithmetic from 4.96 to 4.81 s. It is not worth promoting
+before a full PPL certificate.
+
+The expensive component is Meta-BTS precision correction. Replacing it with
+one ordinary bootstrap in a one-layer probe reduces physical bootstraps from
+3 to 2 but increases polynomial-circuit error from about 0.0003 to 0.3993.
+Selective removal is therefore not a credible speed path with the current
+FIDESlib bootstrap. Powerformer demonstrates that distilling normalization
+and nonlinear operators into HE-friendly functions can reduce end-to-end
+encrypted language-model time, but that result is for a retrained BERT model
+and cannot justify deleting Mamba-2 normalization from the current checkpoint.
+Meaningful improvement here requires a more accurate/faster bootstrap backend
+or training, not another Newton-iteration sweep.
 
 Source: [Powerformer, ACL 2025](https://aclanthology.org/2025.acl-long.543/).
 
@@ -184,10 +203,12 @@ Source: [Mamba-3 paper and released kernels](https://arxiv.org/abs/2603.15569),
 
 ## Recommended order
 
-1. Build an offline global bootstrap-placement optimizer from level telemetry.
-2. Sweep gated-norm polynomial degree, Newton iterations, and certified range.
-3. Finish the slot-exact interleaved projection candidate and assess hoisting.
-4. Add a slot simulator for shared dt/decay head expansion.
-5. Regenerate the long-horizon reference payload and resume multi-token state
+1. Regenerate the long-horizon reference payload and resume multi-token state
    packing/refresh work.
+2. Finish the slot-exact interleaved projection candidate and assess hoisting.
+3. Investigate a faster or more accurate bootstrap backend; local Meta-BTS
+   removal is numerically invalid.
+4. Build a global bootstrap-placement optimizer for residual/projection
+   coordination, not for the now-refuted gated checkpoint removal.
+5. Add a slot simulator for shared dt/decay head expansion.
 6. Keep Mamba-3-lite as a separately trained architecture experiment.

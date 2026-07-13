@@ -432,9 +432,19 @@ def export_m1_payload(
     bound_cal_text: str | None = None,
     bound_cal_tokens: int | None = 512,
     prompt: str = "The capital of France is",
+    gated_init_degree: int | None = None,
+    gated_newton_iterations: int | None = None,
     _calibration: tuple[dict, list[dict]] | None = None,
     _test_vectors: _TestVectors | None = None,
 ) -> Path:
+    gated_init_degree = (
+        GATED_NEWTON["init_degree"] if gated_init_degree is None else gated_init_degree
+    )
+    gated_newton_iterations = (
+        GATED_NEWTON["iterations"] if gated_newton_iterations is None else gated_newton_iterations
+    )
+    if gated_init_degree < 1 or gated_newton_iterations < 1:
+        raise ValueError("gated norm degree and Newton iterations must be positive")
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     block = model.backbone.layers[layer_index]
@@ -523,14 +533,14 @@ def export_m1_payload(
         lambda t: t.abs().clamp(min=1e-30).pow(-0.25),
         GATED_NEWTON["lo_frac"] * lo,
         GATED_NEWTON["hi_mul"] * hi,
-        GATED_NEWTON["init_degree"],
+        gated_init_degree,
     )
     polys["gated_rms_invsqrt"] = {
         "kind": "sq-poly-newton",
         "coeffs": list(gated_base.coeffs),
         "lo": gated_base.lo,
         "hi": gated_base.hi,
-        "iterations": GATED_NEWTON["iterations"],
+        "iterations": gated_newton_iterations,
         "damping": GATED_NEWTON["damping"],
     }
     checkpoint_bounds = carried_bounds[layer_index]["checkpoint_abs_max"]
@@ -593,6 +603,8 @@ def export_chain_payload(
     bound_cal_tokens: int | None = 512,
     autoregressive_prompt_tokens: int = 0,
     autoregressive_generate_tokens: int = 0,
+    gated_init_degree: int | None = None,
+    gated_newton_iterations: int | None = None,
 ) -> Path:
     """M2 payload: one layer_XX/ subdir per layer (m1 format) plus chain.json
     with the final norm, per-token embeddings, and end-to-end test vectors."""
@@ -615,6 +627,8 @@ def export_chain_payload(
             layer_index=layer,
             n_test_tokens=n_test_tokens,
             prompt=prompt,
+            gated_init_degree=gated_init_degree,
+            gated_newton_iterations=gated_newton_iterations,
             _calibration=calibration,
             _test_vectors=test_vectors,
         )
@@ -675,6 +689,16 @@ def export_chain_payload(
         "tensors": manifest,
         "dtype": "float32-le",
         "autoregressive": autoregressive,
+        "gated_norm": {
+            "init_degree": (
+                GATED_NEWTON["init_degree"] if gated_init_degree is None else gated_init_degree
+            ),
+            "newton_iterations": (
+                GATED_NEWTON["iterations"]
+                if gated_newton_iterations is None
+                else gated_newton_iterations
+            ),
+        },
         "notes": [
             "per-layer dirs are self-contained m1 payloads (per-layer poly fits)",
             "FHE pass criterion: decrypted outputs match chain_expected_poly_final",

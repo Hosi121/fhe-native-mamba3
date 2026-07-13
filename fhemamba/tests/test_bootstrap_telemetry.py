@@ -44,13 +44,19 @@ def test_bootstrap_telemetry_report_reconciles_physical_count() -> None:
                 },
             ],
         },
-        "timing": {"bootstrap_eval_seconds": 1.2},
+        "timing": {"bootstrap_eval_seconds": 1.2, "eval_seconds": 1.6},
+        "phase_timings": {"bootstrap": 1.2, "gated_norm": 0.8, "final_norm": 0.4},
     }
     report = build_bootstrap_telemetry_report(payload)
     assert report["logical_count_matches"] is True
     assert report["physical_count_matches"] is True
     assert report["seconds_match"] is True
     assert report["telemetry_reconciled"] is True
+    assert report["phase_accounting"]["exclusive_reconciles_eval"] is True
+    adjustment = report["phase_accounting"]["adjustments"][0]
+    assert adjustment["phase"] == "gated_norm"
+    assert adjustment["nested_bootstrap_seconds"] == pytest.approx(0.8)
+    assert adjustment["exclusive_seconds"] == pytest.approx(0.0)
     assert report["physical_bootstraps"] == 3
     assert report["seconds"] == pytest.approx(1.2)
     assert report["families"][0]["family"] == "gated_poly_input"

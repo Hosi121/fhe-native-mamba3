@@ -3790,6 +3790,20 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"state_meta_bts_alpha\":" << args.state_meta_bts_alpha << ",";
     out << "\"meta_bts_residual_align_mode\":\""
         << json_escape(args.meta_bts_residual_align_mode) << "\",";
+    std::vector<int> gated_init_degrees;
+    std::vector<int> gated_newton_iterations;
+    gated_init_degrees.reserve(layer_plans.size());
+    gated_newton_iterations.reserve(layer_plans.size());
+    for (const auto& plan : layer_plans) {
+      gated_init_degrees.push_back(
+          plan.gated_coeffs.empty() ? 0 : static_cast<int>(plan.gated_coeffs.size()) - 1);
+      gated_newton_iterations.push_back(plan.gated_iterations);
+    }
+    out << "\"gated_init_degrees\":";
+    write_int_vector_json(out, gated_init_degrees);
+    out << ",\"gated_newton_iterations\":";
+    write_int_vector_json(out, gated_newton_iterations);
+    out << ",";
     out << "\"final_norm_scale\":" << final_norm_scale << ",";
     out << "\"carried_bounds_source\":\""
         << (all_carried_bounds_calibrated ? "calibration-text" : "generic-fallback")
