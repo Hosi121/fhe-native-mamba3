@@ -1,0 +1,28 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -228,6 +228,10 @@ target_include_directories(fideslib
+         PRIVATE nvtx/c/include
+ )
+ 
++if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13)
++    target_include_directories(fideslib PUBLIC "${CUDAToolkit_INCLUDE_DIRS}/cccl")
++endif ()
++
+ target_link_libraries(fideslib
+         PRIVATE "${OpenFHE_LIBDIR}/libOPENFHEpke_static.a"
+         PRIVATE "${OpenFHE_LIBDIR}/libOPENFHEbinfhe_static.a"
+--- a/src/PeerUtils.cuh
++++ b/src/PeerUtils.cuh
+@@ -14,7 +14,11 @@
+ 
+ #include <cuda.h>
+ #undef duration
+-#include <cuda/atomic>
++#if __has_include(<cuda/atomic>)
++#include <cuda/atomic>
++#else
++#include <cccl/cuda/atomic>
++#endif
+ #include <cuda_runtime.h>
+ 
+ namespace FIDESlib {

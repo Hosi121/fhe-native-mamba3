@@ -1,0 +1,47 @@
+--- a/src/CKKS/Ciphertext.cpp
++++ b/src/CKKS/Ciphertext.cpp
+@@ -665,14 +665,18 @@ void Ciphertext::mult(const Ciphertext& b, bool rescale, const bool moddown) {
+ 		in.setLevel(c1.getLevel());
+ 		c0.binomialMult(c1, in, b.c0, b.c1, moddown, &b == this);
++		cudaDeviceSynchronize();
+ 
+ 		RNSPoly& aux = MGPUkeySwitchCore(in, kskEval, moddown);
++		cudaDeviceSynchronize();
+ 		c0.add(aux);
+ 		c1.add(in);
++		cudaDeviceSynchronize();
+ 
+ 		// Manage metadata
+ 		this->multMetadata(*this, b);
+ 		if (moddown && rescale && cc.rescaleTechnique == CKKS::FIXEDMANUAL) {
+ 			this->rescale();
++			cudaDeviceSynchronize();
+ 		}
+ 		if constexpr (PRINT)
+ 			std::cout << "End mult" << std::endl;
+@@ -868,9 +872,11 @@ void Ciphertext::rotate(const int index_, const bool moddown) {
+ 		auto& in0 = cc.getKeySwitchAux2();
+ 		auto& in1 = cc.getKeySwitchAux();
+ 		in1.copy(c1);
+-		in1.modup();
+-		// c1.modupInto(cc.getKeySwitchAux());
+ 		in0.copy(c0);
++		cudaDeviceSynchronize();
++		in1.modup();
++		cudaDeviceSynchronize();
++		// c1.modupInto(cc.getKeySwitchAux());
+ 
+ 		std::vector<int> index_;
+ 		std::vector<RNSPoly*> c0_out;
+@@ -889,9 +895,11 @@ void Ciphertext::rotate(const int index_, const bool moddown) {
+ 		}
+ 
+ 		in1.hoistedRotationFused(index_, c0_out, c1_out, ksk_a, ksk_b, in0, in1);
++		cudaDeviceSynchronize();
+ 
+ 		if (moddown) {
+ 			modDown(false);
++			cudaDeviceSynchronize();
+ 		}
+ 	}
+ }

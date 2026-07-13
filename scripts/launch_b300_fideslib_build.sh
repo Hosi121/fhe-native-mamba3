@@ -2,9 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="${ROOT_DIR:-/home/kataiwa/fhemamba-b300}"
-IMAGE="${IMAGE:-nvidia/cuda:12.8.1-devel-ubuntu24.04}"
+IMAGE="${IMAGE:-fhemamba-b300:cuda13.0-fideslib}"
 CONTAINER_NAME="${CONTAINER_NAME:-fhemamba-b300-build}"
 GPU_DEVICE="${GPU_DEVICE:-3}"
+FIDESLIB_ARCH="${FIDESLIB_ARCH:-103-real}"
+FIDESLIB_SM="${FIDESLIB_ARCH%%-*}"
 
 if [[ "${GPU_DEVICE}" != "2" && "${GPU_DEVICE}" != "3" ]]; then
   echo "GPU_DEVICE must be 2 or 3" >&2
@@ -32,7 +34,7 @@ container_id="$({
     --volume "${ROOT_DIR}:/workspace" \
     --workdir /workspace \
     --env ROOT_DIR=/workspace \
-    --env FIDESLIB_ARCH=100-real \
+    --env FIDESLIB_ARCH="${FIDESLIB_ARCH}" \
     --env BUILD_JOBS="${BUILD_JOBS:-32}" \
     "${IMAGE}" \
     bash /workspace/cipher/scripts/build_b300_fideslib.sh
@@ -41,5 +43,5 @@ container_id="$({
 echo "container_id=${container_id}"
 echo "container_name=${CONTAINER_NAME}"
 echo "host_gpu=${GPU_DEVICE}"
-echo "log=${ROOT_DIR}/logs/fideslib-build-sm100.log"
-
+echo "fideslib_arch=${FIDESLIB_ARCH}"
+echo "log=${ROOT_DIR}/logs/fideslib-build-sm${FIDESLIB_SM}.log"

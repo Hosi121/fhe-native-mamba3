@@ -1,0 +1,16 @@
+--- a/src/CKKS/Ciphertext.cpp
++++ b/src/CKKS/Ciphertext.cpp
+@@ -84,6 +84,13 @@ Ciphertext::Ciphertext(Context& cc, const RawCipherText& rawct) : Ciphertext(cc)
+ }
+ 
+ Ciphertext::~Ciphertext() {
++	// Ciphertext storage is recycled by ContextData. Some operations enqueue
++	// kernels on streams owned by their output while still reading an input
++	// ciphertext, so synchronizing only the input RNSPoly streams is not enough.
++	// Blackwell exposes this latent lifetime race without
++	// CUDA_LAUNCH_BLOCKING=1; finish outstanding device work before recycling.
++	if (!c0.GPU.empty() || !c1.GPU.empty())
++		cudaDeviceSynchronize();
+ 	if (!c1.GPU.empty())
+ 		cc.returnAuxilarPoly(std::move(c1));
+ 	if (!c0.GPU.empty())
