@@ -466,6 +466,9 @@ auto main(int argc, char* argv[]) -> int {
             probe_max_abs_error,
             !config.skip_decrypt,
             decrypt_failure_count));
+    if (decrypt_failure_count != 0) {
+      return EXIT_FAILURE;
+    }
   } catch (const std::exception& exc) {
     std::cerr << "stage1_bootstrap_probe failed: " << exc.what() << std::endl;
     return EXIT_FAILURE;
