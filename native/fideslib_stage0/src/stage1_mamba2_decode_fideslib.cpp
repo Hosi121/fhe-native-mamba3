@@ -3690,6 +3690,24 @@ auto main(int argc, char* argv[]) -> int {
         if (selected_id < 0) {
           throw std::runtime_error("autoregressive client argmax failed");
         }
+        const auto client_max_abs_error = [&](const std::vector<double>& reference) {
+          double error = 0.0;
+          const auto offset = static_cast<std::size_t>(token) * d_model;
+          for (int slot = 0; slot < d_model; ++slot) {
+            const double diff = std::abs(
+                client_hidden[static_cast<std::size_t>(slot)] -
+                reference[offset + static_cast<std::size_t>(slot)]);
+            if (!std::isfinite(diff)) {
+              return std::numeric_limits<double>::infinity();
+            }
+            error = std::max(error, diff);
+          }
+          return error;
+        };
+        const double client_poly_error =
+            client_max_abs_error(chain.autoregressive_expected_poly_final);
+        const double client_exact_error =
+            client_max_abs_error(chain.autoregressive_expected_exact_final);
         autoregressive_selected_ids.push_back(selected_id);
         autoregressive_decrypted_outputs[static_cast<std::size_t>(token)] =
             std::move(client_hidden);
@@ -3703,7 +3721,9 @@ auto main(int argc, char* argv[]) -> int {
         autoregressive_client_seconds += seconds_since(client_start);
         log_phase("autoregressive client round trip after token " +
                   std::to_string(token) + " selected_id=" +
-                  std::to_string(selected_id));
+                  std::to_string(selected_id) + " poly_max_abs_error=" +
+                  std::to_string(client_poly_error) + " exact_max_abs_error=" +
+                  std::to_string(client_exact_error));
       }
       token_outputs.push_back(hidden_ct);
       if (args.autoregressive_client_loop &&
