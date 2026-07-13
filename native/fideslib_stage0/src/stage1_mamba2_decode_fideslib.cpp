@@ -1596,7 +1596,8 @@ auto main(int argc, char* argv[]) -> int {
                                 const std::string& key, const std::vector<double>& values) {
       auto plain = cached_plain(
           key, values, static_cast<uint32_t>(ciphertext->GetLevel()));
-      return add_aligned(ciphertext, cc->Encrypt(public_key, plain));
+      ++adds;
+      return cc->EvalAdd(ciphertext, plain);
     };
     auto mul_mask = [&](const Ciphertext<DCRTPoly>& ciphertext, const std::string& key,
                         const std::vector<double>& mask) {
