@@ -4459,6 +4459,8 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"streams\":" << args.streams << ",";
     out << "\"stream_stride\":" << stream_stride << ",";
     out << "\"level_align_mode\":\"" << json_escape(args.level_align_mode) << "\",";
+    out << "\"fideslib_sync_profile\":\""
+        << json_escape(args.fideslib_sync_profile) << "\",";
     out << "\"projection_late_level\":"
         << (args.projection_late_level ? "true" : "false") << ",";
     out << "\"bsgs_layout\":{";

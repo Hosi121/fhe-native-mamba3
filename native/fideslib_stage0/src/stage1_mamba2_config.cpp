@@ -169,6 +169,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.repo_commit = value;
     } else if (arg == "--binary-sha256") {
       config.binary_sha256 = value;
+    } else if (arg == "--fideslib-sync-profile") {
+      config.fideslib_sync_profile = value;
     } else if (arg == "--process-role") {
       config.process_role = value;
     } else if (arg == "--handoff-dir") {
@@ -385,6 +387,14 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.fused_replicated_linear_transform_scope != "out-proj") {
     throw std::invalid_argument(
         "fused-replicated-linear-transform-scope must be all or out-proj");
+  }
+  if (config.fideslib_sync_profile != "unspecified" &&
+      config.fideslib_sync_profile != "full" &&
+      config.fideslib_sync_profile != "bootstrap-lifetime" &&
+      config.fideslib_sync_profile != "lifetime" &&
+      config.fideslib_sync_profile != "none") {
+    throw std::invalid_argument(
+        "fideslib-sync-profile must be unspecified, full, bootstrap-lifetime, lifetime, or none");
   }
   if (config.interleaved_replicated_projection &&
       config.bsgs_replicas == "1") {

@@ -7,6 +7,13 @@ CONTAINER_NAME="${CONTAINER_NAME:-fhemamba-b300-build}"
 GPU_DEVICE="${GPU_DEVICE:-3}"
 FIDESLIB_ARCH="${FIDESLIB_ARCH:-103-real}"
 FIDESLIB_SM="${FIDESLIB_ARCH%%-*}"
+FIDESLIB_SOURCE_NAME="${FIDESLIB_SOURCE_NAME:-FIDESlib}"
+B300_SYNC_PROFILE="${B300_SYNC_PROFILE:-full}"
+if [[ "${B300_SYNC_PROFILE}" == "full" ]]; then
+  BUILD_VARIANT="sm${FIDESLIB_SM}"
+else
+  BUILD_VARIANT="sm${FIDESLIB_SM}-${B300_SYNC_PROFILE}"
+fi
 
 if [[ "${GPU_DEVICE}" != "2" && "${GPU_DEVICE}" != "3" ]]; then
   echo "GPU_DEVICE must be 2 or 3" >&2
@@ -34,7 +41,9 @@ container_id="$({
     --volume "${ROOT_DIR}:/workspace" \
     --workdir /workspace \
     --env ROOT_DIR=/workspace \
+    --env FIDESLIB_DIR="/workspace/src/${FIDESLIB_SOURCE_NAME}" \
     --env FIDESLIB_ARCH="${FIDESLIB_ARCH}" \
+    --env B300_SYNC_PROFILE="${B300_SYNC_PROFILE}" \
     --env BUILD_JOBS="${BUILD_JOBS:-32}" \
     "${IMAGE}" \
     bash /workspace/cipher/scripts/build_b300_fideslib.sh
@@ -44,4 +53,6 @@ echo "container_id=${container_id}"
 echo "container_name=${CONTAINER_NAME}"
 echo "host_gpu=${GPU_DEVICE}"
 echo "fideslib_arch=${FIDESLIB_ARCH}"
-echo "log=${ROOT_DIR}/logs/fideslib-build-sm${FIDESLIB_SM}.log"
+echo "fideslib_source_name=${FIDESLIB_SOURCE_NAME}"
+echo "b300_sync_profile=${B300_SYNC_PROFILE}"
+echo "log=${ROOT_DIR}/logs/fideslib-build-${BUILD_VARIANT}.log"

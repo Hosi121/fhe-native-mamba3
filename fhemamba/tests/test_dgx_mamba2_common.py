@@ -39,6 +39,7 @@ def test_dgx_mamba2_common_defaults_to_promoted_structural_path() -> None:
     assert args["--max-layers"] == "24"
     assert args["--tokens"] == "2"
     assert args["--replicated-true-bsgs"] == "1"
+    assert args["--fideslib-sync-profile"] == "unspecified"
     assert args["--fused-replicated-linear-transform"] == "0"
     assert args["--fused-replicated-linear-transform-scope"] == "all"
     assert args["--interleaved-replicated-projection"] == "1"

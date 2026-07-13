@@ -27,6 +27,23 @@ def test_b300_build_exposes_ckks_complex_data_type() -> None:
     assert "SetCKKSDataType(config.complex_pair ? COMPLEX : REAL)" in probe
 
 
+def test_b300_sync_profiles_keep_experimental_builds_isolated() -> None:
+    build_script = (ROOT / "scripts" / "build_b300_fideslib.sh").read_text()
+    launch_script = (ROOT / "scripts" / "launch_b300_fideslib_build.sh").read_text()
+    runner = (ROOT / "scripts" / "run_b300_mamba2.sh").read_text()
+
+    assert 'B300_SYNC_PROFILE="${B300_SYNC_PROFILE:-full}"' in build_script
+    assert 'test -e "${FIDESLIB_DIR}/.git"' in build_script
+    assert "bootstrap-lifetime)" in build_script
+    assert 'remove_patch_if_applied "${keyswitch_sync_patch}"' in build_script
+    assert 'BUILD_VARIANT="sm${FIDESLIB_SM}-${B300_SYNC_PROFILE}"' in build_script
+    assert '--env FIDESLIB_DIR="/workspace/src/${FIDESLIB_SOURCE_NAME}"' in launch_script
+    assert '--env B300_SYNC_PROFILE="${B300_SYNC_PROFILE}"' in launch_script
+    assert 'FIDESLIB_VARIANT="${FIDESLIB_VARIANT:-sm${FIDESLIB_SM}}"' in runner
+    assert 'inferred_sync_profile="${FIDESLIB_VARIANT#sm${FIDESLIB_SM}-}"' in runner
+    assert "fideslib-stage0-${FIDESLIB_VARIANT}" in runner
+
+
 def test_mamba2_decode_wires_complex_state_pairing() -> None:
     source = (
         ROOT / "native" / "fideslib_stage0" / "src" / "stage1_mamba2_decode_fideslib.cpp"

@@ -8,6 +8,7 @@ init_dgx_mamba2_defaults() {
   RESULTS_DIR="${RESULTS_DIR:-$ROOT/results}"
   ARTIFACT_VERSION="${ARTIFACT_VERSION:-0.4.4}"
   REPO_COMMIT="${REPO_COMMIT:-working-tree}"
+  FIDESLIB_SYNC_PROFILE="${FIDESLIB_SYNC_PROFILE:-unspecified}"
 
   RING_DIM="${RING_DIM:-65536}"
   MULTIPLICATIVE_DEPTH="${MULTIPLICATIVE_DEPTH:-44}"
@@ -72,6 +73,7 @@ build_dgx_mamba2_args() {
     --multiplicative-depth "$MULTIPLICATIVE_DEPTH"
     --scaling-mod-size "$SCALING_MOD_SIZE"
     --first-mod-size "$FIRST_MOD_SIZE"
+    --fideslib-sync-profile "$FIDESLIB_SYNC_PROFILE"
     --bootstrap-level-budget-cts "$BOOTSTRAP_LEVEL_BUDGET_CTS"
     --bootstrap-level-budget-stc "$BOOTSTRAP_LEVEL_BUDGET_STC"
     --security "$SECURITY"

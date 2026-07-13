@@ -80,6 +80,7 @@ auto main() -> int {
                                 "auto", "--replicated-true-bsgs", "true",
                                 "--fused-replicated-linear-transform", "true",
                                 "--fused-replicated-linear-transform-scope", "out-proj",
+                                "--fideslib-sync-profile", "bootstrap-lifetime",
                                 "--interleaved-replicated-projection", "true",
                                 "--replicated-state-blocks", "true",
                                 "--projection-late-level", "true"});
@@ -88,6 +89,8 @@ auto main() -> int {
           "fused replicated linear transform was not parsed");
   require(true_bsgs.fused_replicated_linear_transform_scope == "out-proj",
           "fused replicated linear transform scope was not parsed");
+  require(true_bsgs.fideslib_sync_profile == "bootstrap-lifetime",
+          "FIDESlib sync profile was not parsed");
   require(true_bsgs.interleaved_replicated_projection,
           "interleaved replicated projection was not parsed");
   require(true_bsgs.replicated_state_blocks,

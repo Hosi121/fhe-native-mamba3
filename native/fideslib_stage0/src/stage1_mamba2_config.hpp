@@ -13,6 +13,10 @@ struct Config {
   std::string artifact_version = "0.0.0+unknown";
   std::string repo_commit = "unknown";
   std::string binary_sha256 = "unknown";
+  // Provenance for B300 backend synchronization patches. This does not alter
+  // circuit behavior; it prevents experimental backend timings from being
+  // reported as the fully synchronized production build.
+  std::string fideslib_sync_profile = "unspecified";
   // Process-separated fixed-vector protocol. inline is the legacy one-process
   // benchmark. client-init generates/serializes keys and encrypted inputs;
   // server-eval loads only public/evaluation material and writes encrypted

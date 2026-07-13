@@ -5,7 +5,20 @@ ROOT_DIR="${ROOT_DIR:-/home/kataiwa/fhemamba-b300}"
 IMAGE="${IMAGE:-fhemamba-b300:cuda12.8-fideslib}"
 GPU_DEVICE="${GPU_DEVICE:-3}"
 FIDESLIB_SM="${FIDESLIB_SM:-100}"
-BINARY_PATH="${BINARY_PATH:-${ROOT_DIR}/build/fideslib-stage0-sm${FIDESLIB_SM}/stage1_mamba2_decode_fideslib}"
+FIDESLIB_VARIANT="${FIDESLIB_VARIANT:-sm${FIDESLIB_SM}}"
+case "${FIDESLIB_VARIANT}" in
+  "sm${FIDESLIB_SM}")
+    inferred_sync_profile="full"
+    ;;
+  "sm${FIDESLIB_SM}-bootstrap-lifetime"|"sm${FIDESLIB_SM}-lifetime"|"sm${FIDESLIB_SM}-none")
+    inferred_sync_profile="${FIDESLIB_VARIANT#sm${FIDESLIB_SM}-}"
+    ;;
+  *)
+    inferred_sync_profile="unspecified"
+    ;;
+esac
+FIDESLIB_SYNC_PROFILE="${FIDESLIB_SYNC_PROFILE:-${inferred_sync_profile}}"
+BINARY_PATH="${BINARY_PATH:-${ROOT_DIR}/build/fideslib-stage0-${FIDESLIB_VARIANT}/stage1_mamba2_decode_fideslib}"
 LAYERS="${LAYERS:-24}"
 TOKENS="${TOKENS:-1}"
 FUSED_REPLICATED_LINEAR_TRANSFORM="${FUSED_REPLICATED_LINEAR_TRANSFORM:-0}"
@@ -66,6 +79,7 @@ docker run --rm \
   --env TOKENS="${TOKENS}" \
   --env FUSED_REPLICATED_LINEAR_TRANSFORM="${FUSED_REPLICATED_LINEAR_TRANSFORM}" \
   --env FUSED_REPLICATED_LINEAR_TRANSFORM_SCOPE="${FUSED_REPLICATED_LINEAR_TRANSFORM_SCOPE}" \
+  --env FIDESLIB_SYNC_PROFILE="${FIDESLIB_SYNC_PROFILE}" \
   --env AUTOREGRESSIVE_CLIENT_LOOP="${AUTOREGRESSIVE_CLIENT_LOOP}" \
   --env NORMALIZED_STATE_META_BTS="${NORMALIZED_STATE_META_BTS}" \
   --env COMPLEX_STATE_PAIRING="${COMPLEX_STATE_PAIRING}" \
@@ -80,7 +94,7 @@ docker run --rm \
   --env PT_MISS_CONSUMPTION_LEVEL="${PT_MISS_CONSUMPTION_LEVEL}" \
   --env ENCODE_THREADS="${ENCODE_THREADS}" \
   --env BINARY_SHA256="${binary_sha256}" \
-  --env LD_LIBRARY_PATH="/workspace/install/fideslib-sm${FIDESLIB_SM}/lib:/workspace/install/fideslib/lib:/workspace/install/openfhe-fides/lib:/workspace/install/openfhe-fides/lib64" \
+  --env LD_LIBRARY_PATH="/workspace/install/fideslib-${FIDESLIB_VARIANT}/lib:/workspace/install/fideslib/lib:/workspace/install/openfhe-fides/lib:/workspace/install/openfhe-fides/lib64" \
   "${IMAGE}" \
   bash -lc '
     set -euo pipefail
