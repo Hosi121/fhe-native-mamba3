@@ -1590,7 +1590,8 @@ auto main(int argc, char* argv[]) -> int {
       return cc->EvalSub(lhs, rhs);
     };
     auto add_scalar = [&](const Ciphertext<DCRTPoly>& ciphertext, double scalar) {
-      return add_aligned(ciphertext, scaled_clone(ones_ct, scalar));
+      ++adds;
+      return cc->EvalAdd(ciphertext, scalar);
     };
     auto add_const_vector = [&](const Ciphertext<DCRTPoly>& ciphertext,
                                 const std::string& key, const std::vector<double>& values) {
