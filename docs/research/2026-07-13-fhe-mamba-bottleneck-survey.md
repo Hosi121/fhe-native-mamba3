@@ -238,6 +238,15 @@ bootstraps per token instead of applying Meta-BTS to all state refreshes; it doe
 not address the independent layer-6 state-update error, which remains a separate
 localization target.
 
+That selective residual gate is now refuted. Applying Meta-BTS at layers 21-23
+passes the one-token final-output tolerance with error 0.01691, but it increases
+physical bootstraps from 108 to 111 and does not improve the late layer
+boundaries. The debug boundary errors at layers 21-23 are 0.188, 0.413, and
+0.787, versus 0.0959, 0.128, and 0.306 in the matched single-BTS trace. The
+final RMSNorm hides most of this difference. No two-token promotion is
+justified; the next diagnostic checks whether the layer-6 normalized-state
+bootstrap input exceeds its calibrated message range.
+
 ### dt/decay head expansion
 
 The current dt and decay expansions each perform 102 rotations and 24 ct-pt
@@ -266,7 +275,7 @@ Source: [Mamba-3 paper and released kernels](https://arxiv.org/abs/2603.15569),
 
 ## Recommended order
 
-1. Gate selective residual Meta-BTS at layers 21-23, then isolate the independent
+1. Check the layer-6 normalized-state bootstrap input range, then isolate the
    layer-6 and layer-16 state-update errors with targeted prefix experiments.
 2. Promote interleaved projections for amortized multi-token runs and assess
    backend hoisting.
