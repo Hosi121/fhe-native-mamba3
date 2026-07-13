@@ -11,7 +11,7 @@
 // looped over tokens with real ciphertext state carry:
 //   block RMSNorm -> in_proj BSGS -> mask splits -> conv FIFO + bias ->
 //   conv SiLU (Chebyshev) -> dt softplus^2 -> decay exp(dt*A) -> slot expands ->
-//   state update (3 head-group state ciphertexts) -> readout -> +D*x ->
+//   state update (full-slot head-group ciphertexts) -> readout -> +D*x ->
 //   gate SiLU * y -> gated RMSNorm -> out_proj BSGS -> residual add.
 // State and conv FIFO stay ciphertext across tokens. Fixed-vector mode has
 // zero intermediate decrypts; autoregressive client-loop mode intentionally
@@ -23,22 +23,15 @@
 // Packing:
 //   packed layout: vectors in slots 0..k-1 (hidden 768; in_proj output 3352 =
 //     gate 1536 | xBC 1792 | dt 24; conv out 1792 = x 1536 | B 128 | C 128).
-//   state layout: 3 ciphertexts, one per head group g in {0,1,2} (8 heads
-//     each); slot index = n*512 + h_local*64 + p (n<128, h_local<8, p<64).
+//   state layout: the ring capacity determines heads per ciphertext and group
+//     count; slot index = n*group_block + h_local*head_dim + p.
 //
 // Level ledger (validated by slot-level simulation against the real payload,
-// default poly degrees: rms 47 + 4 Newton, conv 96, gate 64, dt 64, exp 24,
-// gated const-Newton 14): the uncut circuit needs ~61 levels for token 0 from
-// fresh input and 64+tokens with state carry — which can NEVER run on
-// FIDESlib v2.1.0 (MAXP=64 tower cap: empirical max depth 50 at scale 40, 44
-// at scale 59). The kernel therefore runs at scale 59 / depth 44 with
-// MID-CIRCUIT bootstrap checkpoints (segment map in the pre-run log and JSON
-// "segment_requirements"): after in_proj (input segment 17), after conv_silu
-// (8), after dt (9), after decay (7 + per-layer squarings, up to 21), after
-// the state update (<=5), before the gated norm and out_proj (<=4), plus a
-// per-iteration Newton iterate refresh (2/iter). Bootstrap output sits at
-// GetLevel 18 (dgx-measured), leaving a 26-level segment budget; every
-// segment above fits. Warm GPU bootstrap is 12-14 ms.
+// default payload): the uninterrupted circuit exceeds FIDESlib v2.1.0's
+// MAXP=64 tower cap. The kernel therefore runs at scale 59 / depth 44 with
+// mid-circuit checkpoints planned by stage1_mamba2_depth. The exact segment
+// requirements are emitted in the pre-run log and artifact; avoid duplicating
+// them here because polynomial and refresh policies are configurable.
 
 #include <fideslib.hpp>
 
@@ -2763,10 +2756,10 @@ auto main(int argc, char* argv[]) -> int {
     // -----------------------------------------------------------------------
     // Packing primitives.
     // -----------------------------------------------------------------------
-    // Slot (base + n) -> slot group_block*n for n in [0, state), then fill the
-    // 512 block by doubling. Rotations are decomposed as baby (b = n mod 8)
-    // plus giant (a = n div 8) so the shared key set stays small; the slot map
-    // is identical to 128 single mask+rotate pairs with indices
+    // Slot (base + n) -> slot group_block*n for n in [0, state), then fill one
+    // group block by doubling. Rotations are decomposed by group_heads so the
+    // shared key set stays small; the slot map is identical to state_size
+    // single mask+rotate pairs with indices
     // base - (group_block-1)*n.
     auto place_state_blocks = [&](const Ciphertext<DCRTPoly>& conv_packed, int base) {
       const int stride = group_block - 1;
@@ -4234,7 +4227,7 @@ auto main(int argc, char* argv[]) -> int {
     }
     out << "\"dgx runbook: FIDESlib v2.1.0 MAXP=64 caps towers (max depth 50 at scale 40, "
            "44 at scale 59); EvalBootstrap needs scaling-mod >= 54 (dead at 40/50/52) and "
-           "outputs GetLevel=18 at depth 44/scale 59, warm cost 12-14 ms; run with "
+           "outputs GetLevel=18 at depth 44/scale 59; run with "
            "--scaling-mod-size 59 --multiplicative-depth 44, mid-circuit checkpoints keep "
            "every lineage within the 26-level segment budget; ring 65536 fits GB10 "
            "memory, ring 131072 keygen+LoadContext needs > 119 GB.\"";

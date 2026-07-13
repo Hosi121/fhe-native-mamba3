@@ -281,7 +281,7 @@ auto required_rotations(const M1Payload& payload, const PackingDims& dims,
   for (int k = 0; k < int_log2(dims.batch); ++k) {
     rotations.insert(static_cast<int32_t>(1 << k));
   }
-  // Rotate-add doubling fills: within a 512 block (B/C), across p (dt/decay,
+  // Rotate-add doubling fills: within one group block (B/C), across p (dt/decay,
   // subset), across n (x/dt/decay expands).
   for (int k = 0; k < int_log2(dims.group_block); ++k) {
     rotations.insert(static_cast<int32_t>(-(1 << k)));
@@ -305,7 +305,7 @@ auto required_rotations(const M1Payload& payload, const PackingDims& dims,
   // B/C placement. The replicated schedule selects B+C once, shifts one
   // branch to slot zero, and copies it at (group_block-1)*2^k before keeping
   // block seeds. The legacy schedule masks each state element separately.
-  const int stride = dims.group_block - 1;  // 511
+  const int stride = dims.group_block - 1;
   if (replicated_state_blocks) {
     rotations.insert(static_cast<int32_t>(dims.b_base));
     rotations.insert(static_cast<int32_t>(dims.c_base));
@@ -313,7 +313,7 @@ auto required_rotations(const M1Payload& payload, const PackingDims& dims,
       rotations.insert(static_cast<int32_t>(-stride * step));
     }
   } else {
-    const int giant_stride = dims.group_heads * stride;  // 4088
+    const int giant_stride = dims.group_heads * stride;
     for (const int base : {dims.b_base, dims.c_base}) {
       for (int b = 0; b < dims.group_heads; ++b) {
         const int baby = base - stride * b;

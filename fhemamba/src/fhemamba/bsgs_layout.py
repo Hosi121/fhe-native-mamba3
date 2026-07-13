@@ -5,13 +5,14 @@ Measured reality: the dominant BSGS cost is per-diagonal plaintext work
 plentiful (32768) while the input is short (768/1536), so replicate the
 input r times at stride ``window`` and let each replica window serve only
 ``ceil(n_diags / r)`` diagonal groups. This is the schedule implemented by the
-native kernel today; despite the historical module/function names, it does not
-yet apply a baby-step/giant-step decomposition inside those groups.
+native kernel. The true-BSGS mode also decomposes those groups into baby and
+giant rotations while retaining the same masks and slot result.
 
-Slot semantics (batch B, window w = B/r, input dim n <= w, output dim m <= w):
+Slot semantics (batch B, active replicas r, period-n window w, input dim n <= w):
 - input layout: x replicated cyclically inside each window: slot j*w + t
-  holds x[t mod n] (achieved from a window-0 copy by log2(r) rotate-adds of
-  stride -w, after an in-window cyclic self-extension of x).
+  holds x[t mod n] (achieved from a window-0 copy by rotate-adds of stride -w,
+  after an in-window cyclic self-extension of x). Interleaved mode fills one
+  additional guard window that is excluded from masks and output folding.
 - replica j covers diagonals d in {j, j+r, j+2r, ...} < n. Its mask for
   diagonal d places W[i, (i+d) mod n] at slot j*w + ((i - j) mod' ...) —
   concretely built below so that after rotating the whole ciphertext by
