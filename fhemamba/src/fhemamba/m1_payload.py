@@ -324,7 +324,7 @@ def _poly_ops_from_export(out: Path, n_layers: int) -> PolyOps:
 
 @torch.no_grad()
 def export_state_debug_references(model, chain_dir: str | Path, tokens: int | None = None) -> Path:
-    """Add polynomial layer-boundary and exact/poly state debug references."""
+    """Refresh polynomial layer boundaries, states, and full-chain references."""
     out = Path(chain_dir)
     chain = json.loads((out / "chain.json").read_text())
     n_layers = int(chain["n_layers"])
@@ -402,6 +402,10 @@ def export_state_debug_references(model, chain_dir: str | Path, tokens: int | No
         if state_note not in meta["notes"]:
             meta["notes"].append(state_note)
         meta_path.write_text(json.dumps(meta, indent=2))
+    if tokens is None:
+        _save(out, "chain_expected_final", exact.expected_final, chain["tensors"])
+        _save(out, "chain_expected_poly_final", poly.expected_final, chain["tensors"])
+        (out / "chain.json").write_text(json.dumps(chain, indent=2))
     return out
 
 

@@ -122,6 +122,15 @@ def test_chain_export(tmp_path, monkeypatch) -> None:
         assert meta["polys"]["gated_rms_invsqrt"]["iterations"] == 3
         assert len(meta["polys"]["gated_rms_invsqrt"]["coeffs"]) == 16
 
+    poly_final_path = out / "chain_expected_poly_final.bin"
+    exported_poly_final = np.fromfile(poly_final_path, dtype="<f4").copy()
+    np.zeros_like(exported_poly_final).tofile(poly_final_path)
+    payload_module.export_state_debug_references(model, out)
+    assert np.array_equal(
+        np.fromfile(poly_final_path, dtype="<f4"),
+        exported_poly_final,
+    )
+
     # Simulate an old payload lacking token IDs. The incremental path recovers
     # them from exported embedding rows without recalibration.
     legacy_chain = json.loads((out / "chain.json").read_text())
