@@ -38,6 +38,19 @@ apply_patch_once() {
   fi
 }
 
+remove_patch_if_applied() {
+  local patch_path="$1"
+  if git -C "${FIDESLIB_DIR}" apply --reverse --check "${patch_path}" 2>/dev/null; then
+    git -C "${FIDESLIB_DIR}" apply --reverse "${patch_path}"
+    echo "patch_removed=${patch_path}"
+  elif git -C "${FIDESLIB_DIR}" apply --check "${patch_path}" 2>/dev/null; then
+    echo "patch_already_absent=${patch_path}"
+  else
+    echo "patch_cannot_be_removed=${patch_path}" >&2
+    return 1
+  fi
+}
+
 apply_patch_once \
   "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-bootstrap-stage-sync.patch"
 apply_patch_once \
@@ -55,6 +68,11 @@ if ((cuda_major >= 13)); then
     "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-cuda13-graph-api.patch"
   apply_patch_once \
     "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-cuda13-cccl-include.patch"
+else
+  remove_patch_if_applied \
+    "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-cuda13-cccl-include.patch"
+  remove_patch_if_applied \
+    "${ROOT_DIR}/cipher/native/fideslib_stage0/patches/fideslib-v2.1.0-cuda13-graph-api.patch"
 fi
 
 if [[ ! -f "${OPENFHE_PREFIX}/lib/OpenFHE/OpenFHEConfig.cmake" && \
@@ -87,6 +105,7 @@ cmake \
   -S "${ROOT_DIR}/cipher/native/fideslib_stage0" \
   -B "${STAGE_BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
+  -Dfideslib_DIR="${FIDESLIB_PREFIX}/share/fideslib/cmake" \
   -DCMAKE_PREFIX_PATH="${FIDESLIB_PREFIX};${OPENFHE_PREFIX}"
 cmake --build "${STAGE_BUILD_DIR}" \
   --target stage1_mamba2_decode_fideslib stage1_bootstrap_probe fideslib_client_server_probe \
