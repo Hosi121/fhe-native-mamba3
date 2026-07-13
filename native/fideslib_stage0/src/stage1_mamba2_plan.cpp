@@ -246,6 +246,46 @@ auto build_normalized_state_layout(
   return layout;
 }
 
+auto packed_state_max_abs_error(
+    const std::vector<double>& packed, const std::vector<double>& reference,
+    int token, int group, int heads, int group_heads, int head_dim,
+    int state_size, double scale) -> double {
+  if (token < 0 || group < 0 || heads <= 0 || group_heads <= 0 ||
+      head_dim <= 0 || state_size <= 0 || heads % group_heads != 0 ||
+      group >= heads / group_heads || !std::isfinite(scale) || scale <= 0.0) {
+    throw std::invalid_argument("invalid packed-state comparison geometry");
+  }
+  const auto packed_count = static_cast<std::size_t>(
+      group_heads * head_dim * state_size);
+  const auto reference_count = static_cast<std::size_t>(
+      (token + 1) * heads * head_dim * state_size);
+  if (packed.size() < packed_count || reference.size() < reference_count) {
+    throw std::invalid_argument("packed-state comparison input is too short");
+  }
+
+  const int group_block = group_heads * head_dim;
+  double error = 0.0;
+  for (int state = 0; state < state_size; ++state) {
+    for (int local_head = 0; local_head < group_heads; ++local_head) {
+      const int head = group * group_heads + local_head;
+      for (int position = 0; position < head_dim; ++position) {
+        const auto packed_index = static_cast<std::size_t>(
+            state * group_block + local_head * head_dim + position);
+        const auto reference_index = static_cast<std::size_t>(
+            (((token * heads + head) * head_dim + position) * state_size +
+             state));
+        const double difference =
+            std::abs(packed[packed_index] * scale - reference[reference_index]);
+        if (!std::isfinite(difference)) {
+          return 1.0e308;
+        }
+        error = std::max(error, difference);
+      }
+    }
+  }
+  return error;
+}
+
 auto int_log2(int value) -> int {
   if (value <= 0) {
     throw std::invalid_argument("log2 input must be positive");

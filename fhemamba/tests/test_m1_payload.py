@@ -72,6 +72,10 @@ def test_export_round_trip(tmp_path) -> None:
         meta["tensors"]["test_layer_output"]
     )
     assert outs.shape == (3, 32)
+    states = np.fromfile(out / "test_state_output.bin", dtype="<f4").reshape(
+        meta["tensors"]["test_state_output"]
+    )
+    assert states.shape == (3, 4, 16, 8)
 
 
 def test_chain_export(tmp_path, monkeypatch) -> None:
@@ -112,9 +116,29 @@ def test_chain_export(tmp_path, monkeypatch) -> None:
     for d in chain["layer_dirs"]:
         meta = json.loads((out / d / "meta.json").read_text())
         assert "test_layer_output_poly" in meta["tensors"]
+        assert meta["tensors"]["test_state_output"] == [2, 4, 16, 8]
+        assert meta["tensors"]["test_state_output_poly"] == [2, 4, 16, 8]
         assert meta["test_token_ids"] == chain["test_token_ids"]
         assert meta["polys"]["gated_rms_invsqrt"]["iterations"] == 3
         assert len(meta["polys"]["gated_rms_invsqrt"]["coeffs"]) == 16
+
+    # Simulate an old payload lacking token IDs. The incremental path recovers
+    # them from exported embedding rows without recalibration.
+    legacy_chain = json.loads((out / "chain.json").read_text())
+    expected_token_ids = legacy_chain.pop("test_token_ids")
+    (out / "chain.json").write_text(json.dumps(legacy_chain, indent=2))
+    for directory in chain["layer_dirs"]:
+        meta_path = out / directory / "meta.json"
+        legacy_meta = json.loads(meta_path.read_text())
+        legacy_meta.pop("test_token_ids")
+        meta_path.write_text(json.dumps(legacy_meta, indent=2))
+    payload_module.export_state_debug_references(model, out, tokens=1)
+    refreshed_meta = json.loads((out / chain["layer_dirs"][0] / "meta.json").read_text())
+    assert refreshed_meta["test_token_ids"] == expected_token_ids
+    assert refreshed_meta["tensors"]["test_state_output_poly"] == [1, 4, 16, 8]
+    assert sum("post-update recurrent state" in note for note in refreshed_meta["notes"]) == 1
+    with pytest.raises(ValueError, match="within the exported chain length"):
+        payload_module.export_state_debug_references(model, out, tokens=3)
     finals = np.fromfile(out / "chain_expected_final.bin", dtype="<f4").reshape(
         chain["tensors"]["chain_expected_final"]
     )

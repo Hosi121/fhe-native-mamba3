@@ -232,17 +232,33 @@ auto read_m1_payload(const std::string& dir) -> M1Payload {
     payload.shapes[name] = shape;
     payload.tensors[name] = read_bin_tensor(dir, name, shape);
   }
-  if (find_key_value_pos(tensors, "test_layer_output_poly") != std::string::npos) {
-    const auto shape_values = json_number_list(
-        json_balanced(tensors, "test_layer_output_poly", '[', ']'));
+  for (const auto* name : {"test_layer_output_poly", "test_state_output",
+                           "test_state_output_poly"}) {
+    if (find_key_value_pos(tensors, name) == std::string::npos) {
+      continue;
+    }
+    const auto shape_values =
+        json_number_list(json_balanced(tensors, name, '[', ']'));
     std::vector<int> shape;
     shape.reserve(shape_values.size());
     for (const double value : shape_values) {
       shape.push_back(static_cast<int>(value));
     }
-    payload.shapes["test_layer_output_poly"] = shape;
-    payload.tensors["test_layer_output_poly"] =
-        read_bin_tensor(dir, "test_layer_output_poly", shape);
+    payload.shapes[name] = shape;
+    payload.tensors[name] = read_bin_tensor(dir, name, shape);
+  }
+  for (const auto* name : {"test_state_output", "test_state_output_poly"}) {
+    const auto found = payload.shapes.find(name);
+    if (found == payload.shapes.end()) {
+      continue;
+    }
+    const auto& shape = found->second;
+    if (shape.size() != 4 || shape[0] < 1 || shape[0] > payload.n_test_tokens ||
+        shape[1] != payload.num_heads || shape[2] != payload.head_dim ||
+        shape[3] != payload.state_size) {
+      throw std::runtime_error(std::string(name) +
+                               " shape must be (prefix_tokens, heads, head_dim, state_size)");
+    }
   }
   payload.proj_dim = payload.shapes.at("in_proj_w").at(0);
   if (payload.proj_dim != payload.d_inner + payload.conv_dim + payload.num_heads) {

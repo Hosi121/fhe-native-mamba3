@@ -106,6 +106,7 @@ using fhemamba::stage1::kChebCoefficientFloor;
 using fhemamba::stage1::kNewtonSegmentEstimate;
 using fhemamba::stage1::kPlaintextCoefficientFloor;
 using fhemamba::stage1::naf_steps;
+using fhemamba::stage1::packed_state_max_abs_error;
 using fhemamba::stage1::PackingDims;
 using fhemamba::stage1::payload_file_exists;
 using fhemamba::stage1::prepare_client_handoff;
@@ -3359,6 +3360,7 @@ auto main(int argc, char* argv[]) -> int {
     std::map<std::string, int> summary_level_in;
     std::map<std::string, int> summary_level_out;
     std::map<std::string, double> debug_boundary_errors;
+    std::map<std::string, std::vector<double>> debug_state_group_errors;
     std::map<std::string, int> summary_bootstraps;
     std::vector<int> autoregressive_selected_ids;
     std::vector<double> autoregressive_next_embedding;
@@ -3485,6 +3487,51 @@ auto main(int argc, char* argv[]) -> int {
         token_bootstraps_total += layer_bootstraps;
         if (args.debug_layer_errors) {
           const auto& layer_payload = layer_payloads[static_cast<std::size_t>(layer)];
+          const auto poly_state = layer_payload.tensors.find("test_state_output_poly");
+          const auto exact_state = layer_payload.tensors.find("test_state_output");
+          const std::vector<double>* state_reference = nullptr;
+          int state_reference_tokens = 0;
+          if (poly_state != layer_payload.tensors.end()) {
+            state_reference = &poly_state->second;
+            state_reference_tokens = layer_payload.shapes.at("test_state_output_poly")[0];
+          } else if (exact_state != layer_payload.tensors.end()) {
+            state_reference = &exact_state->second;
+            state_reference_tokens = layer_payload.shapes.at("test_state_output")[0];
+          }
+          if (state_reference != nullptr && token < state_reference_tokens) {
+            std::vector<double> group_errors(static_cast<std::size_t>(group_count), 0.0);
+            try {
+              const auto& runtime =
+                  layer_runtimes[static_cast<std::size_t>(layer)];
+              for (int stream = 0; stream < args.streams; ++stream) {
+                for (int group = 0; group < group_count; ++group) {
+                  const auto state_slot =
+                      static_cast<std::size_t>(stream * group_count + group);
+                  const auto slots = decrypt_slots(
+                      cc, secret_key, runtime.state_cts[state_slot],
+                      static_cast<std::size_t>(group_block * state_size));
+                  const double scale =
+                      args.normalized_recurrent_state
+                          ? plan.normalized_state.group_scales[
+                                static_cast<std::size_t>(group)]
+                          : 1.0;
+                  group_errors[static_cast<std::size_t>(group)] = std::max(
+                      group_errors[static_cast<std::size_t>(group)],
+                      packed_state_max_abs_error(
+                          slots, *state_reference, token, group, heads,
+                          group_heads, head_dim, state_size, scale));
+                }
+              }
+            } catch (const std::exception& exc) {
+              std::fill(group_errors.begin(), group_errors.end(), 1.0e308);
+              log_phase("DEBUG state " + key +
+                        " decrypt_failed error=" + exc.what());
+            }
+            debug_state_group_errors[key] = group_errors;
+            std::ostringstream errors;
+            write_double_vector_json(errors, group_errors);
+            log_phase("DEBUG state " + key + " group_errors=" + errors.str());
+          }
           const auto poly_boundary = layer_payload.tensors.find("test_layer_output_poly");
           const auto& boundary =
               poly_boundary != layer_payload.tensors.end()
@@ -4109,6 +4156,10 @@ auto main(int argc, char* argv[]) -> int {
         out << "\"bootstraps\":" << summary_bootstraps[key];
         if (args.debug_layer_errors && debug_boundary_errors.count(key) > 0) {
           out << ",\"debug_boundary_error\":" << debug_boundary_errors[key];
+        }
+        if (args.debug_layer_errors && debug_state_group_errors.count(key) > 0) {
+          out << ",\"debug_state_group_errors\":";
+          write_double_vector_json(out, debug_state_group_errors[key]);
         }
         out << "}";
       }

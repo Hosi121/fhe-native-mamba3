@@ -94,6 +94,47 @@ auto main() -> int {
                                   4, 16);
   });
 
+  // Plain reference is [token, head, position, state], while one encrypted
+  // group is packed as [state, local_head, position]. Pin both the axis map
+  // and normalized-state scale restoration used by debug attribution.
+  constexpr int kTokens = 2;
+  constexpr int kHeads = 4;
+  constexpr int kGroupHeads = 2;
+  constexpr int kHeadDim = 3;
+  constexpr int kState = 2;
+  std::vector<double> state_reference(
+      kTokens * kHeads * kHeadDim * kState);
+  std::iota(state_reference.begin(), state_reference.end(), 1.0);
+  std::vector<double> packed(kGroupHeads * kHeadDim * kState);
+  constexpr int kToken = 1;
+  constexpr int kGroup = 1;
+  constexpr double kScale = 4.0;
+  for (int state = 0; state < kState; ++state) {
+    for (int local_head = 0; local_head < kGroupHeads; ++local_head) {
+      const int head = kGroup * kGroupHeads + local_head;
+      for (int position = 0; position < kHeadDim; ++position) {
+        const auto packed_index = static_cast<std::size_t>(
+            state * kGroupHeads * kHeadDim + local_head * kHeadDim + position);
+        const auto reference_index = static_cast<std::size_t>(
+            (((kToken * kHeads + head) * kHeadDim + position) * kState + state));
+        packed[packed_index] = state_reference[reference_index] / kScale;
+      }
+    }
+  }
+  require(packed_state_max_abs_error(
+              packed, state_reference, kToken, kGroup, kHeads, kGroupHeads,
+              kHeadDim, kState, kScale) == 0.0,
+          "packed-state comparison has the wrong axis map");
+  packed[5] += 0.25;
+  require(packed_state_max_abs_error(
+              packed, state_reference, kToken, kGroup, kHeads, kGroupHeads,
+              kHeadDim, kState, kScale) == 1.0,
+          "packed-state comparison did not restore normalized scale");
+  require_invalid([&] {
+    packed_state_max_abs_error({}, state_reference, kToken, kGroup, kHeads,
+                               kGroupHeads, kHeadDim, kState, kScale);
+  });
+
   const auto rotations = required_rotations(payload, packing, rep_in, rep_out);
   require(!rotations.empty(), "rotation plan is empty");
   require(std::is_sorted(rotations.begin(), rotations.end()),

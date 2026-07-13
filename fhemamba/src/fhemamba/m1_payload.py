@@ -39,6 +39,7 @@ __all__ = [
     "export_autoregressive_client_payload",
     "export_chain_payload",
     "export_m1_payload",
+    "export_state_debug_references",
 ]
 from torch.nn import functional as F  # noqa: N812
 
@@ -161,6 +162,7 @@ class _TestVectors:
     embeddings: torch.Tensor
     layer_inputs: list[torch.Tensor]
     layer_outputs: list[torch.Tensor]
+    layer_states: list[torch.Tensor]
     expected_final: torch.Tensor
 
 
@@ -174,15 +176,13 @@ class _AutoregressiveTrace:
 
 
 @torch.no_grad()
-def _collect_test_vectors(
-    model, tokenizer, prompt: str, n_test_tokens: int, ops=None
-) -> _TestVectors:
-    ids = tokenizer(prompt, return_tensors="pt").input_ids[:, :n_test_tokens]
+def _collect_test_vectors_from_ids(model, ids: torch.Tensor, ops=None) -> _TestVectors:
     ids = ids.to(model.get_input_embeddings().weight.device)
     embeddings = model.backbone.embeddings(ids)[0]
     states = init_states(model)
     layer_inputs: list[list[torch.Tensor]] = [[] for _ in model.backbone.layers]
     layer_outputs: list[list[torch.Tensor]] = [[] for _ in model.backbone.layers]
+    layer_states: list[list[torch.Tensor]] = [[] for _ in model.backbone.layers]
     expected_final = []
     for token in range(ids.shape[1]):
         hidden_states = model_forward(
@@ -196,14 +196,24 @@ def _collect_test_vectors(
             layer_input = embeddings[token] if layer == 0 else hidden_states[layer - 1][0, 0]
             layer_inputs[layer].append(layer_input)
             layer_outputs[layer].append(hidden_states[layer][0, 0])
+            layer_states[layer].append(states[layer].ssm[0].clone())
         expected_final.append(hidden_states[-1][0, 0])
     return _TestVectors(
         token_ids=[int(value) for value in ids[0].tolist()],
         embeddings=embeddings,
         layer_inputs=[torch.stack(values) for values in layer_inputs],
         layer_outputs=[torch.stack(values) for values in layer_outputs],
+        layer_states=[torch.stack(values) for values in layer_states],
         expected_final=torch.stack(expected_final),
     )
+
+
+@torch.no_grad()
+def _collect_test_vectors(
+    model, tokenizer, prompt: str, n_test_tokens: int, ops=None
+) -> _TestVectors:
+    ids = tokenizer(prompt, return_tensors="pt").input_ids[:, :n_test_tokens]
+    return _collect_test_vectors_from_ids(model, ids, ops=ops)
 
 
 @torch.no_grad()
@@ -310,6 +320,78 @@ def _poly_ops_from_export(out: Path, n_layers: int) -> PolyOps:
         enabled=frozenset(SITE_NAMES),
         layer_polys=layer_polys,
     )
+
+
+@torch.no_grad()
+def export_state_debug_references(model, chain_dir: str | Path, tokens: int | None = None) -> Path:
+    """Add exact/poly recurrent-state references to an existing chain payload."""
+    out = Path(chain_dir)
+    chain = json.loads((out / "chain.json").read_text())
+    n_layers = int(chain["n_layers"])
+    if n_layers != len(model.backbone.layers):
+        raise ValueError("chain layer count does not match the model")
+
+    token_ids = chain.get("test_token_ids")
+    if token_ids is None:
+        first_meta = json.loads((out / chain["layer_dirs"][0] / "meta.json").read_text())
+        token_ids = first_meta.get("test_token_ids")
+    if token_ids is None and "chain_input_embeddings" in chain["tensors"]:
+        shape = chain["tensors"]["chain_input_embeddings"]
+        if shape != [int(chain["n_test_tokens"]), int(model.config.hidden_size)]:
+            raise ValueError("chain_input_embeddings has an incompatible shape")
+        count = math.prod(shape)
+        inputs = torch.from_file(
+            str(out / "chain_input_embeddings.bin"),
+            shared=False,
+            size=count,
+            dtype=torch.float32,
+        ).reshape(shape)
+        weights = model.get_input_embeddings().weight.detach()
+        weight_norms = weights.float().square().sum(dim=1)
+        token_ids = []
+        for embedding in inputs:
+            value = embedding.to(device=weights.device, dtype=torch.float32)
+            distances = weight_norms - 2.0 * (weights.float() @ value) + value.square().sum()
+            token_id = int(distances.argmin())
+            error = float((weights[token_id].float() - value).abs().amax())
+            if error > 1e-5:
+                raise ValueError(
+                    f"chain embedding does not match checkpoint vocabulary (error={error:.3g})"
+                )
+            token_ids.append(token_id)
+    if token_ids is None and isinstance(chain.get("autoregressive"), dict):
+        token_ids = chain["autoregressive"].get("prompt_ids")
+        if token_ids is not None:
+            token_ids = token_ids[: int(chain["n_test_tokens"])]
+    if not isinstance(token_ids, list) or len(token_ids) < 1:
+        raise ValueError("chain payload has no test_token_ids")
+    if len(token_ids) != int(chain["n_test_tokens"]):
+        raise ValueError("recovered token count does not match chain n_test_tokens")
+    if tokens is not None and (tokens < 1 or tokens > len(token_ids)):
+        raise ValueError("tokens must be within the exported chain length")
+
+    reference_ids = token_ids if tokens is None else token_ids[:tokens]
+    ids = torch.tensor([reference_ids], dtype=torch.long)
+    exact = _collect_test_vectors_from_ids(model, ids)
+    poly = _collect_test_vectors_from_ids(
+        model,
+        ids,
+        ops=_poly_ops_from_export(out, n_layers),
+    )
+    note = "test_state_output[_poly] stores post-update recurrent state for debug attribution"
+    for layer, directory in enumerate(chain["layer_dirs"]):
+        layer_dir = out / directory
+        meta_path = layer_dir / "meta.json"
+        meta = json.loads(meta_path.read_text())
+        if meta.get("test_token_ids") not in (None, token_ids):
+            raise ValueError(f"test_token_ids mismatch in {layer_dir}")
+        meta["test_token_ids"] = token_ids
+        _save(layer_dir, "test_state_output", exact.layer_states[layer], meta["tensors"])
+        _save(layer_dir, "test_state_output_poly", poly.layer_states[layer], meta["tensors"])
+        if note not in meta["notes"]:
+            meta["notes"].append(note)
+        meta_path.write_text(json.dumps(meta, indent=2))
+    return out
 
 
 @torch.no_grad()
@@ -551,6 +633,7 @@ def export_m1_payload(
     test_vectors = _test_vectors or _collect_test_vectors(model, tokenizer, prompt, n_test_tokens)
     _save(out, "test_layer_input", test_vectors.layer_inputs[layer_index], manifest)
     _save(out, "test_layer_output", test_vectors.layer_outputs[layer_index], manifest)
+    _save(out, "test_state_output", test_vectors.layer_states[layer_index], manifest)
 
     meta = {
         "format": "fhemamba-m1-v1",
@@ -654,8 +737,17 @@ def export_chain_payload(
             poly_test_vectors.layer_outputs[layer],
             meta["tensors"],
         )
+        _save(
+            layer_dir,
+            "test_state_output_poly",
+            poly_test_vectors.layer_states[layer],
+            meta["tensors"],
+        )
         meta["notes"].append(
             "test_layer_output_poly is the plaintext polynomial-circuit correctness reference"
+        )
+        meta["notes"].append(
+            "test_state_output[_poly] stores post-update recurrent state for debug attribution"
         )
         meta_path.write_text(json.dumps(meta, indent=2))
 

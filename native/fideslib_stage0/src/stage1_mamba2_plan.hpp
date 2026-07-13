@@ -61,6 +61,10 @@ auto derive_packing(const M1Payload& payload, int batch) -> PackingDims;
 auto build_normalized_state_layout(
     const std::vector<double>& state_group_abs_max, int group_block, int batch)
     -> NormalizedStateLayout;
+auto packed_state_max_abs_error(
+    const std::vector<double>& packed, const std::vector<double>& reference,
+    int token, int group, int heads, int group_heads, int head_dim,
+    int state_size, double scale) -> double;
 auto int_log2(int value) -> int;
 auto required_rotations(const M1Payload& payload, const PackingDims& dims,
                         const ReplicatedShape& rep_in,
