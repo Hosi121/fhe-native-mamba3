@@ -41,6 +41,7 @@ init_dgx_mamba2_defaults() {
   META_BTS_ALPHA="${META_BTS_ALPHA:-6}"
   STATE_META_BTS_ALPHA="${STATE_META_BTS_ALPHA:--1}"
   META_BTS_RESIDUAL_ALIGN_MODE="${META_BTS_RESIDUAL_ALIGN_MODE:-unity}"
+  META_BTS_RESIDUAL_LAYERS="${META_BTS_RESIDUAL_LAYERS:-}"
 
   BOOTSTRAP_BEFORE_TOKEN="${BOOTSTRAP_BEFORE_TOKEN:-}"
   DEBUG_LAYER_ERRORS="${DEBUG_LAYER_ERRORS:-0}"
@@ -91,6 +92,7 @@ build_dgx_mamba2_args() {
     --meta-bts-alpha "$META_BTS_ALPHA"
     --state-meta-bts-alpha "$STATE_META_BTS_ALPHA"
     --meta-bts-residual-align-mode "$META_BTS_RESIDUAL_ALIGN_MODE"
+    --meta-bts-residual-layers "$META_BTS_RESIDUAL_LAYERS"
     --bootstrap-before-token "$BOOTSTRAP_BEFORE_TOKEN"
     --debug-layer-errors "$DEBUG_LAYER_ERRORS"
     --debug-client-reencrypt-before-token "$DEBUG_CLIENT_REENCRYPT_BEFORE_TOKEN"

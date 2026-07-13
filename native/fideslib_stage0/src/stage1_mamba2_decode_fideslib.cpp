@@ -122,6 +122,7 @@ using fhemamba::stage1::rotation_frequencies;
 using fhemamba::stage1::rotation_key_gib_estimate;
 using fhemamba::stage1::require_same_layer_dims;
 using fhemamba::stage1::require_server_has_no_secret_files;
+using fhemamba::stage1::should_use_meta_bts;
 using fhemamba::stage1::write_artifact_prefix;
 using fhemamba::stage1::write_double_map_json;
 using fhemamba::stage1::write_double_vector_json;
@@ -1799,6 +1800,7 @@ auto main(int argc, char* argv[]) -> int {
     std::vector<double> active_state_group_bounds;
     double active_fifo_bound = -1.0;
     std::map<std::string, double> active_checkpoint_bounds;
+    int active_layer_index = -1;
     bool carried_bound_fallback_warned = false;
     auto eval_bootstrap_synced = [&](const Ciphertext<DCRTPoly>& input) {
       if (cudaDeviceSynchronize() != 0) {
@@ -1824,10 +1826,8 @@ auto main(int argc, char* argv[]) -> int {
       const bool normalized_state =
           carried && what.find("state") != std::string::npos &&
           args.normalized_recurrent_state;
-      const bool use_meta_bts =
-          args.meta_bts &&
-          (!normalized_state || args.normalized_state_meta_bts) &&
-          (carried || what.find("gated_poly_input") != std::string::npos);
+      const bool use_meta_bts = should_use_meta_bts(
+          args, active_layer_index, carried, normalized_state, what);
       // Meta-BTS residual amplification needs one live level after the
       // normalize/rescale, so eligible checkpoints trigger one level earlier.
       const int meta_headroom = use_meta_bts ? 1 : 0;
@@ -3004,6 +3004,7 @@ auto main(int argc, char* argv[]) -> int {
       active_state_group_bounds = plan.state_group_abs_max;
       active_fifo_bound = plan.fifo_abs_max;
       active_checkpoint_bounds = plan.checkpoint_abs_max;
+      active_layer_index = layer_index;
       // Block RMSNorm inverse sqrt on V = sum(x^2) + d_model*eps; the sqrt(w)
       // and norm weights are folded into the in_proj plaintexts, so proj =
       // BSGS(h) * inv (inv is a uniform broadcast and commutes with matmul).
@@ -3476,6 +3477,7 @@ auto main(int argc, char* argv[]) -> int {
         active_state_group_bounds = plan.state_group_abs_max;
         active_fifo_bound = plan.fifo_abs_max;
         active_checkpoint_bounds = plan.checkpoint_abs_max;
+        active_layer_index = layer;
         maybe_bootstrap(hidden_ct, plan.req_residual, tag + "residual",
                         layer_bootstraps);
         summary_level_in[key] = static_cast<int>(hidden_ct->GetLevel());
@@ -3917,6 +3919,9 @@ auto main(int argc, char* argv[]) -> int {
     out << "\"state_meta_bts_alpha\":" << args.state_meta_bts_alpha << ",";
     out << "\"meta_bts_residual_align_mode\":\""
         << json_escape(args.meta_bts_residual_align_mode) << "\",";
+    out << "\"meta_bts_residual_layers\":";
+    write_int_set_json(out, args.meta_bts_residual_layers);
+    out << ",";
     std::vector<int> gated_init_degrees;
     std::vector<int> gated_newton_iterations;
     gated_init_degrees.reserve(layer_plans.size());
@@ -4117,6 +4122,9 @@ auto main(int argc, char* argv[]) -> int {
         << ",";
     out << "\"residual_align_mode\":\""
         << json_escape(args.meta_bts_residual_align_mode) << "\",";
+    out << "\"residual_layers\":";
+    write_int_set_json(out, args.meta_bts_residual_layers);
+    out << ",";
     out << "\"applied_count\":" << meta_bts_applied;
     out << "},";
     out << "\"bootstrap_events\":[";

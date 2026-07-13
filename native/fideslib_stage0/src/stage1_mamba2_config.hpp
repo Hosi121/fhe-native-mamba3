@@ -2,6 +2,7 @@
 
 #include <set>
 #include <string>
+#include <string_view>
 
 namespace fhemamba::stage1 {
 
@@ -191,8 +192,9 @@ struct Config {
   // token-horizon (DESIGN.md dgx-only roadmap). B must stay >= true max |m|
   // (no clipping); 1.1 leaves 10% headroom over the measured bound.
   double state_bootstrap_margin = 1.1;
-  // Meta-BTS (double bootstrap with residual amplification) on CARRIED
-  // lineages only: y1 = BTS(x_n) carries error e1 ~ eps; the residual
+  // Meta-BTS (double bootstrap with residual amplification) on carried
+  // lineages, gated polynomial inputs, and explicitly selected residual
+  // layers: y1 = BTS(x_n) carries error e1 ~ eps; the residual
   // r = x_n - y1 = -e1 is amplified by 2^alpha (needs ONE live level, so the
   // carried refresh trigger fires one level earlier), bootstrapped again
   // (y2 = -e1*2^alpha + e2), scaled back and added: y1 + y2*2^-alpha =
@@ -210,8 +212,17 @@ struct Config {
   // noise because its message is itself only bootstrap error. Allow this one
   // alignment to use SetLevel without changing the rest of the deep circuit.
   std::string meta_bts_residual_align_mode = "unity";
+  // Apply Meta-BTS to the transient residual refresh only at selected layers.
+  // The residual calibration bound grows sharply near the end of the 130M
+  // model, so a single bootstrap's error floor is multiplied by O(10^3).
+  // Keeping this selective avoids doubling every layer's residual refresh.
+  std::set<int> meta_bts_residual_layers;
 };
 
 auto parse_args(int argc, char* argv[]) -> Config;
+
+auto should_use_meta_bts(const Config& config, int active_layer,
+                         bool carried, bool normalized_state,
+                         std::string_view checkpoint) -> bool;
 
 }  // namespace fhemamba::stage1

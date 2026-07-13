@@ -66,6 +66,21 @@ auto parse_int_set(std::string_view name, std::string_view value) -> std::set<in
   return output;
 }
 
+auto should_use_meta_bts(const Config& config, int active_layer,
+                         bool carried, bool normalized_state,
+                         std::string_view checkpoint) -> bool {
+  if (!config.meta_bts ||
+      (normalized_state && !config.normalized_state_meta_bts)) {
+    return false;
+  }
+  const bool selected_residual =
+      checkpoint.find("residual") != std::string_view::npos &&
+      config.meta_bts_residual_layers.count(active_layer) > 0;
+  return carried ||
+         checkpoint.find("gated_poly_input") != std::string_view::npos ||
+         selected_residual;
+}
+
 auto parse_args(int argc, char* argv[]) -> Config {
   Config config;
   for (int i = 1; i < argc; ++i) {
@@ -92,6 +107,8 @@ auto parse_args(int argc, char* argv[]) -> Config {
       config.state_meta_bts_alpha = parse_int(arg, value);
     } else if (arg == "--meta-bts-residual-align-mode") {
       config.meta_bts_residual_align_mode = value;
+    } else if (arg == "--meta-bts-residual-layers") {
+      config.meta_bts_residual_layers = parse_int_set(arg, value);
     } else if (arg == "--input") {
       config.input = value;
     } else if (arg == "--input-chain") {
@@ -246,6 +263,11 @@ auto parse_args(int argc, char* argv[]) -> Config {
   for (const int layer : config.refresh_recurrent_state_post_layers) {
     if (layer < 0) {
       throw std::invalid_argument("refresh-recurrent-state-post-layers must be nonnegative");
+    }
+  }
+  for (const int layer : config.meta_bts_residual_layers) {
+    if (layer < 0) {
+      throw std::invalid_argument("meta-bts-residual-layers must be nonnegative");
     }
   }
   if (config.state_refresh_interval < 0) {

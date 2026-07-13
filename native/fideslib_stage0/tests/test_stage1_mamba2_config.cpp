@@ -79,7 +79,9 @@ auto main() -> int {
       parse({"stage1", "--input", "payload", "--pt-cache-weight-level", "20",
              "--pt-miss-consumption-level", "1", "--state-refresh-interval", "2",
              "--normalized-recurrent-state", "true",
-             "--normalized-state-meta-bts", "true"});
+             "--normalized-state-meta-bts", "true",
+             "--meta-bts", "true",
+             "--meta-bts-residual-layers", "21,22,23"});
   require(consumption_plain.pt_cache_weight_level == 20,
           "weight plaintext cache level was not parsed");
   require(consumption_plain.pt_miss_consumption_level,
@@ -90,6 +92,20 @@ auto main() -> int {
           "normalized recurrent state was not parsed");
   require(consumption_plain.normalized_state_meta_bts,
           "normalized state Meta-BTS was not parsed");
+  require(consumption_plain.meta_bts_residual_layers == std::set<int>({21, 22, 23}),
+          "residual Meta-BTS layer set was not parsed");
+  require(fhemamba::stage1::should_use_meta_bts(
+              consumption_plain, 22, false, false, "t1.L22.residual"),
+          "selected residual layer did not enable Meta-BTS");
+  require(!fhemamba::stage1::should_use_meta_bts(
+              consumption_plain, 20, false, false, "t1.L20.residual"),
+          "unselected residual layer enabled Meta-BTS");
+  require(fhemamba::stage1::should_use_meta_bts(
+              consumption_plain, 20, false, false, "t1.L20.gated_poly_input"),
+          "existing gated Meta-BTS policy changed");
+  require(fhemamba::stage1::should_use_meta_bts(
+              consumption_plain, 20, true, true, "t1.L20.state_post0"),
+          "normalized-state Meta-BTS override changed");
 
   require_invalid([] { parse({"stage1"}); });
   require_invalid([] {
@@ -133,6 +149,9 @@ auto main() -> int {
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--state-refresh-interval", "-1"});
+  });
+  require_invalid([] {
+    parse({"stage1", "--input", "payload", "--meta-bts-residual-layers", "-1"});
   });
   require_invalid([] {
     parse({"stage1", "--input", "payload", "--normalized-state-meta-bts",

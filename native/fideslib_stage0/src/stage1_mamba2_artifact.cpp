@@ -209,6 +209,9 @@ void write_runtime_failure_payload(const Config& args,
   out << "\"level_align_mode\":\"" << json_escape(args.level_align_mode) << "\",";
   out << "\"meta_bts_residual_align_mode\":\""
       << json_escape(args.meta_bts_residual_align_mode) << "\",";
+  out << "\"meta_bts_residual_layers\":";
+  write_int_set_json(out, args.meta_bts_residual_layers);
+  out << ",";
   out << "\"bootstrap_before_token\":";
   write_int_set_json(out, args.bootstrap_before_token);
   out << ",\"debug_client_reencrypt_before_token\":";
