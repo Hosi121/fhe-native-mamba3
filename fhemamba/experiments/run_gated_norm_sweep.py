@@ -120,7 +120,7 @@ def main() -> None:
         print(json.dumps(row, allow_nan=False), flush=True)
 
     payload = {
-        "version": "0.4.4",
+        "version": "0.4.5",
         "repo_commit": args.repo_commit,
         "stage": "mamba2-gated-norm-sweep-report",
         "backend": "torch-plaintext",

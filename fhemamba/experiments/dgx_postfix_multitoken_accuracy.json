@@ -1,6 +1,6 @@
 {
   "name": "postfix-24-layer-multitoken-accuracy",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "timeout_seconds": 1800,
   "gpu_preflight": {
     "required": true,
@@ -13,7 +13,7 @@
   "defaults": {
     "LAYERS": "24",
     "TOKENS": "2",
-    "ARTIFACT_VERSION": "0.4.4",
+    "ARTIFACT_VERSION": "0.4.5",
     "REPO_COMMIT": "8b270e4bfed3e27b534a77741e5ad6184e236bf8",
     "RING_DIM": "65536",
     "MULTIPLICATIVE_DEPTH": "44",

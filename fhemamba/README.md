@@ -1,115 +1,132 @@
-# fhemamba — FHE-lowerable Mamba, rebuilt trunk
+# fhemamba — the active encrypted Mamba-2 trunk
 
-Goal: encrypted (CKKS) inference for a real, open-weight Mamba language model,
-with language quality (perplexity) as the only quality gate.
+`fhemamba` is the reference, lowering, payload-export, and experiment layer for
+running the real `mamba2-130m` checkpoint under CKKS. Language quality is the
+first gate; encrypted execution must then match the same polynomial circuit
+without hiding range failures or feeding decrypted diagnostics back into the
+ciphertext path.
 
-This subproject is the Phase 0/1 trunk from the 2026-07 strategy review. The
-old package (`src/fhe_native_mamba3`) is kept read-only as a parts/measurement
-archive; salvageable assets (FIDESlib kernel, layout code, polynomial
-machinery, measured constants) get ported here behind quality gates.
+The native FIDESlib/OpenFHE implementation lives in
+[`../native/fideslib_stage0/`](../native/fideslib_stage0/). The older
+`../src/fhe_native_mamba3` package is an archive, not a second active trunk.
 
-## Design rules (anti-patterns from the old repo, inverted)
+## Current evidence
 
-1. **One formula.** `reference.py` is the only implementation of the Mamba
-   math. It reads weights directly off a `transformers` model object — there
-   is deliberately no weight-copying/adaptation layer. Every FHE-hostile
-   nonlinearity is called through an injectable `Ops` object with a site key.
-2. **The substitution ladder is data, not code.** Exact → range-calibrated
-   polynomial is expressed by swapping `Ops` implementations. No forked
-   formulas, no per-experiment modules.
-3. **PPL is the gate.** Every substitution rung gets a WikiText-2 perplexity
-   number against the exact reference. Element-wise MSE is diagnostic only.
-4. **No clamping.** Polynomial ops evaluate out-of-range inputs as-is (CKKS
-   has no clamp); violations are counted and reported, not hidden.
-5. **Tests assert independent expectations** (torch ground truth, the official
-   HF forward, hand-computed values). No JSON-echo tests. No coverage gate.
-6. **Results are tracked in git** (`results/*.json`), small and reviewable.
+As of 2026-07-14 (`v0.4.5`):
+
+- the fully polynomial Mamba-2 surrogate changes WikiText-2 perplexity from
+  22.307 to 22.333 (+0.12%, 280 windows, no finetuning);
+- the lowered decode schedule matches the reference to 3e-5;
+- the promoted B300 path passes 24 layers and three sequential autoregressive
+  token steps at per-token polynomial-circuit errors 0.01295, 0.01173, and
+  0.03475 (tolerance 0.05);
+- that path evaluates in 145.75 s, with the two warm carried-state steps
+  averaging 26.38 s, 469 physical bootstraps, and 120.24 GiB peak RSS;
+- layer-0/two-token execution separately passes with OpenFHE-accepted 128-bit
+  parameters, but the full-chain B300 evidence still uses
+  `security=not-set` and is not a protocol-security claim.
+
+The promoted B300 runtime combines `out_proj` linear-transform fusion with
+complex-paired normalized-state refresh. Full projection fusion, shared
+dt/decay head expansion, reduced synchronization, and interval-2 state refresh
+remain explicit experiments because their full-session accuracy or runtime
+trade-offs are not yet better.
+
+See the root [README](../README.md) for the claim boundary and the
+[bottleneck survey](../docs/research/2026-07-13-fhe-mamba-bottleneck-survey.md)
+for measured comparisons and negative results.
+
+## Design rules
+
+1. **One formula.** `src/fhemamba/reference.py` is the Mamba math. It reads
+   weights directly from the Transformers model and routes FHE-hostile
+   operations through an injectable `Ops` implementation.
+2. **Substitution is data.** Exact, range-recording, and polynomial behavior
+   share the same formula rather than separate model forks.
+3. **Perplexity is the model-quality gate.** Element-wise MSE is diagnostic;
+   it cannot replace closed-loop WikiText-2 evaluation.
+4. **No clamping.** CKKS cannot secretly clamp values. Range violations are
+   counted and reported.
+5. **Tests use independent expectations.** Torch, official Transformers, and
+   hand-computed results are the ground truth.
+6. **Artifacts are honest.** Small JSON results are tracked, failures remain
+   visible, and polynomial-circuit error is kept separate from exact-model
+   approximation error.
 
 ## Layout
 
-```
+```text
 src/fhemamba/
-  ops.py        # Exact / RangeRecorder / PolyOps (Chebyshev, Clenshaw eval)
-  reference.py  # lowerable Mamba-1 forward (loop + chunked scan), Ops-injected
-  ppl.py        # WikiText-2 perplexity harness
-tests/          # parity vs transformers, poly accuracy vs torch
-experiments/    # parity/PPL runs plus resumable DGX campaigns -> results/
+  reference.py             exact and FHE-lowerable Mamba-1/Mamba-2 math
+  ops.py                   exact/range/polynomial operator implementations
+  lowering.py              CKKS operation and level schedule
+  m1_payload.py            real-checkpoint payload and reference export
+  bsgs_layout.py           slot-exact replicated/interleaved BSGS layouts
+  state_layout.py          packed recurrent-state layouts and refresh plans
+  rotation_keys.py         composite/direct rotation-key planning
+tests/                     independent unit and parity gates
+experiments/               local probes and resumable DGX/B300 campaigns
+results/                   small correctness, quality, and performance artifacts
 ```
 
-## Run
+## Local checks
+
+From the repository root:
 
 ```bash
-export PYTHONPATH=fhemamba/src
-.venv/bin/python -m pytest fhemamba/tests -q
-.venv/bin/python fhemamba/experiments/run_parity.py --checkpoint checkpoints/mamba-130m-hf
-.venv/bin/python fhemamba/experiments/run_ppl_ladder.py --checkpoint checkpoints/mamba-130m-hf
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -m pytest fhemamba/tests -q
 ```
 
-DGX campaigns use a JSON manifest so tolerance misses do not stop later
-experiments, while missing or malformed artifacts still fail fast. Promotion
-gates avoid expensive deep runs when a cheaper proxy is already outside its
-configured error/decryption bound. Optional GPU preflight waits instead of
-contending with another CUDA workload; timeouts, SIGTERM, and SSH hangups tear
-down the complete runner process group.
+Checkpoint parity and the PPL ladder:
 
 ```bash
-python3 fhemamba/experiments/run_dgx_campaign.py \
+python fhemamba/experiments/run_parity.py \
+  --checkpoint checkpoints/mamba2-130m-hf
+python fhemamba/experiments/run_ppl_ladder.py \
+  --checkpoint checkpoints/mamba2-130m-hf
+```
+
+## GPU campaigns
+
+DGX campaigns use JSON manifests so an accuracy miss does not hide subsequent
+candidates, while malformed or missing artifacts still fail fast:
+
+```bash
+python fhemamba/experiments/run_dgx_campaign.py \
   --manifest fhemamba/experiments/dgx_campaign.example.json \
   --runner fhemamba/experiments/run_dgx_layer_ladder.sh \
-  --output-json results/dgx-campaign.json \
+  --output-json fhemamba/results/dgx/example-campaign.json \
   --resume
 ```
 
-The layer ladder and process-separated runner source the same promoted native
-defaults from `experiments/dgx_mamba2_common.sh`: true BSGS, interleaved
-projections, replicated state expansion, normalized recurrent state, a 5 GiB
-plaintext cache, and interval-1 state refresh. Normalized state uses Meta-BTS
-only when `NORMALIZED_STATE_META_BTS=1` is set. Neither single-BTS nor Meta-BTS
-state refresh currently clears the 24-layer/two-token accuracy gate, while
-Meta-BTS adds 144 physical bootstraps in that run, so the faster single-BTS path
-remains the default.
+The shared runner defaults live in `experiments/dgx_mamba2_common.sh`. B300
+build and launch helpers live under `../scripts/`; environment flags keep
+unpromoted projection, state-refresh, head-expansion, and synchronization
+experiments opt-in.
 
-Add a two-token prompt / four-token greedy client-loop trace to an existing
-chain payload without repeating calibration or layer export:
+Add client embedding and `lm_head` assets to an existing chain payload:
 
 ```bash
-PYTHONPATH=fhemamba/src .venv/bin/python \
-  fhemamba/experiments/export_autoregressive_client_payload.py \
+python fhemamba/experiments/export_autoregressive_client_payload.py \
   --checkpoint checkpoints/mamba2-130m-hf \
   --chain-dir fhemamba/results/m2_chain_payload \
-  --prompt-tokens 2 --generate-tokens 4
+  --prompt-tokens 2 \
+  --generate-tokens 4
 ```
 
-The matching native run uses `TOKENS=5 AUTOREGRESSIVE_CLIENT_LOOP=1`. Four
-generated tokens require five sequential model evaluations because the first
-two prompt tokens produce the first generated token; future time steps cannot
-be parallelized. `--streams 4` will instead represent four independent decode
-sequences once chain-mode stream packing is enabled.
-
-The fixed-vector full-kernel key-separation smoke uses three independent
-invocations and refuses to reuse an existing handoff directory:
+Audit carried-state/FIFO bounds before an expensive encrypted run:
 
 ```bash
-LAYERS=1 TOKENS=1 RUN_TAG=process-separated-smoke \
-  fhemamba/experiments/run_dgx_process_separated.sh
-```
-
-`server-eval` deserializes only the context, public key, multiplication keys,
-and rotation/bootstrap keys. Secret-key diagnostics are rejected at argument
-validation. Passing the server phase alone is only a handoff result; the
-separate `client-decrypt` phase owns the correctness verdict.
-
-Audit the polynomial autoregressive trace against the carried-state/FIFO
-calibration bounds used by the native packing:
-
-```bash
-PYTHONPATH=fhemamba/src .venv/bin/python \
-  fhemamba/experiments/audit_autoregressive_bounds.py \
+python fhemamba/experiments/audit_autoregressive_bounds.py \
   --checkpoint checkpoints/mamba2-130m-hf \
   --chain-dir /path/to/chain-payload \
-  --output-json results/autoregressive-bound-audit.json \
-  --ring-dim 65536 --state-margin 1.1
+  --output-json fhemamba/results/autoregressive-bound-audit.json \
+  --ring-dim 65536 \
+  --state-margin 1.1
 ```
 
-The command exits nonzero when any bound is exceeded; this is a candidate
-failure, not an infrastructure failure.
+The audit exits nonzero when a bound is exceeded; that is a candidate failure,
+not an infrastructure failure.

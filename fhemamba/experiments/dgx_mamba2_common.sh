@@ -6,7 +6,7 @@ init_dgx_mamba2_defaults() {
   BINARY="${BINARY:-$ROOT/build_stage0/stage1_mamba2_decode_fideslib}"
   INPUT_CHAIN="${INPUT_CHAIN:-$ROOT/m2_chain_payload_sqnewton_wiki512_t8}"
   RESULTS_DIR="${RESULTS_DIR:-$ROOT/results}"
-  ARTIFACT_VERSION="${ARTIFACT_VERSION:-0.4.4}"
+  ARTIFACT_VERSION="${ARTIFACT_VERSION:-0.4.5}"
   REPO_COMMIT="${REPO_COMMIT:-working-tree}"
   FIDESLIB_SYNC_PROFILE="${FIDESLIB_SYNC_PROFILE:-unspecified}"
 

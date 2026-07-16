@@ -1,0 +1,149 @@
+{
+  "backend": "orchestration",
+  "campaign": "postfix-24-layer-speed-candidates",
+  "config": {
+    "input_mode": "campaign-orchestration"
+  },
+  "encrypted": false,
+  "experiments": [
+    {
+      "all_tokens_decrypt": true,
+      "artifact_paths": [
+        "/home/kataiwa/fhemamba/results/m2_chain_postfix-balanced30-cache5-l24-t1_l24_t1.json"
+      ],
+      "artifacts": [
+        {
+          "measurement_scope": {
+            "full_layer_chain": true,
+            "zero_intermediate_decrypts": true
+          },
+          "measurements": {
+            "executed_bootstrap_count": 108,
+            "max_abs_error": 0.0144486458459,
+            "peak_rss_gib": 48.4342002869,
+            "per_token_decrypt_ok": [
+              1
+            ],
+            "per_token_max_abs_error": [
+              0.0144486458459
+            ]
+          },
+          "passed": true,
+          "path": "/home/kataiwa/fhemamba/results/m2_chain_postfix-balanced30-cache5-l24-t1_l24_t1.json",
+          "stage": "stage1-mamba2-decode-fideslib",
+          "status": "passed",
+          "timing": {
+            "eval_seconds": 400.718221493
+          },
+          "version": "0.4.4+m2_chain_postfix-balanced30-cache5-l24-t1_l24_t1"
+        }
+      ],
+      "candidate_passed": true,
+      "environment": {
+        "ARTIFACT_VERSION": "0.4.4",
+        "AUTO_HEADROOM": "4",
+        "BSGS_REPLICAS": "auto",
+        "CARRIED_HEADROOM": "0",
+        "ENCODE_THREADS": "8",
+        "FIRST_MOD_SIZE": "60",
+        "LAYERS": "24",
+        "LEVEL_ALIGN_MODE": "drop",
+        "META_BTS": "1",
+        "META_BTS_ALPHA": "6",
+        "META_BTS_RESIDUAL_ALIGN_MODE": "unity",
+        "MULTIPLICATIVE_DEPTH": "44",
+        "PT_CACHE_GIB": "5",
+        "REFRESH_RECURRENT_STATE_POST": "1",
+        "REPO_COMMIT": "8b270e4bfed3e27b534a77741e5ad6184e236bf8",
+        "RESIDUAL_HEADROOM": "0",
+        "RING_DIM": "65536",
+        "ROTATION_KEYS": "balanced",
+        "ROTATION_KEY_GIB": "30",
+        "RUN_TAG": "postfix-balanced30-cache5-l24-t1",
+        "SCALING_MOD_SIZE": "59",
+        "SECURITY": "not-set",
+        "STATE_META_BTS_ALPHA": "-1",
+        "TOKENS": "1",
+        "TOLERANCE": "0.05"
+      },
+      "gpu_wait_seconds": 0.024481230997480452,
+      "infrastructure_ok": true,
+      "issues": [],
+      "max_abs_error": 0.0144486458459,
+      "name": "postfix-balanced30-cache5-l24-t1",
+      "reason": "unconditional",
+      "returncode": 0,
+      "seconds": 442.84192712802906,
+      "state": "executed",
+      "timed_out": false
+    },
+    {
+      "all_tokens_decrypt": false,
+      "artifact_paths": [
+        "/home/kataiwa/fhemamba/results/m2_chain_postfix-compact-cache40-l24-t1_l24_t1.json"
+      ],
+      "artifacts": [],
+      "candidate_passed": false,
+      "environment": {
+        "ARTIFACT_VERSION": "0.4.4",
+        "AUTO_HEADROOM": "4",
+        "BSGS_REPLICAS": "auto",
+        "CARRIED_HEADROOM": "0",
+        "ENCODE_THREADS": "8",
+        "FIRST_MOD_SIZE": "60",
+        "LAYERS": "24",
+        "LEVEL_ALIGN_MODE": "drop",
+        "META_BTS": "1",
+        "META_BTS_ALPHA": "6",
+        "META_BTS_RESIDUAL_ALIGN_MODE": "unity",
+        "MULTIPLICATIVE_DEPTH": "44",
+        "PT_CACHE_GIB": "40",
+        "REFRESH_RECURRENT_STATE_POST": "1",
+        "REPO_COMMIT": "8b270e4bfed3e27b534a77741e5ad6184e236bf8",
+        "RESIDUAL_HEADROOM": "0",
+        "RING_DIM": "65536",
+        "ROTATION_KEYS": "compact",
+        "ROTATION_KEY_GIB": "30",
+        "RUN_TAG": "postfix-compact-cache40-l24-t1",
+        "SCALING_MOD_SIZE": "59",
+        "SECURITY": "not-set",
+        "STATE_META_BTS_ALPHA": "-1",
+        "TOKENS": "1",
+        "TOLERANCE": "0.05"
+      },
+      "gpu_wait_seconds": 0.022403082926757634,
+      "infrastructure_ok": false,
+      "issues": [
+        "missing artifact: /home/kataiwa/fhemamba/results/m2_chain_postfix-compact-cache40-l24-t1_l24_t1.json"
+      ],
+      "max_abs_error": null,
+      "name": "postfix-compact-cache40-l24-t1",
+      "reason": "unconditional",
+      "returncode": 1,
+      "seconds": 395.70449493301567,
+      "state": "executed",
+      "timed_out": false
+    }
+  ],
+  "measurement_scope": {
+    "campaign_orchestration_only": true,
+    "candidate_failures_are_not_infrastructure_failures": true,
+    "claim": "Campaign execution and artifact collection only; candidate artifacts carry their own encrypted-correctness claims.",
+    "full_model_correctness_claimed": false
+  },
+  "measurements": {
+    "candidate_passes": 1,
+    "experiments_executed_or_resumed": 2,
+    "experiments_skipped": 0,
+    "experiments_total": 2,
+    "infrastructure_failures": 1
+  },
+  "passed": false,
+  "repo_commit": "working-tree",
+  "stage": "fhemamba-dgx-campaign-report",
+  "status": "failed",
+  "timing": {
+    "campaign_seconds": 838.6066677439958
+  },
+  "version": "0.4.4"
+}

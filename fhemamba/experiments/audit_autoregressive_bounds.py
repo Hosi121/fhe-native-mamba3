@@ -109,7 +109,7 @@ def main() -> None:
     violations = [row for row in rows if row["ratio_to_margin"] > 1.0]
     passed = not violations
     artifact = {
-        "version": "0.4.4",
+        "version": "0.4.5",
         "stage": "autoregressive-carried-bound-audit",
         "backend": "torch-cpu-polynomial-reference",
         "encrypted": False,

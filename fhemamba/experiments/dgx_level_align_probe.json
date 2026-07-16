@@ -1,6 +1,6 @@
 {
   "name": "level-align-real-ckks-probe",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "timeout_seconds": 900,
   "gpu_preflight": {
     "required": true,
@@ -13,7 +13,7 @@
   "defaults": {
     "LAYERS": "2",
     "TOKENS": "2",
-    "ARTIFACT_VERSION": "0.4.4",
+    "ARTIFACT_VERSION": "0.4.5",
     "RING_DIM": "65536",
     "MULTIPLICATIVE_DEPTH": "44",
     "SCALING_MOD_SIZE": "59",

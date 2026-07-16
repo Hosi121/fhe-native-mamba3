@@ -272,7 +272,7 @@ auto main(int argc, char* argv[]) -> int {
     std::ostringstream out;
     out << "{";
     out << "\"stage\":\"fideslib-primitive-level-probe\",";
-    out << "\"version\":\"0.4.4\",";
+    out << "\"version\":\"0.4.5\",";
     out << "\"status\":\"passed\",\"passed\":true,";
     out << "\"repo_commit\":\"" << args.repo_commit << "\",";
     out << "\"backend\":{\"name\":\"fideslib\",\"device\":\"cuda\"},";

@@ -173,7 +173,7 @@ auto client_decrypt(const fs::path& root) -> void {
   require(result.good(), "failed to open client/server result artifact");
   result << std::setprecision(12)
          << "{\n"
-         << "  \"version\": \"0.4.4\",\n"
+         << "  \"version\": \"0.4.5\",\n"
          << "  \"stage\": \"fideslib-client-server-probe\",\n"
          << "  \"repo_commit\": \"working-tree\",\n"
          << "  \"status\": \"" << (passed ? "passed" : "failed") << "\",\n"

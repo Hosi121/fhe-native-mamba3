@@ -23,7 +23,7 @@ def main() -> None:
     report = build_bootstrap_telemetry_report(payload)
     passed = bool(report["telemetry_reconciled"])
     artifact = {
-        "version": "0.4.4",
+        "version": "0.4.5",
         "stage": "mamba2-bootstrap-telemetry-report",
         "backend": "artifact-analysis",
         "encrypted": False,
